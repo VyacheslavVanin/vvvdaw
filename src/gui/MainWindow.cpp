@@ -322,6 +322,11 @@ void MainWindow::rebuildTracks() {
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
 
+        connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
+            m_project.addTrack();
+            rebuildTracks();
+        });
+
         connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
             if (idx < static_cast<int>(m_project.tracks().size())) {
                 m_project.removeTrack(idx);

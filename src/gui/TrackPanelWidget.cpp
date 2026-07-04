@@ -146,6 +146,11 @@ void TrackPanelWidget::setAlternateRow(bool alternate) {
 
 void TrackPanelWidget::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
+    QAction* addAction = menu.addAction("Add Track");
+    connect(addAction, &QAction::triggered, this, [this] {
+        QMetaObject::invokeMethod(this, [this] { emit addTrackRequested(); }, Qt::QueuedConnection);
+    });
+    menu.addSeparator();
     QAction* deleteAction = menu.addAction("Delete Track");
     connect(deleteAction, &QAction::triggered, this, [this] {
         QMetaObject::invokeMethod(this, [this] { emit deleteRequested(); }, Qt::QueuedConnection);

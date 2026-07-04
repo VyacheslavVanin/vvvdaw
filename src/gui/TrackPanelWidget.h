@@ -24,6 +24,7 @@ signals:
     void panChanged(float pan);
     void volumeChanged(float volume);
     void deleteRequested();
+    void addTrackRequested();
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
