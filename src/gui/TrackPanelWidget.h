@@ -3,6 +3,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QLabel>
+#include <QLineEdit>
 
 class Track;
 
@@ -28,10 +29,11 @@ signals:
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     Track* m_track = nullptr;
-    QLabel* m_nameLabel = nullptr;
+    QLineEdit* m_nameEdit = nullptr;
     QPushButton* m_armButton = nullptr;
     QPushButton* m_soloButton = nullptr;
     QPushButton* m_muteButton = nullptr;

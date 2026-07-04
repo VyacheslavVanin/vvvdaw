@@ -4,6 +4,7 @@
 #include <QVBoxLayout>
 #include <QMenu>
 #include <QContextMenuEvent>
+#include <QMouseEvent>
 
 TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     : QWidget(parent)
@@ -17,9 +18,25 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     layout->setSpacing(2);
 
     auto* topRow = new QHBoxLayout;
-    m_nameLabel = new QLabel(track ? track->name() : "Track", this);
-    m_nameLabel->setStyleSheet("font-weight: bold; font-size: 11px; color: #ccc;");
-    topRow->addWidget(m_nameLabel, 1);
+    m_nameEdit = new QLineEdit(track ? track->name() : "Track", this);
+    m_nameEdit->setReadOnly(true);
+    m_nameEdit->setStyleSheet(
+        "QLineEdit { background: transparent; border: none; font-weight: bold; font-size: 11px; color: #ccc; }"
+        "QLineEdit:focus { background: #333; border: 1px solid #6688cc; }"
+    );
+    m_nameEdit->installEventFilter(this);
+    connect(m_nameEdit, &QLineEdit::editingFinished, this, [this] {
+        if (!m_track) return;
+        QString text = m_nameEdit->text().trimmed();
+        if (text.isEmpty()) {
+            m_nameEdit->setText(m_track->name());
+        } else {
+            m_track->setName(text);
+        }
+        m_nameEdit->setReadOnly(true);
+        m_nameEdit->setSelection(0, 0);
+    });
+    topRow->addWidget(m_nameEdit, 1);
 
     auto makeBtn = [&](const QString& text, const QString& style) {
         auto* btn = new QPushButton(text, this);
@@ -128,7 +145,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
 void TrackPanelWidget::updateFromTrack() {
     if (!m_track) return;
-    m_nameLabel->setText(m_track->name());
+    m_nameEdit->setText(m_track->name());
     m_armButton->setChecked(m_track->isRecordArmed());
     m_soloButton->setChecked(m_track->isSolo());
     m_muteButton->setChecked(m_track->isMuted());
@@ -142,6 +159,16 @@ void TrackPanelWidget::setAlternateRow(bool alternate) {
     QPalette p = palette();
     p.setColor(QPalette::Window, alternate ? QColor("#2f2f2f") : QColor("#2a2a2a"));
     setPalette(p);
+}
+
+bool TrackPanelWidget::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_nameEdit && event->type() == QEvent::MouseButtonDblClick) {
+        m_nameEdit->setReadOnly(false);
+        m_nameEdit->selectAll();
+        m_nameEdit->setFocus();
+        return true;
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 void TrackPanelWidget::contextMenuEvent(QContextMenuEvent* event) {
