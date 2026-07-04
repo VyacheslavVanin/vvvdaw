@@ -28,12 +28,14 @@ public:
     void deleteSelectedEvent();
     int selectedEventIndex() const { return m_selectedEventIndex; }
     void setAlternateRow(bool alternate) { m_alternateRow = alternate; update(); }
+    void setDragHovered(bool hovered) { m_dragHovered = hovered; update(); }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
     void eventMoved(int64_t eventId, int64_t newStartSample);
     void eventsChanged();
     void eventDragFinished(int64_t eventId, int64_t newStartSample, QPoint globalPos);
+    void dragInProgress(int64_t eventId, int64_t currentStartSample, QPoint globalPos);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -77,4 +79,5 @@ private:
 
     // Row appearance
     bool m_alternateRow = false;
+    bool m_dragHovered = false;
 };

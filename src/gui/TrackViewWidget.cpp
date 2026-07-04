@@ -60,7 +60,11 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
-    painter.fillRect(rect(), m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a"));
+    if (m_dragHovered) {
+        painter.fillRect(rect(), QColor("#335577"));
+    } else {
+        painter.fillRect(rect(), m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a"));
+    }
 
     if (!m_track) return;
 
@@ -180,7 +184,7 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             m_dragging = true;
             m_dragStartSample = ev->startSample;
             m_dragStartMouseX = static_cast<int>(event->position().x());
-            setCursor(Qt::SizeHorCursor);
+            setCursor(Qt::ClosedHandCursor);
         } else {
             m_selectedEventIndex = -1;
         }
@@ -204,6 +208,7 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
 
         if (newStart < 0) newStart = 0;
         m_track->events()[m_dragEventIndex].startSample = newStart;
+        emit dragInProgress(m_track->events()[m_dragEventIndex].id, newStart, event->globalPosition().toPoint());
         update();
     } else {
         // Hover state
@@ -211,7 +216,7 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
         AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), idx);
         if (idx != m_hoverEventIndex) {
             m_hoverEventIndex = idx;
-            setCursor(ev ? Qt::SizeHorCursor : Qt::ArrowCursor);
+            setCursor(ev ? Qt::OpenHandCursor : Qt::ArrowCursor);
             update();
         }
     }
@@ -220,7 +225,7 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
 void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_dragging) {
         m_dragging = false;
-        setCursor(Qt::ArrowCursor);
+        unsetCursor();
         if (m_track && m_dragEventIndex >= 0) {
             auto& ev = m_track->events()[m_dragEventIndex];
             emit eventMoved(ev.id, ev.startSample);

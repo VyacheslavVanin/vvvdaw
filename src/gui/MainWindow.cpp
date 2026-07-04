@@ -358,9 +358,23 @@ void MainWindow::rebuildTracks() {
             }
         });
 
+        connect(row.view, &TrackViewWidget::dragInProgress, this,
+                [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
+                (int64_t /*eventId*/, int64_t /*currentStartSample*/, QPoint globalPos) {
+            QWidget* widget = QApplication::widgetAt(globalPos);
+            for (size_t t = 0; t < m_trackRows.size(); ++t) {
+                bool hover = (m_trackRows[t].view == widget);
+                m_trackRows[t].view->setDragHovered(hover && static_cast<int>(t) != srcIdx);
+            }
+        });
+
         connect(row.view, &TrackViewWidget::eventDragFinished, this,
                 [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
                 (int64_t eventId, int64_t newStartSample, QPoint globalPos) {
+            // Clear drag hover on all views
+            for (auto& r : m_trackRows)
+                r.view->setDragHovered(false);
+
             QWidget* widget = QApplication::widgetAt(globalPos);
             for (size_t t = 0; t < m_trackRows.size(); ++t) {
                 if (m_trackRows[t].view == widget && static_cast<int>(t) != srcIdx) {
