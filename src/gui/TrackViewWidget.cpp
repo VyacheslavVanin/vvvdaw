@@ -159,12 +159,13 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 }
 
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
+    int deltaX = static_cast<int>(event->angleDelta().x());
     int deltaY = static_cast<int>(event->angleDelta().y());
     if (event->modifiers() & Qt::ControlModifier) {
         double zoomFactor = (deltaY > 0) ? 1.15 : (1.0 / 1.15);
         setZoom(m_pixelsPerSample * zoomFactor);
-    } else {
-        setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaY * 48));
+    } else if (deltaX != 0) {
+        setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * 48));
     }
     event->accept();
 }
