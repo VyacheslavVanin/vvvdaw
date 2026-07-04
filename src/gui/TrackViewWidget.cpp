@@ -6,6 +6,7 @@
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QKeyEvent>
 #include <algorithm>
 #include <cmath>
 
@@ -15,6 +16,7 @@ TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
 {
     setMinimumHeight(60);
     setMouseTracking(true);
+    setFocusPolicy(Qt::ClickFocus);
 }
 
 void TrackViewWidget::setScrollOffset(int64_t offset) {
@@ -89,13 +91,16 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 
         bool isHovered = (static_cast<int>(i) == m_hoverEventIndex);
         bool isDragged = (static_cast<int>(i) == m_dragEventIndex && m_dragging);
+        bool isSelected = (static_cast<int>(i) == m_selectedEventIndex);
 
         // Event background
-        QColor bgColor = isHovered ? QColor("#224466") : QColor("#1a3344");
+        QColor bgColor = isSelected ? QColor("#334466")
+                       : (isHovered ? QColor("#224466") : QColor("#1a3344"));
         QColor borderColor = isDragged ? QColor("#ffcc00")
-                           : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff"));
+                           : (isSelected ? QColor("#ffaa00")
+                           : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff")));
 
-        painter.setPen(QPen(borderColor, isDragged ? 2 : 1));
+        painter.setPen(QPen(borderColor, (isDragged || isSelected) ? 2 : 1));
         painter.setBrush(bgColor);
         painter.drawRect(eventRect);
 
@@ -160,15 +165,21 @@ void TrackViewWidget::wheelEvent(QWheelEvent* event) {
 
 void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_track) {
-        AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), m_dragEventIndex);
+        int idx = -1;
+        AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), idx);
         if (ev) {
+            m_selectedEventIndex = idx;
+            m_dragEventIndex = idx;
             m_dragging = true;
             m_dragStartSample = ev->startSample;
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::SizeHorCursor);
-            update();
+        } else {
+            m_selectedEventIndex = -1;
         }
+        update();
     }
+    QWidget::mousePressEvent(event);
 }
 
 void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
@@ -210,6 +221,28 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
         m_dragEventIndex = -1;
         update();
     }
+}
+
+void TrackViewWidget::keyPressEvent(QKeyEvent* event) {
+    if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
+        m_selectedEventIndex >= 0 && m_track) {
+        deleteSelectedEvent();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void TrackViewWidget::deleteSelectedEvent() {
+    if (!m_track || m_selectedEventIndex < 0 ||
+        m_selectedEventIndex >= static_cast<int>(m_track->events().size()))
+        return;
+
+    int64_t id = m_track->events()[m_selectedEventIndex].id;
+    m_track->removeEvent(id);
+    m_selectedEventIndex = -1;
+    m_thumbnailCache.clear();
+    update();
+    emit eventsChanged();
 }
 
 void TrackViewWidget::renderWaveform(QImage& img, const float* samples,

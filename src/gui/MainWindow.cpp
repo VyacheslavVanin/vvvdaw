@@ -224,6 +224,22 @@ void MainWindow::setupMenus() {
         m_project.addTrack();
         rebuildTracks();
     });
+
+    auto* deleteAction = trackMenu->addAction("&Delete Event");
+    connect(deleteAction, &QAction::triggered, this, [this] {
+        for (auto& row : m_trackRows) {
+            if (row.view->hasFocus()) {
+                row.view->deleteSelectedEvent();
+                return;
+            }
+        }
+        for (auto& row : m_trackRows) {
+            if (row.view->selectedEventIndex() >= 0) {
+                row.view->deleteSelectedEvent();
+                return;
+            }
+        }
+    });
 }
 
 void MainWindow::loadStyleSheet() {

@@ -25,10 +25,13 @@ public:
     int64_t playheadPosition() const { return m_playheadPos; }
 
     void updateFromTrack();
+    void deleteSelectedEvent();
+    int selectedEventIndex() const { return m_selectedEventIndex; }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
     void eventMoved(int64_t eventId, int64_t newStartSample);
+    void eventsChanged();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -36,6 +39,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private:
     int64_t sampleAtX(int x) const;
@@ -63,4 +67,7 @@ private:
 
     // Hover
     int m_hoverEventIndex = -1;
+
+    // Selection
+    int m_selectedEventIndex = -1;
 };
