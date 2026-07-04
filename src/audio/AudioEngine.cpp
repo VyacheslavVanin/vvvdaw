@@ -420,8 +420,15 @@ void AudioEngine::processAudio(const float* input, float* output,
         int64_t pos = m_playPosition.load(std::memory_order_acquire);
 
         if (state == TransportState::Playing && m_project) {
+            // Check if any track is soloed
+            bool anySolo = false;
+            for (const auto& track : m_project->tracks()) {
+                if (track.isSolo()) { anySolo = true; break; }
+            }
+
             for (const auto& track : m_project->tracks()) {
                 if (track.isMuted()) continue;
+                if (anySolo && !track.isSolo()) continue;
                 float trackVol = track.volume();
 
                 for (const auto& event : track.events()) {
