@@ -521,18 +521,21 @@ void AudioEngine::processAudio(const float* input, float* output,
                 for (const auto& track : m_project->tracks()) {
                     if (!track.isRecordArmed() || !track.isMonitoring()) continue;
                     float trackVol = track.volume() * 0.7f;
+                    float pan = track.pan();
+                    float leftGain  = std::min(1.0f, 1.0f - pan);
+                    float rightGain = std::min(1.0f, 1.0f + pan);
 
                     if (outCh >= 2) {
                         if (inCh == 1) {
                             for (unsigned long f = 0; f < frameCount; ++f) {
                                 float s = input[f] * trackVol;
-                                output[f * 2]     += s;
-                                output[f * 2 + 1] += s;
+                                output[f * 2]     += s * leftGain;
+                                output[f * 2 + 1] += s * rightGain;
                             }
                         } else {
                             for (unsigned long f = 0; f < frameCount; ++f) {
-                                output[f * 2]     += input[f * 2]     * trackVol;
-                                output[f * 2 + 1] += input[f * 2 + 1] * trackVol;
+                                output[f * 2]     += input[f * 2]     * trackVol * leftGain;
+                                output[f * 2 + 1] += input[f * 2 + 1] * trackVol * rightGain;
                             }
                         }
                     } else {
@@ -563,6 +566,9 @@ void AudioEngine::processAudio(const float* input, float* output,
                 if (track.isMuted()) continue;
                 if (anySolo && !track.isSolo()) continue;
                 float trackVol = track.volume();
+                float pan = track.pan();
+                float leftGain  = std::min(1.0f, 1.0f - pan);
+                float rightGain = std::min(1.0f, 1.0f + pan);
 
                 for (const auto& event : track.events()) {
                     if (!event.clip || !event.clip->isValid()) continue;
@@ -599,8 +605,8 @@ void AudioEngine::processAudio(const float* input, float* output,
                             float sL = m_stereoScratch[f * ch];
                             float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
                             if (outCh >= 2) {
-                                output[f * 2]     += sL * trackVol;
-                                output[f * 2 + 1] += sR * trackVol;
+                                output[f * 2]     += sL * trackVol * leftGain;
+                                output[f * 2 + 1] += sR * trackVol * rightGain;
                             } else {
                                 output[f] += (sL + sR) * 0.5f * trackVol;
                             }
@@ -624,8 +630,8 @@ void AudioEngine::processAudio(const float* input, float* output,
                             float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
 
                             if (outCh >= 2) {
-                                output[f * 2]     += sL * trackVol;
-                                output[f * 2 + 1] += sR * trackVol;
+                                output[f * 2]     += sL * trackVol * leftGain;
+                                output[f * 2 + 1] += sR * trackVol * rightGain;
                             } else {
                                 output[f] += (sL + sR) * 0.5f * trackVol;
                             }
