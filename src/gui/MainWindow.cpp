@@ -214,14 +214,16 @@ void MainWindow::setupUi() {
                 .arg(secs, 2, 10, QChar('0'))
                 .arg(ms, 3, 10, QChar('0')));
 
-            // Auto-scroll
-            int64_t viewWidth = m_trackContainer->width();
-            double pixelPos = pos * m_zoom;
-            double viewEnd = m_scrollOffset * m_zoom + viewWidth * 0.7;
-            if (pixelPos > viewEnd) {
-                m_scrollOffset = pos - static_cast<int64_t>(viewWidth * 0.3 / m_zoom);
-                if (m_scrollOffset < 0) m_scrollOffset = 0;
-                syncScrollPositions(static_cast<int>(m_scrollOffset / 48));
+            // Auto-scroll only during playback or recording
+            if (s == TransportState::Playing || s == TransportState::Recording) {
+                int64_t viewWidth = m_trackContainer->width();
+                double pixelPos = pos * m_zoom;
+                double viewEnd = m_scrollOffset * m_zoom + viewWidth * 0.7;
+                if (pixelPos > viewEnd) {
+                    m_scrollOffset = pos - static_cast<int64_t>(viewWidth * 0.3 / m_zoom);
+                    if (m_scrollOffset < 0) m_scrollOffset = 0;
+                    syncScrollPositions(static_cast<int>(m_scrollOffset / 48));
+                }
             }
 
             // Update playhead
