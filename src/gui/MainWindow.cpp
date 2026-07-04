@@ -48,7 +48,7 @@ void MainWindow::setupUi() {
     layout->setSpacing(0);
 
     m_transportPanel = new TransportPanel(this);
-    layout->addWidget(m_transportPanel);
+    layout->addWidget(m_transportPanel, 0, Qt::AlignCenter);
 
     auto* rulerRow = new QHBoxLayout;
     rulerRow->setContentsMargins(0, 0, 0, 0);

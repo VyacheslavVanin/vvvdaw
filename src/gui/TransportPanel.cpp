@@ -1,4 +1,5 @@
 #include "TransportPanel.h"
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -32,7 +33,13 @@ TransportPanel::TransportPanel(QWidget* parent)
     connect(m_forwardButton, &QPushButton::clicked, this, &TransportPanel::forwardClicked);
 
     m_timeLabel = new QLabel("00:00:00.000", this);
-    m_timeLabel->setStyleSheet("font-family: monospace; font-size: 14px; padding: 0 8px;");
+    m_timeLabel->setStyleSheet("padding: 0 8px;");
+    QFont monoFont("monospace");
+    monoFont.setStyleHint(QFont::Monospace);
+    monoFont.setPixelSize(14);
+    m_timeLabel->setFont(monoFont);
+    QFontMetrics fm(monoFont);
+    m_timeLabel->setFixedWidth(fm.horizontalAdvance("999:59:59.999") + 18);
     layout->addWidget(m_timeLabel);
 
     layout->addStretch();
