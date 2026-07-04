@@ -13,6 +13,7 @@ Settings::Settings()
     , outputDeviceId(-1)
     , inputChannel(0)
     , outputChannel(0)
+    , streamingThresholdSec(30)
 {
 }
 
@@ -48,6 +49,7 @@ QJsonObject Settings::toJson() const {
     obj["inputChannel"] = inputChannel;
     obj["outputChannel"] = outputChannel;
     obj["lastProjectPath"] = lastProjectPath;
+    obj["streamingThresholdSec"] = streamingThresholdSec;
     return obj;
 }
 
@@ -59,4 +61,5 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("inputChannel")) inputChannel = obj["inputChannel"].toInt();
     if (obj.contains("outputChannel")) outputChannel = obj["outputChannel"].toInt();
     if (obj.contains("lastProjectPath")) lastProjectPath = obj["lastProjectPath"].toString();
+    if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
 }

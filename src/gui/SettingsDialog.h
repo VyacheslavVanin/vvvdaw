@@ -27,4 +27,5 @@ private:
     QComboBox* m_outputDeviceCombo;
     QSpinBox* m_inputChannelSpin;
     QSpinBox* m_outputChannelSpin;
+    QSpinBox* m_streamingThresholdSpin;
 };

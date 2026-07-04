@@ -3,6 +3,8 @@
 #include <cstring>
 #include <QDebug>
 
+size_t AudioClip::s_streamingThresholdFrames = AudioClip::DEFAULT_STREAMING_THRESHOLD_FRAMES;
+
 AudioClip::AudioClip(const QString& filePath) {
     loadFromFile(filePath);
 }
@@ -31,6 +33,16 @@ bool AudioClip::loadFromFile(const QString& filePath) {
     m_channels = info.channels;
     m_frameCount = info.frames;
 
+    // Large files use disk streaming instead of loading into RAM
+    size_t threshold = s_streamingThresholdFrames > 0 ? s_streamingThresholdFrames : DEFAULT_STREAMING_THRESHOLD_FRAMES;
+    if (info.frames > threshold) {
+        sf_close(file);
+        m_streaming = true;
+        m_samples.clear();
+        m_sharedData = std::make_shared<const std::vector<float>>();
+        return true;
+    }
+
     m_samples.resize(m_frameCount * m_channels);
     sf_readf_float(file, m_samples.data(), m_frameCount);
     sf_close(file);
@@ -44,6 +56,10 @@ bool AudioClip::saveToFile(const QString& filePath) const {
 }
 
 bool AudioClip::saveToFile(const QString& filePath, int sampleRate) const {
+    if (m_streaming) {
+        qWarning() << "Cannot save streaming clip to file";
+        return false;
+    }
     SF_INFO info;
     std::memset(&info, 0, sizeof(info));
     info.samplerate = sampleRate > 0 ? sampleRate : m_sampleRate;

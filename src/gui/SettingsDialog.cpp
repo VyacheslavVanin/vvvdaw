@@ -41,6 +41,12 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
     m_outputChannelSpin->setValue(m_settings.outputChannel);
     form->addRow("Output Channel:", m_outputChannelSpin);
 
+    m_streamingThresholdSpin = new QSpinBox(this);
+    m_streamingThresholdSpin->setRange(1, 600);
+    m_streamingThresholdSpin->setSuffix(" sec");
+    m_streamingThresholdSpin->setValue(m_settings.streamingThresholdSec);
+    form->addRow("Stream Threshold:", m_streamingThresholdSpin);
+
     layout->addLayout(form);
     layout->addStretch();
 
@@ -109,6 +115,7 @@ void SettingsDialog::accept() {
     m_settings.outputDeviceId = m_outputDeviceCombo->currentData().toInt();
     m_settings.inputChannel = m_inputChannelSpin->value();
     m_settings.outputChannel = m_outputChannelSpin->value();
+    m_settings.streamingThresholdSec = m_streamingThresholdSpin->value();
     m_settings.save();
 
     QDialog::accept();

@@ -23,6 +23,7 @@ public:
     int outputDeviceId;
     int inputChannel;
     int outputChannel;
+    int streamingThresholdSec;
 
     QString lastProjectPath;
 

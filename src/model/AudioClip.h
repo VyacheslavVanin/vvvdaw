@@ -22,7 +22,14 @@ public:
     bool isValid() const { return m_frameCount > 0; }
     const QString& filePath() const { return m_filePath; }
 
+    bool isStreaming() const { return m_streaming; }
+
+    static void setStreamingThresholdFrames(size_t frames) { s_streamingThresholdFrames = frames; }
+    static size_t streamingThresholdFrames() { return s_streamingThresholdFrames; }
+
     std::shared_ptr<const std::vector<float>> sharedData() const { return m_sharedData; }
+
+    static constexpr size_t DEFAULT_STREAMING_THRESHOLD_FRAMES = 30 * 48000;
 
 private:
     QString m_filePath;
@@ -31,4 +38,7 @@ private:
     size_t m_frameCount = 0;
     int m_channels = 0;
     int m_sampleRate = 0;
+    bool m_streaming = false;
+
+    static size_t s_streamingThresholdFrames;
 };

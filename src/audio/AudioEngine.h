@@ -6,12 +6,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <QString>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 #include "core/Settings.h"
 
 class Project;
+class AudioClip;
 
 enum class TransportState : uint8_t {
     Stopped,
@@ -39,6 +41,37 @@ struct RecordingTrack {
     SF_INFO info{};
 };
 
+// Ring buffer: background reader thread → audio callback (SPSC)
+struct PlaybackBuffer {
+    std::vector<float> data;
+    std::atomic<size_t> writePos{0};
+    std::atomic<size_t> readPos{0};
+
+    explicit PlaybackBuffer(size_t capacity = 32768);
+    PlaybackBuffer(PlaybackBuffer&& other) noexcept;
+    PlaybackBuffer& operator=(PlaybackBuffer&& other) noexcept;
+    size_t write(const float* samples, size_t count);
+    size_t read(float* dest, size_t maxCount);
+    size_t available() const;
+    size_t capacity() const { return data.size(); }
+    void reset();
+};
+
+struct PlaybackStream {
+    AudioClip* clip = nullptr;
+    SNDFILE* file = nullptr;
+    SF_INFO info{};
+    PlaybackBuffer buffer;
+    int64_t eventStartSample = 0;
+    int64_t eventDurationSample = 0;
+    int64_t endFrame = 0;    // last readable frame in file (exclusive)
+    bool readerFinished = false; // reader has reached endFrame
+    bool finished = false;      // all data consumed by callback
+
+    bool open(const QString& filePath, int64_t startFrame, int64_t endFrame);
+    void close();
+};
+
 class AudioEngine {
 public:
     AudioEngine();
@@ -60,7 +93,7 @@ public:
     TransportState transportState() const;
 
     int64_t playPosition() const { return m_playPosition.load(std::memory_order_acquire); }
-    void setPlayPosition(int64_t pos) { m_playPosition.store(pos, std::memory_order_release); }
+    void setPlayPosition(int64_t pos);
 
     int sampleRate() const { return m_sampleRate; }
     int bufferSize() const { return m_bufferSize; }
@@ -78,6 +111,11 @@ private:
 
     void processAudio(const float* input, float* output, unsigned long frameCount);
     void writerThreadFunc();
+
+    void startPlayback();
+    void stopPlayback();
+    void createPlaybackStreams();
+    void readerThreadFunc();
 
     PaStream* m_stream = nullptr;
     Project* m_project = nullptr;
@@ -98,4 +136,12 @@ private:
     std::atomic<bool> m_writerRunning{false};
     bool m_recordingActive = false;
     int64_t m_recordStartSample = 0;
+
+    // Streaming playback
+    std::vector<PlaybackStream> m_playbackStreams;
+    std::mutex m_streamMutex;
+    std::thread m_readerThread;
+    std::mutex m_readerMutex;
+    std::condition_variable m_readerCond;
+    std::atomic<bool> m_readerRunning{false};
 };
