@@ -25,6 +25,7 @@ public:
     double durationSeconds() const;
     bool isValid() const { return m_frameCount > 0; }
     const QString& filePath() const { return m_filePath; }
+    void setFilePath(const QString& path) { m_filePath = path; }
 
     bool isStreaming() const { return m_streaming; }
 

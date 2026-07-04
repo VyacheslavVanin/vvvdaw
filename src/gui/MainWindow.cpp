@@ -12,8 +12,11 @@
 #include "core/Settings.h"
 #include <QApplication>
 #include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSplitter>
@@ -255,12 +258,65 @@ void MainWindow::setupMenus() {
     auto* fileMenu = menuBar()->addMenu("&File");
 
     auto* newAction = fileMenu->addAction("&New Project", QKeySequence::New);
+    auto* openAction = fileMenu->addAction("&Open Project...", QKeySequence::Open);
     auto* saveAction = fileMenu->addAction("&Save Project", QKeySequence::Save);
     auto* saveAsAction = fileMenu->addAction("Save &As...", QKeySequence("Ctrl+Shift+S"));
     fileMenu->addSeparator();
     auto* settingsAction = fileMenu->addAction("&Settings...");
     fileMenu->addSeparator();
     auto* quitAction = fileMenu->addAction("&Quit", QKeySequence::Quit);
+
+    connect(newAction, &QAction::triggered, this, [this] {
+        m_engine.setTransportState(TransportState::Stopped);
+        m_engine.setProject(nullptr);
+        m_project = Project();
+        m_project.addTrack("Track 1");
+        m_engine.setProject(&m_project);
+        m_scrollOffset = 0;
+        rebuildTracks();
+        setWindowTitle("vvvdaw - Untitled");
+    });
+
+    connect(openAction, &QAction::triggered, this, [this] {
+        QString path = QFileDialog::getOpenFileName(this, "Open Project",
+            QString(), "Project Files (project.json)");
+        if (path.isEmpty()) return;
+
+        m_engine.setTransportState(TransportState::Stopped);
+        m_engine.setProject(nullptr);
+        Project newProject;
+        if (!newProject.load(path)) {
+            QMessageBox::warning(this, "Error", "Failed to load project.");
+            return;
+        }
+        m_project = std::move(newProject);
+        m_engine.setProject(&m_project);
+        m_scrollOffset = 0;
+        rebuildTracks();
+        setWindowTitle("vvvdaw - " + QFileInfo(path).absolutePath());
+    });
+
+    connect(saveAction, &QAction::triggered, this, [this, saveAsAction] {
+        if (m_project.filePath().isEmpty()) {
+            saveAsAction->trigger();
+            return;
+        }
+        if (!m_project.save(m_project.filePath())) {
+            QMessageBox::warning(this, "Error", "Failed to save project.");
+        }
+    });
+
+    connect(saveAsAction, &QAction::triggered, this, [this] {
+        QString dir = QFileDialog::getExistingDirectory(this, "Choose Project Directory");
+        if (dir.isEmpty()) return;
+
+        QString path = dir + "/project.json";
+        if (!m_project.save(path)) {
+            QMessageBox::warning(this, "Error", "Failed to save project.");
+            return;
+        }
+        setWindowTitle("vvvdaw - " + dir);
+    });
 
     connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
 

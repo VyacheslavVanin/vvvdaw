@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QStandardPaths>
 
 Project::Project()
@@ -27,7 +28,66 @@ bool Project::load(const QString& filePath) {
     return true;
 }
 
-bool Project::save(const QString& filePath) const {
+bool Project::save(const QString& filePath) {
+    QFileInfo fi(filePath);
+    QString projectDir = fi.absolutePath();
+    QString audioDir = projectDir + "/audio";
+    QDir().mkpath(audioDir);
+
+    // Collect unique clips and copy external files to audio dir
+    QSet<const AudioClip*> processedClips;
+    for (auto& track : m_tracks) {
+        for (auto& event : track.events()) {
+            if (!event.clip || processedClips.contains(event.clip.get()))
+                continue;
+            processedClips.insert(event.clip.get());
+
+            QString srcPath = event.clip->filePath();
+            QString targetPath;
+            if (srcPath.isEmpty()) {
+                // Generated clip with no backing file — write it out
+                QString name = QString("clip_%1.wav").arg(
+                    QString::number(reinterpret_cast<quintptr>(event.clip.get()), 16));
+                targetPath = audioDir + "/" + name;
+                event.clip->saveToFile(targetPath);
+            } else {
+                QFileInfo srcInfo(srcPath);
+                QString srcAbs = srcInfo.absoluteFilePath();
+                QString audioAbs = QDir(audioDir).absolutePath();
+
+                if (srcInfo.absolutePath() == audioAbs) {
+                    // Already in audio dir
+                    targetPath = srcAbs;
+                } else {
+                    // Copy to audio dir
+                    QString baseName = srcInfo.completeBaseName();
+                    QString ext = srcInfo.suffix();
+                    if (ext.isEmpty()) ext = "wav";
+                    targetPath = audioDir + "/" + baseName + "." + ext;
+
+                    // Handle name collisions
+                    int counter = 1;
+                    while (QFile::exists(targetPath)
+                           && QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
+                        targetPath = audioDir + "/" + baseName + "_" + QString::number(counter++) + "." + ext;
+                    }
+
+                    // Copy if not already the same file
+                    if (QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
+                        if (!QFile::copy(srcPath, targetPath)) {
+                            qWarning() << "Failed to copy audio file:" << srcPath << "→" << targetPath;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            event.clip->setFilePath(targetPath);
+        }
+    }
+
+    // Write project.json
+    m_filePath = filePath;
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly))
         return false;
@@ -71,10 +131,23 @@ QString Project::audioDirectory() const {
     return fi.absolutePath() + "/audio";
 }
 
+static QString relativePath(const QString& filePath, const QString& projectDir) {
+    QFileInfo fi(filePath);
+    QString absPath = fi.absoluteFilePath();
+    QString absProj = QFileInfo(projectDir).absoluteFilePath();
+    if (absPath.startsWith(absProj + "/"))
+        return absPath.mid(absProj.length() + 1);
+    return absPath;
+}
+
 QJsonObject Project::toJson() const {
     QJsonObject obj;
+    obj["formatVersion"] = 1;
     obj["name"] = m_name;
     obj["sampleRate"] = m_sampleRate;
+
+    QString projDir = m_filePath.isEmpty() ? QString()
+                     : QFileInfo(m_filePath).absolutePath();
 
     QJsonArray tracksArr;
     for (const auto& track : m_tracks) {
@@ -92,7 +165,10 @@ QJsonObject Project::toJson() const {
         for (const auto& event : track.events()) {
             QJsonObject eObj;
             if (event.clip) {
-                eObj["clipPath"] = event.clip->filePath();
+                QString clipPath = event.clip->filePath();
+                if (!projDir.isEmpty())
+                    clipPath = relativePath(clipPath, projDir);
+                eObj["clipPath"] = clipPath;
                 eObj["clipSampleRate"] = event.clip->sampleRate();
             }
             eObj["startSample"] = static_cast<qint64>(event.startSample);
@@ -122,6 +198,9 @@ void Project::fromJson(const QJsonObject& obj) {
     m_name = obj["name"].toString("Untitled");
     m_sampleRate = obj["sampleRate"].toInt(48000);
 
+    QString projDir = m_filePath.isEmpty() ? QString()
+                     : QFileInfo(m_filePath).absolutePath();
+
     m_tracks.clear();
     const QJsonArray tracksArr = obj["tracks"].toArray();
     for (const auto& tVal : tracksArr) {
@@ -141,7 +220,11 @@ void Project::fromJson(const QJsonObject& obj) {
             AudioEvent event;
             QString clipPath = eObj["clipPath"].toString();
             if (!clipPath.isEmpty()) {
-                auto clip = std::make_shared<AudioClip>(clipPath);
+                // Resolve relative path
+                QString absPath = QDir::isAbsolutePath(clipPath)
+                    ? clipPath
+                    : QDir(projDir).absoluteFilePath(clipPath);
+                auto clip = std::make_shared<AudioClip>(absPath);
                 if (clip->isValid())
                     event.clip = clip;
             }

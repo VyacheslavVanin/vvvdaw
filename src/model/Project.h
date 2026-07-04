@@ -11,7 +11,7 @@ public:
     Project();
 
     bool load(const QString& filePath);
-    bool save(const QString& filePath) const;
+    bool save(const QString& filePath);
 
     const QString& filePath() const { return m_filePath; }
     void setFilePath(const QString& path) { m_filePath = path; }
