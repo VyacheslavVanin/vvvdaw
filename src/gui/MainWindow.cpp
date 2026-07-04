@@ -300,6 +300,12 @@ void MainWindow::rebuildTracks() {
     }
 
     m_trackLayout->addStretch();
+
+    // Restore playhead on new views
+    int64_t ph = m_engine.playPosition();
+    m_timelineRuler->setPlayheadPosition(ph);
+    for (auto& row : m_trackRows)
+        row.view->setPlayheadPosition(ph);
 }
 
 void MainWindow::syncScrollPositions(int value) {
