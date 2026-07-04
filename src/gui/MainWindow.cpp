@@ -87,6 +87,14 @@ void MainWindow::setupUi() {
     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
     m_trackContainer = new QWidget(scrollArea);
+    m_trackContainer->setAutoFillBackground(true);
+    QPalette containerPal = m_trackContainer->palette();
+    containerPal.setColor(QPalette::Window, QColor("#2a2a2a"));
+    m_trackContainer->setPalette(containerPal);
+    scrollArea->viewport()->setAutoFillBackground(true);
+    QPalette viewportPal = scrollArea->viewport()->palette();
+    viewportPal.setColor(QPalette::Window, QColor("#2a2a2a"));
+    scrollArea->viewport()->setPalette(viewportPal);
     m_trackLayout = new QVBoxLayout(m_trackContainer);
     m_trackLayout->setContentsMargins(0, 0, 0, 0);
     m_trackLayout->setSpacing(2);
