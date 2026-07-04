@@ -43,6 +43,11 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         "QPushButton:checked { background: #33aa33; color: white; border: 2px solid #44ff44; }");
     m_muteButton->setToolTip("Mute");
 
+    m_monitorButton = makeBtn("MON",
+        "QPushButton { background: #223344; color: #6688cc; border: 1px solid #445566; font-weight: bold; font-size: 8px; }"
+        "QPushButton:checked { background: #2244aa; color: white; border: 2px solid #4488ff; }");
+    m_monitorButton->setToolTip("Input Monitoring");
+
     layout->addLayout(topRow);
 
     auto* panRow = new QHBoxLayout;
@@ -79,6 +84,10 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         if (m_track) m_track->setMuted(checked);
         emit muteToggled(checked);
     });
+    connect(m_monitorButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (m_track) m_track->setMonitoring(checked);
+        emit monitorToggled(checked);
+    });
     connect(m_panSlider, &QSlider::valueChanged, this, [this](int val) {
         float pan = val / 100.0f;
         if (m_track) m_track->setPan(pan);
@@ -97,6 +106,7 @@ void TrackPanelWidget::updateFromTrack() {
     m_armButton->setChecked(m_track->isRecordArmed());
     m_soloButton->setChecked(m_track->isSolo());
     m_muteButton->setChecked(m_track->isMuted());
+    m_monitorButton->setChecked(m_track->isMonitoring());
     m_panSlider->setValue(static_cast<int>(m_track->pan() * 100));
     m_volumeSlider->setValue(static_cast<int>(m_track->volume() * 100));
 }

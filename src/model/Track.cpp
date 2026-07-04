@@ -28,6 +28,7 @@ uint32_t Track::atomicState() const {
     if (m_muted)        state |= (1u << 0);
     if (m_solo)         state |= (1u << 1);
     if (m_recordArmed)  state |= (1u << 2);
+    if (m_monitoring)   state |= (1u << 3);
     uint32_t panBits = static_cast<uint32_t>((m_pan * 0.5f + 0.5f) * 255.0f) & 0xFF;
     uint32_t volBits = static_cast<uint32_t>(m_volume * 255.0f) & 0xFF;
     state |= (panBits << 8);

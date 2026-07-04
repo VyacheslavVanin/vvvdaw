@@ -381,7 +381,33 @@ void AudioEngine::processAudio(const float* input, float* output,
                 }
             }
 
-            // No monitoring — output stays silent to prevent feedback
+            // Per-track monitoring — mix input to output for monitored tracks
+            if (m_project) {
+                for (const auto& track : m_project->tracks()) {
+                    if (!track.isRecordArmed() || !track.isMonitoring()) continue;
+                    float trackVol = track.volume() * 0.7f; // slightly below unity to reduce feedback risk
+
+                    if (outCh >= 2) {
+                        if (inCh == 1) {
+                            for (unsigned long f = 0; f < frameCount; ++f) {
+                                float s = input[f] * trackVol;
+                                output[f * 2]     += s;
+                                output[f * 2 + 1] += s;
+                            }
+                        } else {
+                            for (unsigned long f = 0; f < frameCount; ++f) {
+                                output[f * 2]     += input[f * 2]     * trackVol;
+                                output[f * 2 + 1] += input[f * 2 + 1] * trackVol;
+                            }
+                        }
+                    } else {
+                        // Mono output
+                        for (unsigned long f = 0; f < frameCount; ++f)
+                            output[f] += input[f * inCh] * trackVol;
+                    }
+                }
+            }
+
             m_writerCond.notify_one();
         }
 

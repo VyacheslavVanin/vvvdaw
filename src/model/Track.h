@@ -30,6 +30,9 @@ public:
     bool isMuted() const { return m_muted; }
     void setMuted(bool muted) { m_muted = muted; }
 
+    bool isMonitoring() const { return m_monitoring; }
+    void setMonitoring(bool mon) { m_monitoring = mon; }
+
     float pan() const { return m_pan; }
     void setPan(float pan) { m_pan = pan; }
 
@@ -54,6 +57,7 @@ private:
     bool m_recordArmed = false;
     bool m_solo = false;
     bool m_muted = false;
+    bool m_monitoring = false;
 
     float m_pan = 0.0f;
     float m_volume = 0.8f;

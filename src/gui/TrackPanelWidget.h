@@ -19,6 +19,7 @@ signals:
     void armToggled(bool armed);
     void soloToggled(bool solo);
     void muteToggled(bool muted);
+    void monitorToggled(bool monitoring);
     void panChanged(float pan);
     void volumeChanged(float volume);
 
@@ -28,6 +29,7 @@ private:
     QPushButton* m_armButton = nullptr;
     QPushButton* m_soloButton = nullptr;
     QPushButton* m_muteButton = nullptr;
+    QPushButton* m_monitorButton = nullptr;
     QSlider* m_panSlider = nullptr;
     QSlider* m_volumeSlider = nullptr;
 };
