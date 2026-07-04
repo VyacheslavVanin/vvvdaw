@@ -91,31 +91,40 @@ void MainWindow::setupUi() {
         syncScrollPositions(0);
     });
 
-    connect(m_transportPanel, &TransportPanel::playClicked, this, [this] {
+    auto refreshTrackViews = [this] {
+        for (auto& row : m_trackRows)
+            row.view->update();
+    };
+
+    connect(m_transportPanel, &TransportPanel::playClicked, this, [this, refreshTrackViews] {
         if (m_engine.transportState() == TransportState::Paused) {
             m_engine.setTransportState(TransportState::Playing);
         } else if (m_engine.transportState() != TransportState::Playing) {
             m_engine.setTransportState(TransportState::Playing);
         }
         m_transportPanel->setPlaying(true);
+        refreshTrackViews();
     });
 
-    connect(m_transportPanel, &TransportPanel::pauseClicked, this, [this] {
+    connect(m_transportPanel, &TransportPanel::pauseClicked, this, [this, refreshTrackViews] {
         m_engine.setTransportState(TransportState::Paused);
         m_transportPanel->setPlaying(false);
+        refreshTrackViews();
     });
 
-    connect(m_transportPanel, &TransportPanel::stopClicked, this, [this] {
+    connect(m_transportPanel, &TransportPanel::stopClicked, this, [this, refreshTrackViews] {
         m_engine.setTransportState(TransportState::Stopped);
         m_transportPanel->setPlaying(false);
         m_transportPanel->setRecording(false);
+        refreshTrackViews();
     });
 
-    connect(m_transportPanel, &TransportPanel::recordClicked, this, [this] {
+    connect(m_transportPanel, &TransportPanel::recordClicked, this, [this, refreshTrackViews] {
         TransportState s = m_engine.transportState();
         if (s == TransportState::Recording) {
             m_engine.setTransportState(TransportState::Stopped);
             m_transportPanel->setRecording(false);
+            refreshTrackViews();
         } else {
             m_engine.setTransportState(TransportState::Recording);
             m_transportPanel->setRecording(true);
