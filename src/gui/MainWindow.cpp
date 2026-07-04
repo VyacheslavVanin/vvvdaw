@@ -149,6 +149,11 @@ void MainWindow::setupUi() {
 
     connect(m_transportPanel, &TransportPanel::stopClicked, this, [this, refreshTrackViews] {
         m_engine.setTransportState(TransportState::Stopped);
+        m_engine.setPlayPosition(0);
+        int64_t zeroPos = 0;
+        m_timelineRuler->setPlayheadPosition(zeroPos);
+        for (auto& row : m_trackRows)
+            row.view->setPlayheadPosition(zeroPos);
         m_transportPanel->setPlaying(false);
         m_transportPanel->setRecording(false);
         refreshTrackViews();
@@ -175,7 +180,6 @@ void MainWindow::setupUi() {
             m_transportPanel->setPlaying(false);
         } else {
             if (s == TransportState::Stopped) {
-                m_engine.setPlayPosition(0);
                 m_scrollOffset = 0;
                 syncScrollPositions(0);
             }
@@ -200,37 +204,35 @@ void MainWindow::setupUi() {
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, [this] {
         TransportState s = m_engine.transportState();
-        if (s == TransportState::Playing || s == TransportState::Recording || s == TransportState::Paused) {
-            int64_t pos = m_engine.playPosition();
-            int sr = m_engine.sampleRate();
-            int totalMs = static_cast<int>((pos * 1000) / sr);
-            int hours = totalMs / 3600000;
-            int mins = (totalMs % 3600000) / 60000;
-            int secs = (totalMs % 60000) / 1000;
-            int ms = totalMs % 1000;
-            m_transportPanel->setTimeText(QString("%1:%2:%3.%4")
-                .arg(hours, 2, 10, QChar('0'))
-                .arg(mins, 2, 10, QChar('0'))
-                .arg(secs, 2, 10, QChar('0'))
-                .arg(ms, 3, 10, QChar('0')));
+        int64_t pos = m_engine.playPosition();
+        int sr = m_engine.sampleRate();
+        int totalMs = static_cast<int>((pos * 1000) / sr);
+        int hours = totalMs / 3600000;
+        int mins = (totalMs % 3600000) / 60000;
+        int secs = (totalMs % 60000) / 1000;
+        int ms = totalMs % 1000;
+        m_transportPanel->setTimeText(QString("%1:%2:%3.%4")
+            .arg(hours, 2, 10, QChar('0'))
+            .arg(mins, 2, 10, QChar('0'))
+            .arg(secs, 2, 10, QChar('0'))
+            .arg(ms, 3, 10, QChar('0')));
 
+        if (s == TransportState::Playing || s == TransportState::Recording) {
             // Auto-scroll only during playback or recording
-            if (s == TransportState::Playing || s == TransportState::Recording) {
-                int64_t viewWidth = m_trackContainer->width();
-                double pixelPos = pos * m_zoom;
-                double viewEnd = m_scrollOffset * m_zoom + viewWidth * 0.7;
-                if (pixelPos > viewEnd) {
-                    m_scrollOffset = pos - static_cast<int64_t>(viewWidth * 0.3 / m_zoom);
-                    if (m_scrollOffset < 0) m_scrollOffset = 0;
-                    syncScrollPositions(static_cast<int>(m_scrollOffset / 48));
-                }
+            int64_t viewWidth = m_trackContainer->width();
+            double pixelPos = pos * m_zoom;
+            double viewEnd = m_scrollOffset * m_zoom + viewWidth * 0.7;
+            if (pixelPos > viewEnd) {
+                m_scrollOffset = pos - static_cast<int64_t>(viewWidth * 0.3 / m_zoom);
+                if (m_scrollOffset < 0) m_scrollOffset = 0;
+                syncScrollPositions(static_cast<int>(m_scrollOffset / 48));
             }
-
-            // Update playhead
-            m_timelineRuler->setPlayheadPosition(pos);
-            for (auto& row : m_trackRows)
-                row.view->setPlayheadPosition(pos);
         }
+
+        // Update playhead always
+        m_timelineRuler->setPlayheadPosition(pos);
+        for (auto& row : m_trackRows)
+            row.view->setPlayheadPosition(pos);
     });
     timer->start(40);
 }
