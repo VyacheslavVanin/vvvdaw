@@ -171,6 +171,20 @@ void MainWindow::setupUi() {
         }
     });
 
+    // R toggles recording
+    auto* recordShortcut = new QShortcut(QKeySequence(Qt::Key_R), this);
+    connect(recordShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
+        TransportState s = m_engine.transportState();
+        if (s == TransportState::Recording) {
+            m_engine.setTransportState(TransportState::Stopped);
+            m_transportPanel->setRecording(false);
+            refreshTrackViews();
+        } else {
+            m_engine.setTransportState(TransportState::Recording);
+            m_transportPanel->setRecording(true);
+        }
+    });
+
     // Spacebar toggles play/pause
     auto* playShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(playShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
