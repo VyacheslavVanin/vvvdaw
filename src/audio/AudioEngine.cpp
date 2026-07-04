@@ -222,11 +222,14 @@ std::vector<DeviceInfo> AudioEngine::enumerateOutputDevices() {
 void AudioEngine::setTransportState(TransportState state) {
     if (state == TransportState::Recording && !m_recordingActive) {
         startRecording();
+        m_transportState.store(state, std::memory_order_release);
     } else if (m_recordingActive && state != TransportState::Recording) {
+        m_transportState.store(state, std::memory_order_release);
         stopRecording();
+    } else {
+        m_transportState.store(state, std::memory_order_release);
     }
 
-    m_transportState.store(state, std::memory_order_release);
     if (state == TransportState::Stopped)
         m_playPosition.store(0, std::memory_order_release);
 }
@@ -272,7 +275,7 @@ void AudioEngine::startRecording() {
         m_recordingTracks.emplace(static_cast<int>(i), std::move(rt));
     }
 
-    m_stereoScratch.resize(static_cast<size_t>(m_bufferSize) * 2);
+    m_stereoScratch.resize(static_cast<size_t>(m_bufferSize) * 4);
     m_writerRunning = true;
     m_writerThread = std::thread(&AudioEngine::writerThreadFunc, this);
 }
