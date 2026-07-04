@@ -22,6 +22,10 @@ signals:
     void monitorToggled(bool monitoring);
     void panChanged(float pan);
     void volumeChanged(float volume);
+    void deleteRequested();
+
+protected:
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     Track* m_track = nullptr;

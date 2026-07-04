@@ -225,6 +225,33 @@ void MainWindow::setupMenus() {
         rebuildTracks();
     });
 
+    auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
+    connect(deleteTrackAction, &QAction::triggered, this, [this] {
+        for (size_t i = 0; i < m_project.tracks().size(); ++i) {
+            if (m_trackRows[i].panel->hasFocus() || m_trackRows[i].view->hasFocus()) {
+                QMetaObject::invokeMethod(this, [this, i] {
+                    if (i < m_project.tracks().size()) {
+                        m_project.removeTrack(static_cast<int>(i));
+                        rebuildTracks();
+                    }
+                }, Qt::QueuedConnection);
+                return;
+            }
+        }
+        for (size_t i = m_project.tracks().size(); i > 0; --i) {
+            if (m_trackRows[i - 1].view->selectedEventIndex() >= 0) {
+                int idx = static_cast<int>(i - 1);
+                QMetaObject::invokeMethod(this, [this, idx] {
+                    if (idx < static_cast<int>(m_project.tracks().size())) {
+                        m_project.removeTrack(idx);
+                        rebuildTracks();
+                    }
+                }, Qt::QueuedConnection);
+                return;
+            }
+        }
+    });
+
     auto* deleteAction = trackMenu->addAction("&Delete Event");
     connect(deleteAction, &QAction::triggered, this, [this] {
         for (auto& row : m_trackRows) {
@@ -249,25 +276,23 @@ void MainWindow::loadStyleSheet() {
 }
 
 void MainWindow::rebuildTracks() {
-    for (auto& row : m_trackRows) {
-        m_trackLayout->removeWidget(row.panel);
-        m_trackLayout->removeWidget(row.view);
-        delete row.panel;
-        delete row.view;
-    }
     m_trackRows.clear();
 
-    // Remove existing layouts
-    while (m_trackLayout->count() > 0) {
-        auto* item = m_trackLayout->takeAt(0);
-        if (item->layout()) {
-            while (item->layout()->count() > 0) {
-                auto* child = item->layout()->takeAt(0);
-                delete child;
+    // Clear layout items recursively — delete widgets and wrappers, keep sub-layouts
+    // (they'll be cleaned up when m_trackContainer is destroyed)
+    struct Cleaner {
+        static void run(QLayout* layout) {
+            if (!layout) return;
+            while (auto* item = layout->takeAt(0)) {
+                if (auto* w = item->widget())
+                    delete w;
+                else if (auto* sub = item->layout())
+                    Cleaner::run(sub);
+                delete item;
             }
         }
-        delete item;
-    }
+    };
+    Cleaner::run(m_trackLayout);
 
     for (auto& track : m_project.tracks()) {
         TrackRow row;
@@ -276,6 +301,13 @@ void MainWindow::rebuildTracks() {
         row.view = new TrackViewWidget(&track, m_trackContainer);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
+
+        connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
+            if (idx < static_cast<int>(m_project.tracks().size())) {
+                m_project.removeTrack(idx);
+                rebuildTracks();
+            }
+        });
 
         connect(row.view, &TrackViewWidget::scrollOffsetChanged, this, [this](int64_t offset) {
             m_scrollOffset = offset;

@@ -2,6 +2,8 @@
 #include "model/Track.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QMenu>
+#include <QContextMenuEvent>
 
 TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     : QWidget(parent)
@@ -109,4 +111,13 @@ void TrackPanelWidget::updateFromTrack() {
     m_monitorButton->setChecked(m_track->isMonitoring());
     m_panSlider->setValue(static_cast<int>(m_track->pan() * 100));
     m_volumeSlider->setValue(static_cast<int>(m_track->volume() * 100));
+}
+
+void TrackPanelWidget::contextMenuEvent(QContextMenuEvent* event) {
+    QMenu menu(this);
+    QAction* deleteAction = menu.addAction("Delete Track");
+    connect(deleteAction, &QAction::triggered, this, [this] {
+        QMetaObject::invokeMethod(this, [this] { emit deleteRequested(); }, Qt::QueuedConnection);
+    });
+    menu.exec(event->globalPos());
 }
