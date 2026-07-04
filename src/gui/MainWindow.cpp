@@ -230,6 +230,7 @@ void MainWindow::rebuildTracks() {
     for (auto& track : m_project.tracks()) {
         TrackRow row;
         row.panel = new TrackPanelWidget(&track, m_trackContainer);
+        row.panel->updateFromTrack();
         row.view = new TrackViewWidget(&track, m_trackContainer);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
