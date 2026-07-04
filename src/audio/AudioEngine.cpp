@@ -642,13 +642,26 @@ void AudioEngine::processAudio(const float* input, float* output,
 
 void AudioEngine::startPlayback() {
     if (!m_project) return;
+
+    // Guard against double invocation: stop any existing reader thread first
+    if (m_readerThread.joinable()) {
+        m_readerRunning = false;
+        m_readerCond.notify_one();
+        m_readerThread.join();
+    }
+
     {
         std::lock_guard<std::mutex> lock(m_streamMutex);
         createPlaybackStreams();
     }
 
     m_readerRunning = true;
-    m_readerThread = std::thread(&AudioEngine::readerThreadFunc, this);
+    try {
+        m_readerThread = std::thread(&AudioEngine::readerThreadFunc, this);
+    } catch (const std::system_error& e) {
+        qWarning() << "Failed to start reader thread:" << e.what();
+        m_readerRunning = false;
+    }
 }
 
 void AudioEngine::stopPlayback() {

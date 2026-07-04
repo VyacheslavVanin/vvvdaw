@@ -17,6 +17,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSplitter>
+#include <QShortcut>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -163,6 +164,25 @@ void MainWindow::setupUi() {
             m_engine.setTransportState(TransportState::Recording);
             m_transportPanel->setRecording(true);
         }
+    });
+
+    // Spacebar toggles play/pause
+    auto* playShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
+    connect(playShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
+        TransportState s = m_engine.transportState();
+        if (s == TransportState::Playing || s == TransportState::Recording) {
+            m_engine.setTransportState(TransportState::Paused);
+            m_transportPanel->setPlaying(false);
+        } else {
+            if (s == TransportState::Stopped) {
+                m_engine.setPlayPosition(0);
+                m_scrollOffset = 0;
+                syncScrollPositions(0);
+            }
+            m_engine.setTransportState(TransportState::Playing);
+            m_transportPanel->setPlaying(true);
+        }
+        refreshTrackViews();
     });
 
     connect(m_transportPanel, &TransportPanel::forwardClicked, this, [this] {
