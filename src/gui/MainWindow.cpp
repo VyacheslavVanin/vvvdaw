@@ -60,6 +60,10 @@ void MainWindow::setupUi() {
     rulerRow->addWidget(m_timelineRuler, 1);
     layout->addLayout(rulerRow);
 
+    connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, [this](int64_t sample) {
+        m_engine.setPlayPosition(sample);
+    });
+
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -103,21 +107,17 @@ void MainWindow::setupUi() {
 
     connect(m_transportPanel, &TransportPanel::stopClicked, this, [this] {
         m_engine.setTransportState(TransportState::Stopped);
-        m_engine.setPlayPosition(0);
         m_transportPanel->setPlaying(false);
         m_transportPanel->setRecording(false);
-        syncScrollPositions(0);
     });
 
     connect(m_transportPanel, &TransportPanel::recordClicked, this, [this] {
         TransportState s = m_engine.transportState();
         if (s == TransportState::Recording) {
             m_engine.setTransportState(TransportState::Stopped);
-            m_engine.setPlayPosition(0);
             m_transportPanel->setRecording(false);
         } else {
             m_engine.setTransportState(TransportState::Recording);
-            m_engine.setPlayPosition(0);
             m_transportPanel->setRecording(true);
         }
     });

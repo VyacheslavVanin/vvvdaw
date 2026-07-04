@@ -15,8 +15,12 @@ public:
     void setPlayheadPosition(int64_t sample) { m_playheadPos = sample; update(); }
     int64_t playheadPosition() const { return m_playheadPos; }
 
+signals:
+    void playheadClicked(int64_t sample);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     int64_t m_scrollOffset = 0;

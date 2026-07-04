@@ -230,8 +230,6 @@ void AudioEngine::setTransportState(TransportState state) {
         m_transportState.store(state, std::memory_order_release);
     }
 
-    if (state == TransportState::Stopped)
-        m_playPosition.store(0, std::memory_order_release);
 }
 
 TransportState AudioEngine::transportState() const {
