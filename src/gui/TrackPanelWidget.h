@@ -26,6 +26,7 @@ signals:
     void volumeChanged(float volume);
     void deleteRequested();
     void addTrackRequested();
+    void beforeModify();
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;

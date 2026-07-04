@@ -131,6 +131,13 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         if (m_track) m_track->setMonitoring(checked);
         emit monitorToggled(checked);
     });
+    // Capture undo snapshot before user interaction starts
+    connect(m_panSlider, &QSlider::sliderPressed, this, [this] { emit beforeModify(); });
+    connect(m_volumeSlider, &QSlider::sliderPressed, this, [this] { emit beforeModify(); });
+    for (auto* btn : {m_muteButton, m_soloButton, m_armButton, m_monitorButton}) {
+        connect(btn, &QPushButton::pressed, this, [this] { emit beforeModify(); });
+    }
+
     connect(m_panSlider, &QSlider::valueChanged, this, [this](int val) {
         float pan = val / 100.0f;
         if (m_track) m_track->setPan(pan);

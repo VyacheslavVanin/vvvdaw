@@ -4,6 +4,7 @@
 #include "TimelineRuler.h"
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
+#include "core/UndoStack.h"
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/AudioEvent.h"
@@ -254,6 +255,30 @@ void MainWindow::setupUi() {
     timer->start(40);
 }
 
+void MainWindow::pushUndoState() {
+    m_undoStack.push(m_project.toJson());
+}
+
+void MainWindow::performUndo() {
+    auto state = m_undoStack.undo(m_project.toJson());
+    if (!state) return;
+    m_engine.setTransportState(TransportState::Stopped);
+    m_engine.setProject(nullptr);
+    m_project.fromJson(*state);
+    m_engine.setProject(&m_project);
+    rebuildTracks();
+}
+
+void MainWindow::performRedo() {
+    auto state = m_undoStack.redo(m_project.toJson());
+    if (!state) return;
+    m_engine.setTransportState(TransportState::Stopped);
+    m_engine.setProject(nullptr);
+    m_project.fromJson(*state);
+    m_engine.setProject(&m_project);
+    rebuildTracks();
+}
+
 void MainWindow::setupMenus() {
     auto* fileMenu = menuBar()->addMenu("&File");
 
@@ -269,6 +294,7 @@ void MainWindow::setupMenus() {
     connect(newAction, &QAction::triggered, this, [this] {
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setProject(nullptr);
+        m_undoStack.clear();
         m_project = Project();
         m_project.addTrack("Track 1");
         m_engine.setProject(&m_project);
@@ -284,6 +310,7 @@ void MainWindow::setupMenus() {
 
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setProject(nullptr);
+        m_undoStack.clear();
         Project newProject;
         if (!newProject.load(path)) {
             QMessageBox::warning(this, "Error", "Failed to load project.");
@@ -320,6 +347,12 @@ void MainWindow::setupMenus() {
 
     connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
 
+    auto* editMenu = menuBar()->addMenu("&Edit");
+    auto* undoAction = editMenu->addAction("&Undo", QKeySequence::Undo);
+    connect(undoAction, &QAction::triggered, this, &MainWindow::performUndo);
+    auto* redoAction = editMenu->addAction("&Redo", QKeySequence::Redo);
+    connect(redoAction, &QAction::triggered, this, &MainWindow::performRedo);
+
     connect(settingsAction, &QAction::triggered, this, [this] {
         SettingsDialog dialog(m_settings, m_engine, this);
         if (dialog.exec() == QDialog::Accepted) {
@@ -332,12 +365,14 @@ void MainWindow::setupMenus() {
     auto* trackMenu = menuBar()->addMenu("&Track");
     auto* addTrackAction = trackMenu->addAction("&Add Track", QKeySequence("Ctrl+T"));
     connect(addTrackAction, &QAction::triggered, this, [this] {
+        pushUndoState();
         m_project.addTrack();
         rebuildTracks();
     });
 
     auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
     connect(deleteTrackAction, &QAction::triggered, this, [this] {
+        pushUndoState();
         for (size_t i = 0; i < m_project.tracks().size(); ++i) {
             if (m_trackRows[i].panel->hasFocus() || m_trackRows[i].view->hasFocus()) {
                 QMetaObject::invokeMethod(this, [this, i] {
@@ -417,15 +452,25 @@ void MainWindow::rebuildTracks() {
         row.view->setScrollOffset(m_scrollOffset);
 
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
+            pushUndoState();
             m_project.addTrack();
             rebuildTracks();
         });
 
         connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
             if (idx < static_cast<int>(m_project.tracks().size())) {
+                pushUndoState();
                 m_project.removeTrack(idx);
                 rebuildTracks();
             }
+        });
+
+        connect(row.panel, &TrackPanelWidget::beforeModify, this, [this] {
+            pushUndoState();
+        });
+
+        connect(row.view, &TrackViewWidget::eventDragStarted, this, [this] {
+            pushUndoState();
         });
 
         connect(row.view, &TrackViewWidget::dragInProgress, this,

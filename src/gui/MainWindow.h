@@ -4,6 +4,8 @@
 #include <memory>
 #include <vector>
 
+#include "core/UndoStack.h"
+
 class Project;
 class AudioEngine;
 class Settings;
@@ -26,10 +28,14 @@ private:
     void loadStyleSheet();
     void rebuildTracks();
     void syncScrollPositions(int value);
+    void pushUndoState();
+    void performUndo();
+    void performRedo();
 
     Project& m_project;
     AudioEngine& m_engine;
     Settings& m_settings;
+    UndoStack m_undoStack;
 
     TransportPanel* m_transportPanel = nullptr;
     TimelineRuler* m_timelineRuler = nullptr;

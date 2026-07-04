@@ -36,9 +36,10 @@ public:
 
     QString audioDirectory() const;
 
-private:
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& obj);
+
+private:
 
     QString m_filePath;
     QString m_name;

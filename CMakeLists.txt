@@ -15,6 +15,7 @@ add_executable(vvvdaw
     resources.qrc
     src/main.cpp
     src/core/Settings.cpp
+    src/core/UndoStack.cpp
     src/audio/AudioEngine.cpp
     src/model/AudioClip.cpp
     src/model/AudioEvent.cpp

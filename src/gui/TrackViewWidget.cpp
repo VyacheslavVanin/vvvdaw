@@ -229,6 +229,7 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             m_dragStartSample = ev->startSample;
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
+            emit eventDragStarted();
         } else {
             m_selectedEventIndex = -1;
         }
