@@ -49,8 +49,16 @@ void MainWindow::setupUi() {
     m_transportPanel = new TransportPanel(this);
     layout->addWidget(m_transportPanel);
 
+    auto* rulerRow = new QHBoxLayout;
+    rulerRow->setContentsMargins(0, 0, 0, 0);
+    rulerRow->setSpacing(0);
+    auto* rulerSpacer = new QWidget(this);
+    rulerSpacer->setFixedWidth(200);
+    rulerSpacer->setStyleSheet("background-color: #2a2a2a;");
     m_timelineRuler = new TimelineRuler(this);
-    layout->addWidget(m_timelineRuler);
+    rulerRow->addWidget(rulerSpacer);
+    rulerRow->addWidget(m_timelineRuler, 1);
+    layout->addLayout(rulerRow);
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
