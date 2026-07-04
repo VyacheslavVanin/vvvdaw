@@ -97,7 +97,16 @@ void MainWindow::setupUi() {
     m_horizontalScroll = new QScrollBar(Qt::Horizontal, this);
     m_horizontalScroll->setRange(0, 1000000);
     connect(m_horizontalScroll, &QScrollBar::valueChanged, this, &MainWindow::syncScrollPositions);
-    layout->addWidget(m_horizontalScroll);
+
+    auto* scrollRow = new QHBoxLayout;
+    scrollRow->setContentsMargins(0, 0, 0, 0);
+    scrollRow->setSpacing(0);
+    auto* scrollSpacer = new QWidget(this);
+    scrollSpacer->setFixedWidth(200);
+    scrollSpacer->setStyleSheet("background-color: #2a2a2a;");
+    scrollRow->addWidget(scrollSpacer);
+    scrollRow->addWidget(m_horizontalScroll);
+    layout->addLayout(scrollRow);
 
     setCentralWidget(central);
 
