@@ -30,24 +30,38 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         return btn;
     };
 
-    m_armButton = makeBtn("R",
-        "QPushButton { background: #442222; color: #cc6666; border: 1px solid #664444; font-weight: bold; font-size: 9px; }"
-        "QPushButton:checked { background: #cc2222; color: white; border: 2px solid #ff4444; }");
+    auto btnStyle = [](const QString& normal, const QString& checked) {
+        return normal + "; padding: 0px; }"
+             + checked + "; padding: 0px; }";
+    };
+
+    m_armButton = makeBtn(QString::fromUtf8("\xe2\x97\x8f"),
+        btnStyle(
+            "QPushButton { background: #442222; color: #cc6666; border: 1px solid #664444; font-weight: bold; font-size: 12px",
+            "QPushButton:checked { background: #cc2222; color: white; border: 2px solid #ff4444; font-weight: bold; font-size: 12px"
+        ));
     m_armButton->setToolTip("Record Arm");
 
     m_soloButton = makeBtn("S",
-        "QPushButton { background: #443322; color: #ccaa66; border: 1px solid #665544; font-weight: bold; font-size: 9px; }"
-        "QPushButton:checked { background: #cc8800; color: white; border: 2px solid #ffaa00; }");
+        btnStyle(
+            "QPushButton { background: #443322; color: #ccaa66; border: 1px solid #665544; font-weight: bold; font-size: 10px",
+            "QPushButton:checked { background: #cc8800; color: white; border: 2px solid #ffaa00; font-weight: bold; font-size: 10px"
+        ));
     m_soloButton->setToolTip("Solo");
 
     m_muteButton = makeBtn("M",
-        "QPushButton { background: #334433; color: #66cc66; border: 1px solid #446644; font-weight: bold; font-size: 9px; }"
-        "QPushButton:checked { background: #33aa33; color: white; border: 2px solid #44ff44; }");
+        btnStyle(
+            "QPushButton { background: #334433; color: #66cc66; border: 1px solid #446644; font-weight: bold; font-size: 10px",
+            "QPushButton:checked { background: #33aa33; color: white; border: 2px solid #44ff44; font-weight: bold; font-size: 10px"
+        ));
     m_muteButton->setToolTip("Mute");
 
     m_monitorButton = makeBtn("MON",
-        "QPushButton { background: #223344; color: #6688cc; border: 1px solid #445566; font-weight: bold; font-size: 8px; }"
-        "QPushButton:checked { background: #2244aa; color: white; border: 2px solid #4488ff; }");
+        btnStyle(
+            "QPushButton { background: #223344; color: #6688cc; border: 1px solid #445566; font-weight: bold; font-size: 9px",
+            "QPushButton:checked { background: #2244aa; color: white; border: 2px solid #4488ff; font-weight: bold; font-size: 9px"
+        ));
+    m_monitorButton->setToolTip("Input Monitoring");
     m_monitorButton->setToolTip("Input Monitoring");
 
     layout->addLayout(topRow);
