@@ -381,20 +381,7 @@ void AudioEngine::processAudio(const float* input, float* output,
                 }
             }
 
-            // Copy input to output (monitor)
-            if (outCh == 1 && inCh >= 1) {
-                for (unsigned long f = 0; f < frameCount; ++f)
-                    output[f] = input[f * inCh];
-            } else if (outCh >= 2 && inCh == 1) {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    output[f * 2] = input[f];
-                    output[f * 2 + 1] = input[f];
-                }
-            } else {
-                unsigned long copySamples = std::min<unsigned long>(frameCount * outCh, frameCount * inCh);
-                std::memcpy(output, input, copySamples * sizeof(float));
-            }
-
+            // No monitoring — output stays silent to prevent feedback
             m_writerCond.notify_one();
         }
 
