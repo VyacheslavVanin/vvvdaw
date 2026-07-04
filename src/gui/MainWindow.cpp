@@ -366,7 +366,6 @@ void MainWindow::rebuildTracks() {
             bool onDifferentTrack = false;
             for (size_t t = 0; t < m_trackRows.size(); ++t) {
                 bool isTarget = (m_trackRows[t].view == widget && static_cast<int>(t) != srcIdx);
-                m_trackRows[t].view->setDragHovered(isTarget);
                 if (isTarget && ev) {
                     m_trackRows[t].view->setDragPreview(ev, currentStartSample);
                     onDifferentTrack = true;
@@ -382,7 +381,6 @@ void MainWindow::rebuildTracks() {
                 (int64_t eventId, int64_t newStartSample, QPoint globalPos) {
             // Clear drag state on all views
             for (auto& r : m_trackRows) {
-                r.view->setDragHovered(false);
                 r.view->setDragPreview(nullptr, 0);
                 r.view->setDragSourceVisible(true);
             }

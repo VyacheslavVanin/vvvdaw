@@ -67,11 +67,7 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
-    if (m_dragHovered) {
-        painter.fillRect(rect(), QColor("#335577"));
-    } else {
-        painter.fillRect(rect(), m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a"));
-    }
+    painter.fillRect(rect(), m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a"));
 
     if (!m_track) return;
 
