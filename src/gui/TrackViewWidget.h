@@ -27,6 +27,7 @@ public:
     void updateFromTrack();
     void deleteSelectedEvent();
     int selectedEventIndex() const { return m_selectedEventIndex; }
+    void setAlternateRow(bool alternate) { m_alternateRow = alternate; update(); }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
@@ -70,4 +71,7 @@ private:
 
     // Selection
     int m_selectedEventIndex = -1;
+
+    // Row appearance
+    bool m_alternateRow = false;
 };

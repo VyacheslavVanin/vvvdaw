@@ -313,9 +313,12 @@ void MainWindow::rebuildTracks() {
 
     for (auto& track : m_project.tracks()) {
         TrackRow row;
+        bool odd = (static_cast<int>(&track - m_project.tracks().data()) % 2) != 0;
         row.panel = new TrackPanelWidget(&track, m_trackContainer);
+        row.panel->setAlternateRow(odd);
         row.panel->updateFromTrack();
         row.view = new TrackViewWidget(&track, m_trackContainer);
+        row.view->setAlternateRow(odd);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
 

@@ -11,10 +11,6 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 {
     setFixedWidth(200);
     setMinimumHeight(60);
-    setAutoFillBackground(true);
-    QPalette p = palette();
-    p.setColor(QPalette::Window, QColor("#2a2a2a"));
-    setPalette(p);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
@@ -125,6 +121,13 @@ void TrackPanelWidget::updateFromTrack() {
     m_monitorButton->setChecked(m_track->isMonitoring());
     m_panSlider->setValue(static_cast<int>(m_track->pan() * 100));
     m_volumeSlider->setValue(static_cast<int>(m_track->volume() * 100));
+}
+
+void TrackPanelWidget::setAlternateRow(bool alternate) {
+    setAutoFillBackground(true);
+    QPalette p = palette();
+    p.setColor(QPalette::Window, alternate ? QColor("#2f2f2f") : QColor("#2a2a2a"));
+    setPalette(p);
 }
 
 void TrackPanelWidget::contextMenuEvent(QContextMenuEvent* event) {

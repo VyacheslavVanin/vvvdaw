@@ -14,6 +14,7 @@ public:
     void setTrack(Track* track) { m_track = track; }
     Track* track() const { return m_track; }
     void updateFromTrack();
+    void setAlternateRow(bool alternate);
 
 signals:
     void armToggled(bool armed);

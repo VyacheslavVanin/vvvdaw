@@ -60,14 +60,14 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
-    painter.fillRect(rect(), QColor("#2a2a2a"));
+    painter.fillRect(rect(), m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a"));
 
     if (!m_track) return;
 
     int trackHeight = height();
 
     // Grid lines
-    painter.setPen(QPen(QColor("#333333"), 1));
+    painter.setPen(QPen(QColor("#3a3a3a"), 1));
     int64_t gridInterval = 48000;
     if (gridInterval * m_pixelsPerSample < 40) gridInterval *= 4;
     int64_t startSample = m_scrollOffset;
