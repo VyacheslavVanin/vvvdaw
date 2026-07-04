@@ -16,6 +16,7 @@ AudioClip::AudioClip(std::vector<float>&& samples, int sampleRate, int channels)
 {
     m_frameCount = m_channels > 0 ? m_samples.size() / m_channels : 0;
     m_sharedData = std::make_shared<const std::vector<float>>(m_samples);
+    computePeaks();
 }
 
 bool AudioClip::loadFromFile(const QString& filePath) {
@@ -33,9 +34,9 @@ bool AudioClip::loadFromFile(const QString& filePath) {
     m_channels = info.channels;
     m_frameCount = info.frames;
 
-    // Large files use disk streaming instead of loading into RAM
     size_t threshold = s_streamingThresholdFrames > 0 ? s_streamingThresholdFrames : DEFAULT_STREAMING_THRESHOLD_FRAMES;
     if (info.frames > threshold) {
+        computePeaksFromFile(file, info);
         sf_close(file);
         m_streaming = true;
         m_samples.clear();
@@ -48,6 +49,7 @@ bool AudioClip::loadFromFile(const QString& filePath) {
     sf_close(file);
 
     m_sharedData = std::make_shared<const std::vector<float>>(m_samples);
+    computePeaks();
     return true;
 }
 
@@ -75,6 +77,45 @@ bool AudioClip::saveToFile(const QString& filePath, int sampleRate) const {
     sf_writef_float(file, m_samples.data(), m_frameCount);
     sf_close(file);
     return true;
+}
+
+void AudioClip::computePeaks() {
+    m_peaks.clear();
+    if (m_frameCount == 0 || m_channels == 0) return;
+
+    size_t peakCount = (m_frameCount + PEAK_STEP_FRAMES - 1) / PEAK_STEP_FRAMES;
+    m_peaks.reserve(peakCount);
+
+    for (size_t f = 0; f < m_frameCount; f += PEAK_STEP_FRAMES) {
+        size_t end = std::min(f + PEAK_STEP_FRAMES, m_frameCount);
+        float maxAbs = 0.0f;
+        for (size_t i = f; i < end; ++i) {
+            float s = std::abs(m_samples[i * m_channels]);
+            if (s > maxAbs) maxAbs = s;
+        }
+        m_peaks.push_back({maxAbs});
+    }
+}
+
+void AudioClip::computePeaksFromFile(SNDFILE* file, const SF_INFO& info) {
+    m_peaks.clear();
+    if (info.frames == 0 || info.channels == 0) return;
+
+    size_t peakCount = (static_cast<size_t>(info.frames) + PEAK_STEP_FRAMES - 1) / PEAK_STEP_FRAMES;
+    m_peaks.reserve(peakCount);
+
+    std::vector<float> buf(static_cast<size_t>(PEAK_STEP_FRAMES) * info.channels);
+
+    for (sf_count_t f = 0; f < info.frames; f += PEAK_STEP_FRAMES) {
+        sf_count_t toRead = std::min<sf_count_t>(PEAK_STEP_FRAMES, info.frames - f);
+        sf_count_t read = sf_readf_float(file, buf.data(), toRead);
+        float maxAbs = 0.0f;
+        for (sf_count_t i = 0; i < read; ++i) {
+            float s = std::abs(buf[i * info.channels]);
+            if (s > maxAbs) maxAbs = s;
+        }
+        m_peaks.push_back({maxAbs});
+    }
 }
 
 double AudioClip::durationSeconds() const {

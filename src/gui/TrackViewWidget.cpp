@@ -110,8 +110,14 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             cache.frameCount != event.clip->frameCount()) {
             cache.thumbnail = QImage(w, eventRect.height() - 2, QImage::Format_ARGB32_Premultiplied);
             cache.thumbnail.fill(Qt::transparent);
-            renderWaveform(cache.thumbnail, event.clip->data(),
-                          event.clip->frameCount(), event.clip->channels(), w);
+            if (!event.clip->peaks().empty()) {
+                renderWaveform(cache.thumbnail, event.clip->peaks().data(),
+                              event.clip->peaks().size(), event.clip->peaksPerFrame(),
+                              event.clip->frameCount(), w);
+            } else {
+                renderWaveform(cache.thumbnail, event.clip->data(),
+                              event.clip->frameCount(), event.clip->channels(), w);
+            }
             cache.frameCount = event.clip->frameCount();
         }
 
@@ -269,6 +275,42 @@ void TrackViewWidget::renderWaveform(QImage& img, const float* samples,
         }
         maxVal = std::min(maxVal, 1.0f);
 
+        int barHeight = static_cast<int>(maxVal * h2);
+        if (barHeight < 1) barHeight = 1;
+
+        painter.drawRect(x, yCenter - barHeight, 1, barHeight * 2);
+    }
+    painter.end();
+}
+
+void TrackViewWidget::renderWaveform(QImage& img, const AudioClip::Peak* peaks,
+                                      size_t peakCount, size_t framesPerPeak,
+                                      size_t totalFrames, int width) {
+    if (!peaks || peakCount == 0 || width <= 0) return;
+
+    QPainter painter(&img);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor("#88ccff"));
+
+    int h2 = img.height() / 2;
+    int yCenter = img.rect().y() + h2;
+
+    for (int x = 0; x < width; ++x) {
+        size_t startFrame = (totalFrames * x) / width;
+        size_t endFrame = (totalFrames * (x + 1)) / width;
+        if (startFrame >= totalFrames) break;
+        if (endFrame > totalFrames) endFrame = totalFrames;
+
+        size_t startPeak = startFrame / framesPerPeak;
+        size_t endPeak = (endFrame + framesPerPeak - 1) / framesPerPeak;
+        if (startPeak >= peakCount) break;
+        if (endPeak > peakCount) endPeak = peakCount;
+
+        float maxVal = 0.0f;
+        for (size_t i = startPeak; i < endPeak; ++i)
+            if (peaks[i].maxAbs > maxVal) maxVal = peaks[i].maxAbs;
+
+        maxVal = std::min(maxVal, 1.0f);
         int barHeight = static_cast<int>(maxVal * h2);
         if (barHeight < 1) barHeight = 1;
 

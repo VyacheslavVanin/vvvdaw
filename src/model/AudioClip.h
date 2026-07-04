@@ -2,9 +2,13 @@
 #include <memory>
 #include <vector>
 #include <QString>
+#include <sndfile.h>
 
 class AudioClip {
 public:
+    struct Peak { float maxAbs; };
+    static constexpr size_t PEAK_STEP_FRAMES = 512;
+
     AudioClip() = default;
     explicit AudioClip(const QString& filePath);
     AudioClip(std::vector<float>&& samples, int sampleRate, int channels);
@@ -27,11 +31,17 @@ public:
     static void setStreamingThresholdFrames(size_t frames) { s_streamingThresholdFrames = frames; }
     static size_t streamingThresholdFrames() { return s_streamingThresholdFrames; }
 
+    const std::vector<Peak>& peaks() const { return m_peaks; }
+    size_t peaksPerFrame() const { return PEAK_STEP_FRAMES; }
+
     std::shared_ptr<const std::vector<float>> sharedData() const { return m_sharedData; }
 
     static constexpr size_t DEFAULT_STREAMING_THRESHOLD_FRAMES = 30 * 48000;
 
 private:
+    void computePeaks();
+    void computePeaksFromFile(SNDFILE* file, const SF_INFO& info);
+
     QString m_filePath;
     std::vector<float> m_samples;
     std::shared_ptr<const std::vector<float>> m_sharedData;
@@ -39,6 +49,8 @@ private:
     int m_channels = 0;
     int m_sampleRate = 0;
     bool m_streaming = false;
+
+    std::vector<Peak> m_peaks;
 
     static size_t s_streamingThresholdFrames;
 };

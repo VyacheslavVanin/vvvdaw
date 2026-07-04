@@ -2,10 +2,10 @@
 #include <QWidget>
 #include <QMap>
 #include <memory>
+#include "model/AudioClip.h"
 #include "model/AudioEvent.h"
 
 class Track;
-class AudioClip;
 
 class TrackViewWidget : public QWidget {
     Q_OBJECT
@@ -48,6 +48,8 @@ private:
 
     void renderWaveform(QImage& img, const float* samples, size_t frameCount,
                         int channels, int width);
+    void renderWaveform(QImage& img, const AudioClip::Peak* peaks, size_t peakCount,
+                        size_t framesPerPeak, size_t totalFrames, int width);
 
     Track* m_track = nullptr;
     int64_t m_scrollOffset = 0;
