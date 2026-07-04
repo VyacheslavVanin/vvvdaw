@@ -29,6 +29,10 @@ public:
     int selectedEventIndex() const { return m_selectedEventIndex; }
     void setAlternateRow(bool alternate) { m_alternateRow = alternate; update(); }
     void setDragHovered(bool hovered) { m_dragHovered = hovered; update(); }
+    void setDragPreview(const AudioEvent* event, int64_t startSample);
+    void setDragSourceVisible(bool visible) {
+        if (m_dragSourceVisible != visible) { m_dragSourceVisible = visible; update(); }
+    }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
@@ -80,4 +84,11 @@ private:
     // Row appearance
     bool m_alternateRow = false;
     bool m_dragHovered = false;
+    bool m_dragSourceVisible = true;
+
+    struct DragPreview {
+        const AudioEvent* event = nullptr;
+        int64_t startSample = 0;
+    };
+    DragPreview m_dragPreview;
 };

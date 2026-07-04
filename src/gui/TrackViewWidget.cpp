@@ -19,6 +19,13 @@ TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
     setFocusPolicy(Qt::ClickFocus);
 }
 
+void TrackViewWidget::setDragPreview(const AudioEvent* event, int64_t startSample) {
+    if (m_dragPreview.event != event || m_dragPreview.startSample != startSample) {
+        m_dragPreview = {event, startSample};
+        update();
+    }
+}
+
 void TrackViewWidget::setScrollOffset(int64_t offset) {
     if (offset < 0) offset = 0;
     if (offset != m_scrollOffset) {
@@ -96,6 +103,7 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         bool isHovered = (static_cast<int>(i) == m_hoverEventIndex);
         bool isDragged = (static_cast<int>(i) == m_dragEventIndex && m_dragging);
         bool isSelected = (static_cast<int>(i) == m_selectedEventIndex);
+        if (isDragged && !m_dragSourceVisible) continue;
 
         // Event background
         QColor bgColor = isSelected ? QColor("#334466")
@@ -133,6 +141,46 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.setPen(QPen(borderColor, 1));
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(eventRect);
+    }
+
+    // Drag preview on target track (full rendering, same style as normal event)
+    if (m_dragPreview.event && m_dragPreview.event->clip && m_dragPreview.event->clip->isValid()) {
+        int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
+        int w = static_cast<int>(m_dragPreview.event->durationSample * m_pixelsPerSample);
+        if (x + w >= 0 && x <= width()) {
+            QRect eventRect(x, 2, w, trackHeight - 4);
+
+            // Full styled rendering like a dragged event
+            painter.setPen(QPen(QColor("#ffcc00"), 2));
+            painter.setBrush(QColor("#1a3344"));
+            painter.drawRect(eventRect);
+
+            // Waveform
+            auto clip = m_dragPreview.event->clip;
+            auto& cache = m_thumbnailCache[clip];
+            if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
+                cache.frameCount != clip->frameCount()) {
+                cache.thumbnail = QImage(w, eventRect.height() - 2, QImage::Format_ARGB32_Premultiplied);
+                cache.thumbnail.fill(Qt::transparent);
+                if (!clip->peaks().empty()) {
+                    renderWaveform(cache.thumbnail, clip->peaks().data(),
+                                  clip->peaks().size(), clip->peaksPerFrame(),
+                                  clip->frameCount(), w);
+                } else {
+                    renderWaveform(cache.thumbnail, clip->data(),
+                                  clip->frameCount(), clip->channels(), w);
+                }
+                cache.frameCount = clip->frameCount();
+            }
+            if (!cache.thumbnail.isNull()) {
+                painter.drawImage(eventRect.x() + 1, eventRect.y() + 1, cache.thumbnail);
+            }
+
+            // Border
+            painter.setPen(QPen(QColor("#ffcc00"), 1));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(eventRect);
+        }
     }
 
     // Mute overlay
