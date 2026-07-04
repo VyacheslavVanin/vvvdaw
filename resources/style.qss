@@ -1,0 +1,58 @@
+/* vvvdaw Dark DAW Theme */
+
+QMainWindow {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+}
+
+QMenuBar {
+    background-color: #2a2a2a;
+    color: #d4d4d4;
+    border-bottom: 1px solid #3c3c3c;
+    padding: 2px;
+}
+
+QMenuBar::item:selected {
+    background-color: #3c3c3c;
+}
+
+QMenu {
+    background-color: #2a2a2a;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+}
+
+QMenu::item:selected {
+    background-color: #094771;
+}
+
+QScrollArea {
+    border: none;
+    background-color: #1e1e1e;
+}
+
+QSplitter::handle {
+    background-color: #3c3c3c;
+    width: 2px;
+}
+
+QPushButton {
+    background-color: #3c3c3c;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+QPushButton:hover {
+    background-color: #4a4a4a;
+}
+
+QPushButton:pressed {
+    background-color: #555;
+}
+
+QLabel {
+    color: #d4d4d4;
+}
