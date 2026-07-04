@@ -11,6 +11,10 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 {
     setFixedWidth(200);
     setMinimumHeight(60);
+    setAutoFillBackground(true);
+    QPalette p = palette();
+    p.setColor(QPalette::Window, QColor("#2a2a2a"));
+    setPalette(p);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
@@ -18,7 +22,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     auto* topRow = new QHBoxLayout;
     m_nameLabel = new QLabel(track ? track->name() : "Track", this);
-    m_nameLabel->setStyleSheet("font-weight: bold; font-size: 11px;");
+    m_nameLabel->setStyleSheet("font-weight: bold; font-size: 11px; color: #ccc;");
     topRow->addWidget(m_nameLabel, 1);
 
     auto makeBtn = [&](const QString& text, const QString& style) {
@@ -54,23 +58,33 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     auto* panRow = new QHBoxLayout;
     auto* panLabel = new QLabel("pan:", this);
-    panLabel->setStyleSheet("font-size: 10px; color: #999;");
+    panLabel->setStyleSheet("font-size: 10px; color: #aaa;");
     panRow->addWidget(panLabel);
     m_panSlider = new QSlider(Qt::Horizontal, this);
     m_panSlider->setRange(-100, 100);
     m_panSlider->setValue(0);
     m_panSlider->setFixedHeight(14);
+    m_panSlider->setStyleSheet(
+        "QSlider::groove:horizontal { background: #444; height: 4px; border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: #aaa; width: 10px; margin: -4px 0; border-radius: 5px; }"
+        "QSlider::sub-page:horizontal { background: #6688cc; border-radius: 2px; }"
+    );
     panRow->addWidget(m_panSlider, 1);
     layout->addLayout(panRow);
 
     auto* volRow = new QHBoxLayout;
     auto* volLabel = new QLabel("level:", this);
-    volLabel->setStyleSheet("font-size: 10px; color: #999;");
+    volLabel->setStyleSheet("font-size: 10px; color: #aaa;");
     volRow->addWidget(volLabel);
     m_volumeSlider = new QSlider(Qt::Horizontal, this);
     m_volumeSlider->setRange(0, 100);
     m_volumeSlider->setValue(80);
     m_volumeSlider->setFixedHeight(14);
+    m_volumeSlider->setStyleSheet(
+        "QSlider::groove:horizontal { background: #444; height: 4px; border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: #aaa; width: 10px; margin: -4px 0; border-radius: 5px; }"
+        "QSlider::sub-page:horizontal { background: #44aa44; border-radius: 2px; }"
+    );
     volRow->addWidget(m_volumeSlider, 1);
     layout->addLayout(volRow);
 
