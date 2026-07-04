@@ -97,4 +97,5 @@ private:
     std::condition_variable m_writerCond;
     std::atomic<bool> m_writerRunning{false};
     bool m_recordingActive = false;
+    int64_t m_recordStartSample = 0;
 };

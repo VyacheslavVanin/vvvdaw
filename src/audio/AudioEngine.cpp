@@ -239,6 +239,7 @@ TransportState AudioEngine::transportState() const {
 void AudioEngine::startRecording() {
     if (!m_project) return;
     m_recordingActive = true;
+    m_recordStartSample = m_playPosition.load(std::memory_order_acquire);
 
     QString audioDir = m_project->audioDirectory();
     QDir().mkpath(audioDir);
@@ -305,7 +306,7 @@ void AudioEngine::stopRecording() {
 
         AudioEvent event;
         event.clip = clip;
-        event.startSample = 0;
+        event.startSample = m_recordStartSample;
         event.offsetSample = 0;
         event.durationSample = clip->frameCount();
 
