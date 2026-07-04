@@ -62,6 +62,23 @@ void MainWindow::setupUi() {
 
     connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
+        m_timelineRuler->setPlayheadPosition(sample);
+        for (auto& row : m_trackRows)
+            row.view->setPlayheadPosition(sample);
+        auto updateTime = [&](int64_t pos) {
+            int sr = m_engine.sampleRate();
+            int totalMs = static_cast<int>((pos * 1000) / sr);
+            int hours = totalMs / 3600000;
+            int mins = (totalMs % 3600000) / 60000;
+            int secs = (totalMs % 60000) / 1000;
+            int ms = totalMs % 1000;
+            m_transportPanel->setTimeText(QString("%1:%2:%3.%4")
+                .arg(hours, 2, 10, QChar('0'))
+                .arg(mins, 2, 10, QChar('0'))
+                .arg(secs, 2, 10, QChar('0'))
+                .arg(ms, 3, 10, QChar('0')));
+        };
+        updateTime(sample);
     });
 
     auto* scrollArea = new QScrollArea(this);
