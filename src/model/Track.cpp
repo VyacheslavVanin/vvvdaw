@@ -11,6 +11,10 @@ void Track::addEvent(const AudioEvent& event) {
     m_events.push_back(ev);
 }
 
+void Track::importEvent(const AudioEvent& event) {
+    m_events.push_back(event);
+}
+
 void Track::removeEvent(int64_t eventId) {
     auto it = std::remove_if(m_events.begin(), m_events.end(),
         [eventId](const AudioEvent& e) { return e.id == eventId; });

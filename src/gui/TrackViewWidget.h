@@ -33,6 +33,7 @@ signals:
     void scrollOffsetChanged(int64_t offset);
     void eventMoved(int64_t eventId, int64_t newStartSample);
     void eventsChanged();
+    void eventDragFinished(int64_t eventId, int64_t newStartSample, QPoint globalPos);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

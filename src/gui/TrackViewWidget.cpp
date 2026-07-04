@@ -224,6 +224,7 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
         if (m_track && m_dragEventIndex >= 0) {
             auto& ev = m_track->events()[m_dragEventIndex];
             emit eventMoved(ev.id, ev.startSample);
+            emit eventDragFinished(ev.id, ev.startSample, event->globalPosition().toPoint());
         }
         m_dragEventIndex = -1;
         update();
