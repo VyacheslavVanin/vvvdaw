@@ -18,22 +18,24 @@ int main(int argc, char* argv[]) {
     Settings settings;
     settings.load();
 
-    AudioEngine audioEngine;
-    if (!audioEngine.init(settings)) {
-        qWarning("Failed to initialize audio engine");
-    } else {
-        audioEngine.startStream();
-    }
+    int result;
+    {
+        Project project;
+        project.addTrack("Track 1");
 
-    Project project;
-    project.addTrack("Track 1");
+        AudioEngine audioEngine;
+        if (!audioEngine.init(settings)) {
+            qWarning("Failed to initialize audio engine");
+        } else {
+            audioEngine.startStream();
+        }
 
-    MainWindow window(project, audioEngine, settings);
-    window.show();
+        MainWindow window(project, audioEngine, settings);
+        window.show();
 
-    int result = app.exec();
+        result = app.exec();
+    } // audioEngine destroyed first → shutdown() while project & PortAudio still alive
 
-    audioEngine.shutdown();
     settings.save();
     Pa_Terminate();
     return result;

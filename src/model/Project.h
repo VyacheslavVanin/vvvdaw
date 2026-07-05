@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <vector>
 #include <memory>
+#include <shared_mutex>
 #include "Track.h"
 #include "AudioBus.h"
 
@@ -65,7 +66,13 @@ public:
     void clearRecordRegion() { m_recordRegionStart = -1; m_recordRegionEnd = -1; }
     bool hasRecordRegion() const { return m_recordRegionStart >= 0 && m_recordRegionEnd > m_recordRegionStart; }
 
+    auto readLock() const { return std::shared_lock(*m_mutex); }
+    auto writeLock() { return std::unique_lock(*m_mutex); }
+    std::shared_mutex& mutex() const { return *m_mutex; }
+
 private:
+
+    mutable std::unique_ptr<std::shared_mutex> m_mutex{std::make_unique<std::shared_mutex>()};
 
     QString m_filePath;
     QString m_name;

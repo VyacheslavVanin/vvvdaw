@@ -253,24 +253,28 @@ void AudioEngine::setPlayPosition(int64_t pos) {
 }
 
 void AudioEngine::startRecording() {
-    if (!m_project) return;
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+
+    std::shared_lock projectLock(proj->mutex());
+
     m_recordingActive = true;
 
     // If a record region exists, place recorded event at region start
-    if (m_project->hasRecordRegion()) {
-        m_recordStartSample = m_project->recordRegionStart();
+    if (proj->hasRecordRegion()) {
+        m_recordStartSample = proj->recordRegionStart();
     } else {
         m_recordStartSample = m_playPosition.load(std::memory_order_acquire);
     }
 
     // If no record region, capture everywhere; otherwise wait to enter region
-    m_regionRecordingActive.store(!m_project->hasRecordRegion(), std::memory_order_release);
+    m_regionRecordingActive.store(!proj->hasRecordRegion(), std::memory_order_release);
 
-    QString audioDir = m_project->audioDirectory();
+    QString audioDir = proj->audioDirectory();
     QDir().mkpath(audioDir);
 
-    for (size_t i = 0; i < m_project->tracks().size(); ++i) {
-        auto& track = m_project->tracks()[i];
+    for (size_t i = 0; i < proj->tracks().size(); ++i) {
+        auto& track = proj->tracks()[i];
         if (!track.isRecordArmed()) continue;
 
         QString filePath = audioDir + QString("/track_%1_%2.wav")
@@ -314,17 +318,20 @@ void AudioEngine::stopRecording() {
     }
 
     // Close all files and create AudioEvents
-    if (!m_project) {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) {
         m_recordingTracks.clear();
         return;
     }
+
+    std::unique_lock projectLock(proj->mutex());
     for (auto& [trackIdx, rt] : m_recordingTracks) {
         if (rt.file) {
             sf_close(rt.file);
             rt.file = nullptr;
         }
 
-        if (trackIdx < 0 || trackIdx >= static_cast<int>(m_project->tracks().size()))
+        if (trackIdx < 0 || trackIdx >= static_cast<int>(proj->tracks().size()))
             continue;
 
         auto clip = std::make_shared<AudioClip>(QString::fromStdString(rt.filePath));
@@ -334,15 +341,15 @@ void AudioEngine::stopRecording() {
         }
 
         bool addedAsTake = false;
-        auto& track = m_project->tracks()[trackIdx];
+        auto& track = proj->tracks()[trackIdx];
 
         addedAsTake = processLoopRecordRegion(*clip, rt, track);
 
         if (!addedAsTake) {
             // Without loop+record-region: try to add as take to existing loop event
-            if (m_project->hasLoop()) {
-                int64_t loopStart = m_project->loopStart();
-                int64_t loopEnd = m_project->loopEnd();
+            if (proj->hasLoop()) {
+                int64_t loopStart = proj->loopStart();
+                int64_t loopEnd = proj->loopEnd();
                 qDebug() << "RR_SPLIT: fallback hasLoop loopStart=" << loopStart << "loopEnd=" << loopEnd;
                 for (auto& ev : track.events()) {
                     if (ev.startSample() >= loopStart && ev.startSample() < loopEnd) {
@@ -371,10 +378,11 @@ void AudioEngine::stopRecording() {
 }
 
 bool AudioEngine::processLoopRecordRegion(AudioClip& clip, const RecordingTrack& rt, Track& track) {
-    if (!m_project->hasLoop() || !m_project->hasRecordRegion())
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj || !proj->hasLoop() || !proj->hasRecordRegion())
         return false;
 
-    int64_t regionLen = m_project->recordRegionEnd() - m_project->recordRegionStart();
+    int64_t regionLen = proj->recordRegionEnd() - proj->recordRegionStart();
     if (regionLen <= 0)
         return false;
 
@@ -499,8 +507,9 @@ void AudioEngine::processAudio(const float* input, float* output,
 
         bool isActive = (state == TransportState::Playing || state == TransportState::Recording);
 
-        if (isActive && m_project) {
+        if (isActive) {
             // --- Audio capture (Recording only, within record region) ---
+            // This runs before the project lock so recording is never dropped
             if (state == TransportState::Recording &&
                 m_regionRecordingActive.load(std::memory_order_acquire) &&
                 input && inCh > 0) {
@@ -517,9 +526,26 @@ void AudioEngine::processAudio(const float* input, float* output,
                         rt.buffer->write(input, frameCount * 2);
                     }
                 }
+            }
 
-                // Monitoring
-                for (const auto& track : m_project->tracks()) {
+            // Access project data under shared (read) lock — skip if writer is active
+            auto* proj = m_project.load(std::memory_order_acquire);
+            if (!proj) {
+                m_playPosition.store(pos + frameCount, std::memory_order_release);
+                return;
+            }
+            std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
+            if (!projectLock) {
+                m_playPosition.store(pos + frameCount, std::memory_order_release);
+                m_writerCond.notify_one();
+                return;
+            }
+
+            // Monitoring (only if recording and inside record region)
+            if (state == TransportState::Recording &&
+                m_regionRecordingActive.load(std::memory_order_acquire) &&
+                input && inCh > 0) {
+                for (const auto& track : proj->tracks()) {
                     if (!track.isRecordArmed() || !track.isMonitoring()) continue;
                     float trackVol = track.volume() * vvvdaw::MonitoringVolumeFactor;
                     float pan = track.pan();
@@ -550,11 +576,11 @@ void AudioEngine::processAudio(const float* input, float* output,
 
             // --- Playback (events) ---
             bool anySolo = false;
-            for (const auto& track : m_project->tracks()) {
+            for (const auto& track : proj->tracks()) {
                 if (track.isSolo()) { anySolo = true; break; }
             }
 
-            for (const auto& track : m_project->tracks()) {
+            for (const auto& track : proj->tracks()) {
                 if (track.isMuted()) continue;
                 if (anySolo && !track.isSolo()) continue;
                 float trackVol = track.volume();
@@ -635,10 +661,10 @@ void AudioEngine::processAudio(const float* input, float* output,
             int64_t newPos = pos + frameCount;
 
             // Loop wrapping
-            if (m_project && m_project->hasLoop()) {
-                int64_t loopEnd = m_project->loopEnd();
+            if (proj->hasLoop()) {
+                int64_t loopEnd = proj->loopEnd();
                 if (newPos >= loopEnd) {
-                    int64_t loopStart = m_project->loopStart();
+                    int64_t loopStart = proj->loopStart();
                     int64_t excess = newPos - loopEnd;
                     newPos = loopStart + excess;
                     if (newPos >= loopEnd)
@@ -655,9 +681,9 @@ void AudioEngine::processAudio(const float* input, float* output,
 
             // --- Record region: control capture active flag ---
             if (state == TransportState::Recording &&
-                m_project && m_project->hasRecordRegion()) {
-                int64_t rrStart = m_project->recordRegionStart();
-                int64_t rrEnd = m_project->recordRegionEnd();
+                proj->hasRecordRegion()) {
+                int64_t rrStart = proj->recordRegionStart();
+                int64_t rrEnd = proj->recordRegionEnd();
                 bool regionActive = m_regionRecordingActive.load(std::memory_order_acquire);
                 if (!regionActive && newPos > rrStart && pos < rrEnd) {
                     // Entered or already inside the region
@@ -673,7 +699,7 @@ void AudioEngine::processAudio(const float* input, float* output,
 }
 
 void AudioEngine::startPlayback() {
-    if (!m_project) return;
+    if (!m_project.load(std::memory_order_acquire)) return;
 
     // Guard against double invocation: stop any existing reader thread first
     if (m_readerThread.joinable()) {
@@ -712,10 +738,15 @@ void AudioEngine::stopPlayback() {
 }
 
 void AudioEngine::createPlaybackStreams() {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+
+    std::shared_lock projectLock(proj->mutex());
+
     m_playbackStreams.clear();
     int64_t pos = m_playPosition.load(std::memory_order_acquire);
 
-    for (const auto& track : m_project->tracks()) {
+    for (const auto& track : proj->tracks()) {
         for (const auto& event : track.events()) {
             auto activeClip = event.activeClip();
             if (!activeClip || !activeClip->isValid() || !activeClip->isStreaming())

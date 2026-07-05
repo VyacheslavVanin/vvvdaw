@@ -65,7 +65,7 @@ public:
     static std::vector<DeviceInfo> enumerateOutputDevices() { return enumerateDevices(false); }
     static std::vector<DeviceInfo> enumerateDevices(bool input);
 
-    void setProject(Project* project) { m_project = project; }
+    void setProject(Project* project) { m_project.store(project, std::memory_order_release); }
 
     void setTransportState(TransportState state);
     TransportState transportState() const;
@@ -98,7 +98,7 @@ private:
     bool processLoopRecordRegion(AudioClip& clip, const RecordingTrack& rt, Track& track);
 
     PaStream* m_stream = nullptr;
-    Project* m_project = nullptr;
+    std::atomic<Project*> m_project{nullptr};
     int m_sampleRate = 48000;
     int m_bufferSize = 512;
     int m_inputChannels = 0;
