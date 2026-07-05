@@ -29,7 +29,6 @@ TransportPanel::TransportPanel(QWidget* parent)
     m_snapButton->setFixedHeight(28);
     m_snapButton->setToolTip("Toggle snap to grid");
     m_snapButton->setCheckable(true);
-    m_snapButton->setChecked(true);
     layout->addWidget(m_snapButton);
 
     connect(m_backButton, &QPushButton::clicked, this, &TransportPanel::backClicked);
@@ -38,6 +37,10 @@ TransportPanel::TransportPanel(QWidget* parent)
     connect(m_stopButton, &QPushButton::clicked, this, &TransportPanel::stopClicked);
     connect(m_recordButton, &QPushButton::clicked, this, &TransportPanel::recordClicked);
     connect(m_forwardButton, &QPushButton::clicked, this, &TransportPanel::forwardClicked);
+
+    // Set initial checked state before connecting toggled to avoid premature emission
+    m_snapButton->setChecked(true);
+    m_snapButton->setStyleSheet("QPushButton { background: #335577; color: white; border: 1px solid #5599cc; }");
     connect(m_snapButton, &QPushButton::toggled, this, [this](bool snap) {
         m_snapToGrid = snap;
         m_snapButton->setStyleSheet(snap
