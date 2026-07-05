@@ -90,40 +90,72 @@ void MainWindow::setupUi() {
     rulerRow2->addWidget(rulerSpacer2);
     rulerRow2->addWidget(m_measureRuler, 1);
     layout->addLayout(rulerRow2);
-    connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, [this](int64_t sample) {
+    auto onPlayheadClicked = [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
         m_timelineRuler->setPlayheadPosition(sample);
+        m_measureRuler->setPlayheadPosition(sample);
         for (auto& row : m_trackRows)
             row.view->setPlayheadPosition(sample);
         m_transportPanel->setTimeText(TimeUtils::formatTime(sample, m_engine.sampleRate()));
-    });
+    };
+    connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, onPlayheadClicked);
+    connect(m_measureRuler, &MeasureRuler::playheadClicked, this, onPlayheadClicked);
 
     // Loop signals
-    connect(m_timelineRuler, &TimelineRuler::loopCreated, this, [this](int64_t start, int64_t end) {
+    auto onLoopCreated = [this](int64_t start, int64_t end) {
         m_project.setLoop(start, end);
-    });
-    connect(m_timelineRuler, &TimelineRuler::loopRemoved, this, [this] {
+        m_timelineRuler->setLoop(start, end);
+        m_measureRuler->setLoop(start, end);
+    };
+    connect(m_timelineRuler, &TimelineRuler::loopCreated, this, onLoopCreated);
+    connect(m_measureRuler, &MeasureRuler::loopCreated, this, onLoopCreated);
+
+    auto onLoopRemoved = [this] {
         m_project.clearLoop();
-    });
-    connect(m_timelineRuler, &TimelineRuler::loopChanged, this, [this](int64_t start, int64_t end) {
+        m_timelineRuler->clearLoop();
+        m_measureRuler->clearLoop();
+    };
+    connect(m_timelineRuler, &TimelineRuler::loopRemoved, this, onLoopRemoved);
+    connect(m_measureRuler, &MeasureRuler::loopRemoved, this, onLoopRemoved);
+
+    auto onLoopChanged = [this](int64_t start, int64_t end) {
         m_project.setLoop(start, end);
-    });
+        m_timelineRuler->setLoop(start, end);
+        m_measureRuler->setLoop(start, end);
+    };
+    connect(m_timelineRuler, &TimelineRuler::loopChanged, this, onLoopChanged);
+    connect(m_measureRuler, &MeasureRuler::loopChanged, this, onLoopChanged);
 
     // Record region signals
-    connect(m_timelineRuler, &TimelineRuler::recordRegionCreated, this, [this](int64_t start, int64_t end) {
+    auto onRecordRegionCreated = [this](int64_t start, int64_t end) {
         m_project.setRecordRegion(start, end);
-    });
-    connect(m_timelineRuler, &TimelineRuler::recordRegionRemoved, this, [this] {
+        m_timelineRuler->setRecordRegion(start, end);
+        m_measureRuler->setRecordRegion(start, end);
+    };
+    connect(m_timelineRuler, &TimelineRuler::recordRegionCreated, this, onRecordRegionCreated);
+    connect(m_measureRuler, &MeasureRuler::recordRegionCreated, this, onRecordRegionCreated);
+
+    auto onRecordRegionRemoved = [this] {
         m_project.clearRecordRegion();
-    });
-    connect(m_timelineRuler, &TimelineRuler::recordRegionChanged, this, [this](int64_t start, int64_t end) {
+        m_timelineRuler->clearRecordRegion();
+        m_measureRuler->clearRecordRegion();
+    };
+    connect(m_timelineRuler, &TimelineRuler::recordRegionRemoved, this, onRecordRegionRemoved);
+    connect(m_measureRuler, &MeasureRuler::recordRegionRemoved, this, onRecordRegionRemoved);
+
+    auto onRecordRegionChanged = [this](int64_t start, int64_t end) {
         m_project.setRecordRegion(start, end);
-    });
+        m_timelineRuler->setRecordRegion(start, end);
+        m_measureRuler->setRecordRegion(start, end);
+    };
+    connect(m_timelineRuler, &TimelineRuler::recordRegionChanged, this, onRecordRegionChanged);
+    connect(m_measureRuler, &MeasureRuler::recordRegionChanged, this, onRecordRegionChanged);
 
     // Tempo widget signals
     auto updateSnapUnit = [this] {
         double snapUnit = m_project.samplesPerBar() / m_snapResolution;
         m_timelineRuler->setSnapUnit(snapUnit);
+        m_measureRuler->setSnapUnit(snapUnit);
         m_measureRuler->setTempo(m_project.tempo());
         m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
         for (auto& row : m_trackRows) {
@@ -221,6 +253,7 @@ void MainWindow::setupTransportConnections() {
         m_engine.setPlayPosition(0);
         int64_t zeroPos = 0;
         m_timelineRuler->setPlayheadPosition(zeroPos);
+        m_measureRuler->setPlayheadPosition(zeroPos);
         for (auto& row : m_trackRows)
             row.view->setPlayheadPosition(zeroPos);
         m_transportPanel->setPlaying(false);
@@ -288,6 +321,7 @@ void MainWindow::setupTransportConnections() {
                 row.view->setSnapToGrid(snap);
         }
         m_timelineRuler->setSnapToGrid(snap);
+        m_measureRuler->setSnapToGrid(snap);
     });
 }
 
@@ -310,6 +344,7 @@ void MainWindow::setupTimer() {
         }
 
         m_timelineRuler->setPlayheadPosition(pos);
+        m_measureRuler->setPlayheadPosition(pos);
         for (auto& row : m_trackRows)
             row.view->setPlayheadPosition(pos);
     });
@@ -629,19 +664,32 @@ void MainWindow::rebuildTracks() {
     // Restore playhead on new views
     int64_t ph = m_engine.playPosition();
     m_timelineRuler->setPlayheadPosition(ph);
+    m_measureRuler->setPlayheadPosition(ph);
     for (auto& row : m_trackRows)
         row.view->setPlayheadPosition(ph);
 
-    m_timelineRuler->setSnapToGrid(m_project.snapToGrid());
-    if (m_project.hasLoop())
-        m_timelineRuler->setLoop(m_project.loopStart(), m_project.loopEnd());
-    else
+    bool snap = m_project.snapToGrid();
+    m_timelineRuler->setSnapToGrid(snap);
+    m_measureRuler->setSnapToGrid(snap);
+    if (m_project.hasLoop()) {
+        auto ls = m_project.loopStart();
+        auto le = m_project.loopEnd();
+        m_timelineRuler->setLoop(ls, le);
+        m_measureRuler->setLoop(ls, le);
+    } else {
         m_timelineRuler->clearLoop();
-    if (m_project.hasRecordRegion())
-        m_timelineRuler->setRecordRegion(m_project.recordRegionStart(), m_project.recordRegionEnd());
-    else
+        m_measureRuler->clearLoop();
+    }
+    if (m_project.hasRecordRegion()) {
+        auto rs = m_project.recordRegionStart();
+        auto re = m_project.recordRegionEnd();
+        m_timelineRuler->setRecordRegion(rs, re);
+        m_measureRuler->setRecordRegion(rs, re);
+    } else {
         m_timelineRuler->clearRecordRegion();
-    m_transportPanel->setSnapToGrid(m_project.snapToGrid());
+        m_measureRuler->clearRecordRegion();
+    }
+    m_transportPanel->setSnapToGrid(snap);
 
     // Sync MeasureRuler
     m_measureRuler->setTempo(m_project.tempo());
@@ -655,6 +703,7 @@ void MainWindow::rebuildTracks() {
     // Snap unit
     double snapUnit = m_project.samplesPerBar() / m_snapResolution;
     m_timelineRuler->setSnapUnit(snapUnit);
+    m_measureRuler->setSnapUnit(snapUnit);
     for (auto& row : m_trackRows) {
         if (row.view)
             row.view->setSnapUnit(snapUnit);
