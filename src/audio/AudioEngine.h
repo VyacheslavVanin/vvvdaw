@@ -10,10 +10,13 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include "core/Constants.h"
 #include "core/Settings.h"
+#include "RingBuffer.h"
 
 class Project;
 class AudioClip;
+class Track;
 
 enum class TransportState : uint8_t {
     Stopped,
@@ -22,46 +25,18 @@ enum class TransportState : uint8_t {
     Recording
 };
 
-struct RecordingBuffer {
-    std::vector<float> data;
-    std::atomic<size_t> writePos{0};
-    std::atomic<size_t> readPos{0};
-
-    explicit RecordingBuffer(size_t capacity = 48000 * 10);
-    size_t write(const float* samples, size_t count);
-    size_t read(float* dest, size_t maxCount);
-    size_t available() const;
-    size_t capacity() const { return data.size(); }
-};
-
 struct RecordingTrack {
-    std::unique_ptr<RecordingBuffer> buffer;
+    std::unique_ptr<RingBuffer> buffer;
     std::string filePath;
     SNDFILE* file = nullptr;
     SF_INFO info{};
-};
-
-// Ring buffer: background reader thread → audio callback (SPSC)
-struct PlaybackBuffer {
-    std::vector<float> data;
-    std::atomic<size_t> writePos{0};
-    std::atomic<size_t> readPos{0};
-
-    explicit PlaybackBuffer(size_t capacity = 32768);
-    PlaybackBuffer(PlaybackBuffer&& other) noexcept;
-    PlaybackBuffer& operator=(PlaybackBuffer&& other) noexcept;
-    size_t write(const float* samples, size_t count);
-    size_t read(float* dest, size_t maxCount);
-    size_t available() const;
-    size_t capacity() const { return data.size(); }
-    void reset();
 };
 
 struct PlaybackStream {
     AudioClip* clip = nullptr;
     SNDFILE* file = nullptr;
     SF_INFO info{};
-    PlaybackBuffer buffer;
+    RingBuffer buffer;
     int64_t eventStartSample = 0;
     int64_t eventOffsetSample = 0;
     int64_t eventDurationSample = 0;
@@ -86,8 +61,9 @@ public:
     bool stopStream();
     bool restartStream(const Settings& settings);
 
-    static std::vector<DeviceInfo> enumerateInputDevices();
-    static std::vector<DeviceInfo> enumerateOutputDevices();
+    static std::vector<DeviceInfo> enumerateInputDevices() { return enumerateDevices(true); }
+    static std::vector<DeviceInfo> enumerateOutputDevices() { return enumerateDevices(false); }
+    static std::vector<DeviceInfo> enumerateDevices(bool input);
 
     void setProject(Project* project) { m_project = project; }
 
@@ -119,6 +95,8 @@ private:
     void createPlaybackStreams();
     void readerThreadFunc();
 
+    bool processLoopRecordRegion(AudioClip& clip, const RecordingTrack& rt, Track& track);
+
     PaStream* m_stream = nullptr;
     Project* m_project = nullptr;
     int m_sampleRate = 48000;
@@ -136,7 +114,7 @@ private:
     std::mutex m_writerMutex;
     std::condition_variable m_writerCond;
     std::atomic<bool> m_writerRunning{false};
-    bool m_recordingActive = false;
+    std::atomic<bool> m_recordingActive{false};
     std::atomic<bool> m_regionRecordingActive{false};
     int64_t m_recordStartSample = 0;
 

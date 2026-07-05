@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <cstdint>
+#include "core/Constants.h"
 
 class MeasureRuler : public QWidget {
     Q_OBJECT
@@ -29,5 +30,5 @@ private:
     double m_tempo = 120.0;
     int m_timeSigNum = 4;
     int m_timeSigDen = 4;
-    int m_sampleRate = 48000;
+    int m_sampleRate = vvvdaw::DefaultSampleRate;
 };

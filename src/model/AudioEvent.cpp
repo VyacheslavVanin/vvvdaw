@@ -6,24 +6,24 @@ bool AudioEvent::isValid() const {
 }
 
 int64_t AudioEvent::endSample() const {
-    return startSample + durationSample;
+    return m_startSample + m_durationSample;
 }
 
 void AudioEvent::addTake(std::shared_ptr<AudioClip> takeClip) {
-    takes.push_back(takeClip);
-    activeTakeIndex = static_cast<int>(takes.size()) - 1;
-    clip = takeClip;
+    m_takes.push_back(takeClip);
+    m_activeTakeIndex = static_cast<int>(m_takes.size()) - 1;
+    m_clip = takeClip;
 }
 
 void AudioEvent::setActiveTake(int index) {
-    if (index >= 0 && index < static_cast<int>(takes.size())) {
-        activeTakeIndex = index;
-        clip = takes[index];
+    if (index >= 0 && index < static_cast<int>(m_takes.size())) {
+        m_activeTakeIndex = index;
+        m_clip = m_takes[index];
     }
 }
 
 const std::shared_ptr<AudioClip>& AudioEvent::activeClip() const {
-    if (activeTakeIndex >= 0 && activeTakeIndex < static_cast<int>(takes.size()))
-        return takes[activeTakeIndex];
-    return clip;
+    if (m_activeTakeIndex >= 0 && m_activeTakeIndex < static_cast<int>(m_takes.size()))
+        return m_takes[m_activeTakeIndex];
+    return m_clip;
 }

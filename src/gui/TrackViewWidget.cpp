@@ -1,4 +1,5 @@
 #include "TrackViewWidget.h"
+#include "core/TimeUtils.h"
 #include "WaveformPainter.h"
 #include "model/Track.h"
 #include "model/AudioClip.h"
@@ -10,7 +11,6 @@
 #include <QMenu>
 #include <QAction>
 #include <algorithm>
-#include <cmath>
 
 TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
     : QWidget(parent)
@@ -38,7 +38,7 @@ void TrackViewWidget::setScrollOffset(int64_t offset) {
 }
 
 void TrackViewWidget::setZoom(double pixelsPerSample) {
-    double clamped = std::clamp(pixelsPerSample, 0.000001, 0.1);
+    double clamped = std::clamp(pixelsPerSample, vvvdaw::MinZoom, vvvdaw::MaxZoom);
     if (clamped != m_pixelsPerSample) {
         m_pixelsPerSample = clamped;
         update();
@@ -60,8 +60,8 @@ AudioEvent* TrackViewWidget::eventAtX(int x, int& eventIndex) {
     int64_t s = sampleAtX(x);
     for (size_t i = 0; i < m_track->events().size(); ++i) {
         auto& ev = const_cast<Track*>(m_track)->events()[i];
-        int64_t end = ev.startSample + ev.durationSample;
-        if (s >= ev.startSample && s <= end) {
+        int64_t end = ev.startSample() + ev.durationSample();
+        if (s >= ev.startSample() && s <= end) {
             eventIndex = static_cast<int>(i);
             return &ev;
         }
@@ -94,10 +94,10 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     // Draw events
     for (size_t i = 0; i < m_track->events().size(); ++i) {
         const auto& event = m_track->events()[i];
-        if (!event.clip || !event.clip->isValid()) continue;
+        if (!event.clip() || !event.clip()->isValid()) continue;
 
-        int x = static_cast<int>((event.startSample - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(event.durationSample * m_pixelsPerSample);
+        int x = static_cast<int>((event.startSample() - m_scrollOffset) * m_pixelsPerSample);
+        int w = static_cast<int>(event.durationSample() * m_pixelsPerSample);
         if (x + w < 0 || x > width()) continue;
 
         QRect eventRect(x, 2, w, trackHeight - 4);
@@ -119,20 +119,21 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.drawRect(eventRect);
 
         // Waveform thumbnail
-        auto& cache = m_thumbnailCache[event.clip];
+        auto& cache = m_thumbnailCache[event.clip()];
         if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
-            cache.frameCount != event.clip->frameCount()) {
-            cache.thumbnail = QImage(w, eventRect.height() - 2, QImage::Format_ARGB32_Premultiplied);
-            cache.thumbnail.fill(Qt::transparent);
-            if (!event.clip->peaks().empty()) {
-                renderWaveform(cache.thumbnail, event.clip->peaks().data(),
-                              event.clip->peaks().size(), event.clip->peaksPerFrame(),
-                              event.clip->frameCount(), w);
+            cache.frameCount != event.clip()->frameCount()) {
+            int th = eventRect.height() - 2;
+            if (!event.clip()->peaks().empty()) {
+                cache.thumbnail = WaveformPainter::renderFromPeaks(
+                    event.clip()->peaks().data(), event.clip()->peaks().size(),
+                    event.clip()->peaksPerFrame(), event.clip()->frameCount(),
+                    w, th);
             } else {
-                renderWaveform(cache.thumbnail, event.clip->data(),
-                              event.clip->frameCount(), event.clip->channels(), w);
+                cache.thumbnail = WaveformPainter::render(
+                    event.clip()->data(), event.clip()->frameCount(), event.clip()->channels(),
+                    w, th);
             }
-            cache.frameCount = event.clip->frameCount();
+            cache.frameCount = event.clip()->frameCount();
         }
 
         if (!cache.thumbnail.isNull()) {
@@ -145,20 +146,20 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.drawRect(eventRect);
 
         // Take indicator
-        if (event.takes.size() > 1) {
+        if (event.takes().size() > 1) {
             painter.setPen(QColor("#aaddff"));
             QFont takeFont = painter.font();
             takeFont.setPixelSize(9);
             painter.setFont(takeFont);
             painter.drawText(eventRect.x() + 3, eventRect.y() + 12,
-                QString("T%1/%2").arg(event.activeTakeIndex + 1).arg(event.takes.size()));
+                QString("T%1/%2").arg(event.activeTakeIndex() + 1).arg(event.takes().size()));
         }
     }
 
     // Drag preview on target track (full rendering, same style as normal event)
-    if (m_dragPreview.event && m_dragPreview.event->clip && m_dragPreview.event->clip->isValid()) {
+    if (m_dragPreview.event && m_dragPreview.event->clip() && m_dragPreview.event->clip()->isValid()) {
         int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(m_dragPreview.event->durationSample * m_pixelsPerSample);
+        int w = static_cast<int>(m_dragPreview.event->durationSample() * m_pixelsPerSample);
         if (x + w >= 0 && x <= width()) {
             QRect eventRect(x, 2, w, trackHeight - 4);
 
@@ -168,19 +169,20 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.drawRect(eventRect);
 
             // Waveform
-            auto clip = m_dragPreview.event->clip;
+            auto clip = m_dragPreview.event->clip();
             auto& cache = m_thumbnailCache[clip];
             if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
                 cache.frameCount != clip->frameCount()) {
-                cache.thumbnail = QImage(w, eventRect.height() - 2, QImage::Format_ARGB32_Premultiplied);
-                cache.thumbnail.fill(Qt::transparent);
+                int th = eventRect.height() - 2;
                 if (!clip->peaks().empty()) {
-                    renderWaveform(cache.thumbnail, clip->peaks().data(),
-                                  clip->peaks().size(), clip->peaksPerFrame(),
-                                  clip->frameCount(), w);
+                    cache.thumbnail = WaveformPainter::renderFromPeaks(
+                        clip->peaks().data(), clip->peaks().size(),
+                        clip->peaksPerFrame(), clip->frameCount(),
+                        w, th);
                 } else {
-                    renderWaveform(cache.thumbnail, clip->data(),
-                                  clip->frameCount(), clip->channels(), w);
+                    cache.thumbnail = WaveformPainter::render(
+                        clip->data(), clip->frameCount(), clip->channels(),
+                        w, th);
                 }
                 cache.frameCount = clip->frameCount();
             }
@@ -212,13 +214,13 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     // Dragged event tooltip
     if (m_dragging && m_dragEventIndex >= 0) {
         auto& ev = m_track->events()[m_dragEventIndex];
-        int phx = static_cast<int>((ev.startSample - m_scrollOffset) * m_pixelsPerSample);
+        int phx = static_cast<int>((ev.startSample() - m_scrollOffset) * m_pixelsPerSample);
         painter.setPen(Qt::white);
         QFont f = painter.font();
         f.setPointSize(9);
         painter.setFont(f);
         painter.drawText(phx + 4, 14,
-            QString("Sample: %1").arg(ev.startSample));
+            QString("Sample: %1").arg(ev.startSample()));
     }
 }
 
@@ -226,10 +228,10 @@ void TrackViewWidget::wheelEvent(QWheelEvent* event) {
     int deltaX = static_cast<int>(event->angleDelta().x());
     int deltaY = static_cast<int>(event->angleDelta().y());
     if (event->modifiers() & Qt::ControlModifier) {
-        double zoomFactor = (deltaY > 0) ? 1.15 : (1.0 / 1.15);
+        double zoomFactor = (deltaY > 0) ? vvvdaw::ZoomFactor : (1.0 / vvvdaw::ZoomFactor);
         setZoom(m_pixelsPerSample * zoomFactor);
     } else if (deltaX != 0) {
-        setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * 48));
+        setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * vvvdaw::ScrollStepSamples));
     }
     event->accept();
 }
@@ -242,7 +244,7 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             m_selectedEventIndex = idx;
             m_dragEventIndex = idx;
             m_dragging = true;
-            m_dragStartSample = ev->startSample;
+            m_dragStartSample = ev->startSample();
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
             emit eventDragStarted();
@@ -259,18 +261,12 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
         int dx = static_cast<int>(event->position().x()) - m_dragStartMouseX;
         int64_t newStart = m_dragStartSample + static_cast<int64_t>(dx / m_pixelsPerSample);
 
-        if (m_snapToGrid) {
-            double snapUnit = m_snapUnit;
-            double snapRem = std::fmod(static_cast<double>(newStart), snapUnit);
-            if (snapRem < snapUnit / 2.0)
-                newStart -= static_cast<int64_t>(snapRem);
-            else
-                newStart += static_cast<int64_t>(snapUnit - snapRem);
-        }
+        if (m_snapToGrid)
+            newStart = TimeUtils::snapSample(newStart, m_snapUnit);
 
         if (newStart < 0) newStart = 0;
-        m_track->events()[m_dragEventIndex].startSample = newStart;
-        emit dragInProgress(m_track->events()[m_dragEventIndex].id, newStart, event->globalPosition().toPoint());
+        m_track->events()[m_dragEventIndex].setStartSample(newStart);
+        emit dragInProgress(m_track->events()[m_dragEventIndex].id(), newStart, event->globalPosition().toPoint());
         update();
     } else {
         // Hover state
@@ -290,8 +286,8 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
         unsetCursor();
         if (m_track && m_dragEventIndex >= 0) {
             auto& ev = m_track->events()[m_dragEventIndex];
-            emit eventMoved(ev.id, ev.startSample);
-            emit eventDragFinished(ev.id, ev.startSample, event->globalPosition().toPoint());
+            emit eventMoved(ev.id(), ev.startSample());
+            emit eventDragFinished(ev.id(), ev.startSample(), event->globalPosition().toPoint());
         }
         m_dragEventIndex = -1;
         update();
@@ -312,7 +308,7 @@ void TrackViewWidget::deleteSelectedEvent() {
         m_selectedEventIndex >= static_cast<int>(m_track->events().size()))
         return;
 
-    int64_t id = m_track->events()[m_selectedEventIndex].id;
+    int64_t id = m_track->events()[m_selectedEventIndex].id();
     m_track->removeEvent(id);
     m_selectedEventIndex = -1;
     m_thumbnailCache.clear();
@@ -328,15 +324,15 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
 
     int idx = -1;
     AudioEvent* ev = eventAtX(static_cast<int>(event->pos().x()), idx);
-    if (!ev || ev->takes.empty()) {
+    if (!ev || ev->takes().empty()) {
         QWidget::contextMenuEvent(event);
         return;
     }
 
     QMenu menu(this);
-    for (size_t i = 0; i < ev->takes.size(); ++i) {
+    for (size_t i = 0; i < ev->takes().size(); ++i) {
         QString label = QString("Take %1").arg(i + 1);
-        if (static_cast<int>(i) == ev->activeTakeIndex)
+        if (static_cast<int>(i) == ev->activeTakeIndex())
             label += " ✓";
         QAction* action = menu.addAction(label);
         connect(action, &QAction::triggered, this, [this, ev, i] {
@@ -348,70 +344,4 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     menu.exec(event->globalPos());
 }
 
-void TrackViewWidget::renderWaveform(QImage& img, const float* samples,
-                                      size_t frameCount, int channels, int width) {
-    if (!samples || frameCount == 0 || width <= 0) return;
 
-    QPainter painter(&img);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor("#88ccff"));
-
-    int h2 = img.height() / 2;
-    int yCenter = img.rect().y() + h2;
-
-    for (int x = 0; x < width; ++x) {
-        size_t startIdx = (frameCount * x) / width;
-        size_t endIdx = (frameCount * (x + 1)) / width;
-        if (startIdx >= frameCount) break;
-        if (endIdx > frameCount) endIdx = frameCount;
-
-        float maxVal = 0.0f;
-        for (size_t i = startIdx; i < endIdx; ++i) {
-            float s = std::abs(samples[i * channels]);
-            if (s > maxVal) maxVal = s;
-        }
-        maxVal = std::min(maxVal, 1.0f);
-
-        int barHeight = static_cast<int>(maxVal * h2);
-        if (barHeight < 1) barHeight = 1;
-
-        painter.drawRect(x, yCenter - barHeight, 1, barHeight * 2);
-    }
-    painter.end();
-}
-
-void TrackViewWidget::renderWaveform(QImage& img, const AudioClip::Peak* peaks,
-                                      size_t peakCount, size_t framesPerPeak,
-                                      size_t totalFrames, int width) {
-    if (!peaks || peakCount == 0 || width <= 0) return;
-
-    QPainter painter(&img);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor("#88ccff"));
-
-    int h2 = img.height() / 2;
-    int yCenter = img.rect().y() + h2;
-
-    for (int x = 0; x < width; ++x) {
-        size_t startFrame = (totalFrames * x) / width;
-        size_t endFrame = (totalFrames * (x + 1)) / width;
-        if (startFrame >= totalFrames) break;
-        if (endFrame > totalFrames) endFrame = totalFrames;
-
-        size_t startPeak = startFrame / framesPerPeak;
-        size_t endPeak = (endFrame + framesPerPeak - 1) / framesPerPeak;
-        if (startPeak >= peakCount) break;
-        if (endPeak > peakCount) endPeak = peakCount;
-
-        float maxVal = 0.0f;
-        for (size_t i = startPeak; i < endPeak; ++i)
-            if (peaks[i].maxAbs > maxVal) maxVal = peaks[i].maxAbs;
-
-        maxVal = std::min(maxVal, 1.0f);
-        int barHeight = static_cast<int>(maxVal * h2);
-        if (barHeight < 1) barHeight = 1;
-
-        painter.drawRect(x, yCenter - barHeight, 1, barHeight * 2);
-    }
-    painter.end();
-}

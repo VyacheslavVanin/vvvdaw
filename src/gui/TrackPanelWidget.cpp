@@ -79,7 +79,6 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
             "QPushButton:checked { background: #2244aa; color: white; border: 2px solid #4488ff; font-weight: bold; font-size: 9px"
         ));
     m_monitorButton->setToolTip("Input Monitoring");
-    m_monitorButton->setToolTip("Input Monitoring");
 
     layout->addLayout(topRow);
 

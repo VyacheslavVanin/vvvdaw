@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QMap>
 #include <memory>
+#include "core/Constants.h"
 #include "model/AudioClip.h"
 #include "model/AudioEvent.h"
 
@@ -59,14 +60,9 @@ private:
     int64_t sampleAtX(int x) const;
     AudioEvent* eventAtX(int x, int& eventIndex);
 
-    void renderWaveform(QImage& img, const float* samples, size_t frameCount,
-                        int channels, int width);
-    void renderWaveform(QImage& img, const AudioClip::Peak* peaks, size_t peakCount,
-                        size_t framesPerPeak, size_t totalFrames, int width);
-
     Track* m_track = nullptr;
     int64_t m_scrollOffset = 0;
-    double m_pixelsPerSample = 0.001;
+    double m_pixelsPerSample = vvvdaw::DefaultZoom;
     int64_t m_playheadPos = -1;
 
     struct ClipCache {
@@ -98,5 +94,5 @@ private:
     DragPreview m_dragPreview;
 
     bool m_snapToGrid = true;
-    double m_snapUnit = 48000.0;
+    double m_snapUnit = vvvdaw::DefaultSnapUnitSamples;
 };

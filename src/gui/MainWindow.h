@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/Constants.h"
 #include "core/UndoStack.h"
 
 class Project;
@@ -53,7 +54,7 @@ private:
     };
     std::vector<TrackRow> m_trackRows;
 
-    double m_zoom = 0.001;
+    double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;
     double m_snapResolution = 4.0; // bar divisions: 1, 2, 4, 8, 16
 };

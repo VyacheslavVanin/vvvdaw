@@ -1,9 +1,9 @@
 #include "TimelineRuler.h"
+#include "core/TimeUtils.h"
 #include <QPainter>
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <QMenu>
-#include <QAction>
 #include <cmath>
 
 TimelineRuler::TimelineRuler(QWidget* parent)
@@ -16,14 +16,8 @@ TimelineRuler::TimelineRuler(QWidget* parent)
 int64_t TimelineRuler::sampleAtX(int x) const {
     int64_t sample = m_scrollOffset + static_cast<int64_t>(x / m_pixelsPerSample);
     if (sample < 0) sample = 0;
-    if (m_snapToGrid) {
-        double snapUnit = m_snapUnit;
-        double snapRem = std::fmod(static_cast<double>(sample), snapUnit);
-        if (snapRem < snapUnit / 2.0)
-            sample -= static_cast<int64_t>(snapRem);
-        else
-            sample += static_cast<int64_t>(snapUnit - snapRem);
-    }
+    if (m_snapToGrid)
+        sample = TimeUtils::snapSample(sample, m_snapUnit);
     return sample;
 }
 
@@ -69,29 +63,23 @@ void TimelineRuler::mouseMoveEvent(QMouseEvent* event) {
         int64_t newVal = m_dragStartValue + delta;
         if (newVal < 0) newVal = 0;
 
-        if (m_snapToGrid) {
-            double snapUnit = m_snapUnit;
-            double snapRem = std::fmod(static_cast<double>(newVal), snapUnit);
-            if (snapRem < snapUnit / 2.0)
-                newVal -= static_cast<int64_t>(snapRem);
-            else
-                newVal += static_cast<int64_t>(snapUnit - snapRem);
-        }
+        if (m_snapToGrid)
+            newVal = TimeUtils::snapSample(newVal, m_snapUnit);
 
         int64_t* target = nullptr;
         int64_t* other = nullptr;
         if (m_dragHandle == DragHandle::LoopStart) {
             target = &m_loopStart; other = &m_loopEnd;
-            if (other && newVal >= *other) newVal = *other - 48000;
+            if (other && newVal >= *other) newVal = *other - vvvdaw::MinLoopGapSamples;
         } else if (m_dragHandle == DragHandle::LoopEnd) {
             target = &m_loopEnd; other = &m_loopStart;
-            if (other && newVal <= *other) newVal = *other + 48000;
+            if (other && newVal <= *other) newVal = *other + vvvdaw::MinLoopGapSamples;
         } else if (m_dragHandle == DragHandle::RRStart) {
             target = &m_rrStart; other = &m_rrEnd;
-            if (other && newVal >= *other) newVal = *other - 48000;
+            if (other && newVal >= *other) newVal = *other - vvvdaw::MinLoopGapSamples;
         } else if (m_dragHandle == DragHandle::RREnd) {
             target = &m_rrEnd; other = &m_rrStart;
-            if (other && newVal <= *other) newVal = *other + 48000;
+            if (other && newVal <= *other) newVal = *other + vvvdaw::MinLoopGapSamples;
         }
         if (target) *target = newVal;
         update();
@@ -141,11 +129,8 @@ void TimelineRuler::contextMenuEvent(QContextMenuEvent* event) {
         connect(setLoop, &QAction::triggered, this, [this, sample] {
             m_loopStart = sample;
             m_loopEnd = sample + static_cast<int64_t>(m_snapUnit * 4);
-            if (m_snapToGrid) {
-                double snapRem = std::fmod(static_cast<double>(m_loopEnd), m_snapUnit);
-                if (snapRem > 0)
-                    m_loopEnd += static_cast<int64_t>(m_snapUnit - snapRem);
-            }
+            if (m_snapToGrid)
+                m_loopEnd = TimeUtils::snapSample(m_loopEnd, m_snapUnit);
             update();
             emit loopCreated(m_loopStart, m_loopEnd);
         });
@@ -163,11 +148,8 @@ void TimelineRuler::contextMenuEvent(QContextMenuEvent* event) {
         connect(setRR, &QAction::triggered, this, [this, sample] {
             m_rrStart = sample;
             m_rrEnd = sample + static_cast<int64_t>(m_snapUnit * 4);
-            if (m_snapToGrid) {
-                double snapRem = std::fmod(static_cast<double>(m_rrEnd), m_snapUnit);
-                if (snapRem > 0)
-                    m_rrEnd += static_cast<int64_t>(m_snapUnit - snapRem);
-            }
+            if (m_snapToGrid)
+                m_rrEnd = TimeUtils::snapSample(m_rrEnd, m_snapUnit);
             update();
             emit recordRegionCreated(m_rrStart, m_rrEnd);
         });
@@ -180,8 +162,7 @@ void TimelineRuler::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.fillRect(rect(), QColor("#2a2a2a"));
 
-    int64_t sampleRate = 48000;
-    double tickInterval = sampleRate;
+    double tickInterval = vvvdaw::TickIntervalSamples;
     if (tickInterval * m_pixelsPerSample < 60) {
         tickInterval *= 4;
     }
@@ -230,7 +211,7 @@ void TimelineRuler::paintEvent(QPaintEvent* /*event*/) {
 
         painter.drawLine(x, 16, x, 28);
 
-        int seconds = static_cast<int>(s / sampleRate);
+        int seconds = static_cast<int>(s / vvvdaw::DefaultSampleRate);
         int minutes = seconds / 60;
         int secs = seconds % 60;
         QString label = QString("%1:%2")

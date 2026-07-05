@@ -47,8 +47,6 @@ public:
     void removeEvent(int64_t eventId);
     AudioEvent* findEvent(int64_t eventId);
 
-    uint32_t atomicState() const;
-
 private:
     QString m_name;
     int m_inputDeviceId = -1;

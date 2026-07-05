@@ -7,6 +7,7 @@
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
 #include "core/UndoStack.h"
+#include "core/TimeUtils.h"
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/AudioEvent.h"
@@ -92,20 +93,7 @@ void MainWindow::setupUi() {
         m_timelineRuler->setPlayheadPosition(sample);
         for (auto& row : m_trackRows)
             row.view->setPlayheadPosition(sample);
-        auto updateTime = [&](int64_t pos) {
-            int sr = m_engine.sampleRate();
-            int totalMs = static_cast<int>((pos * 1000) / sr);
-            int hours = totalMs / 3600000;
-            int mins = (totalMs % 3600000) / 60000;
-            int secs = (totalMs % 60000) / 1000;
-            int ms = totalMs % 1000;
-            m_transportPanel->setTimeText(QString("%1:%2:%3.%4")
-                .arg(hours, 2, 10, QChar('0'))
-                .arg(mins, 2, 10, QChar('0'))
-                .arg(secs, 2, 10, QChar('0'))
-                .arg(ms, 3, 10, QChar('0')));
-        };
-        updateTime(sample);
+        m_transportPanel->setTimeText(TimeUtils::formatTime(sample, m_engine.sampleRate()));
     });
 
     // Loop signals
@@ -282,7 +270,7 @@ void MainWindow::setupUi() {
         int64_t maxEnd = 0;
         for (const auto& track : m_project.tracks()) {
             for (const auto& event : track.events()) {
-                int64_t end = event.startSample + event.durationSample;
+                int64_t end = event.startSample() + event.durationSample();
                 if (end > maxEnd) maxEnd = end;
             }
         }
@@ -303,17 +291,7 @@ void MainWindow::setupUi() {
     connect(timer, &QTimer::timeout, this, [this] {
         TransportState s = m_engine.transportState();
         int64_t pos = m_engine.playPosition();
-        int sr = m_engine.sampleRate();
-        int totalMs = static_cast<int>((pos * 1000) / sr);
-        int hours = totalMs / 3600000;
-        int mins = (totalMs % 3600000) / 60000;
-        int secs = (totalMs % 60000) / 1000;
-        int ms = totalMs % 1000;
-        m_transportPanel->setTimeText(QString("%1:%2:%3.%4")
-            .arg(hours, 2, 10, QChar('0'))
-            .arg(mins, 2, 10, QChar('0'))
-            .arg(secs, 2, 10, QChar('0'))
-            .arg(ms, 3, 10, QChar('0')));
+        m_transportPanel->setTimeText(TimeUtils::formatTime(pos, m_engine.sampleRate()));
 
         if (s == TransportState::Playing || s == TransportState::Recording) {
             // Auto-scroll only during playback or recording
@@ -323,7 +301,7 @@ void MainWindow::setupUi() {
             if (pixelPos > viewEnd) {
                 m_scrollOffset = pos - static_cast<int64_t>(viewWidth * 0.3 / m_zoom);
                 if (m_scrollOffset < 0) m_scrollOffset = 0;
-                syncScrollPositions(static_cast<int>(m_scrollOffset / 48));
+                syncScrollPositions(static_cast<int>(m_scrollOffset / vvvdaw::ScrollStepSamples));
             }
         }
 
@@ -504,21 +482,12 @@ void MainWindow::loadStyleSheet() {
 void MainWindow::rebuildTracks() {
     m_trackRows.clear();
 
-    // Clear layout items recursively — delete widgets and wrappers, keep sub-layouts
-    // (they'll be cleaned up when m_trackContainer is destroyed)
-    struct Cleaner {
-        static void run(QLayout* layout) {
-            if (!layout) return;
-            while (auto* item = layout->takeAt(0)) {
-                if (auto* w = item->widget())
-                    delete w;
-                else if (auto* sub = item->layout())
-                    Cleaner::run(sub);
-                delete item;
-            }
-        }
-    };
-    Cleaner::run(m_trackLayout);
+    // Clear layout items — delete widget wrappers
+    while (auto* item = m_trackLayout->takeAt(0)) {
+        if (auto* w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
 
     for (auto& track : m_project.tracks()) {
         TrackRow row;
@@ -600,7 +569,7 @@ void MainWindow::rebuildTracks() {
                     Track& dst = m_project.tracks()[t];
                     AudioEvent* ev = src.findEvent(eventId);
                     if (ev) {
-                        ev->startSample = newStartSample;
+                        ev->setStartSample(newStartSample);
                         dst.importEvent(*ev);
                         src.removeEvent(eventId);
                         m_trackRows[srcIdx].view->updateFromTrack();
@@ -620,7 +589,7 @@ void MainWindow::rebuildTracks() {
                     r.view->setScrollOffset(offset);
             }
             m_horizontalScroll->blockSignals(true);
-            m_horizontalScroll->setValue(static_cast<int>(offset / 48));
+            m_horizontalScroll->setValue(static_cast<int>(offset / vvvdaw::ScrollStepSamples));
             m_horizontalScroll->blockSignals(false);
         });
 
@@ -672,7 +641,7 @@ void MainWindow::rebuildTracks() {
 }
 
 void MainWindow::syncScrollPositions(int value) {
-    m_scrollOffset = static_cast<int64_t>(value) * 48;
+    m_scrollOffset = static_cast<int64_t>(value) * vvvdaw::ScrollStepSamples;
     m_timelineRuler->setScrollOffset(m_scrollOffset);
     m_measureRuler->setScrollOffset(m_scrollOffset);
     for (auto& row : m_trackRows)

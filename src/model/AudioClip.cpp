@@ -15,7 +15,6 @@ AudioClip::AudioClip(std::vector<float>&& samples, int sampleRate, int channels)
     , m_channels(channels)
 {
     m_frameCount = m_channels > 0 ? m_samples.size() / m_channels : 0;
-    m_sharedData = std::make_shared<const std::vector<float>>(m_samples);
     computePeaks();
 }
 
@@ -40,7 +39,6 @@ bool AudioClip::loadFromFile(const QString& filePath) {
         sf_close(file);
         m_streaming = true;
         m_samples.clear();
-        m_sharedData = std::make_shared<const std::vector<float>>();
         return true;
     }
 
@@ -48,7 +46,6 @@ bool AudioClip::loadFromFile(const QString& filePath) {
     sf_readf_float(file, m_samples.data(), m_frameCount);
     sf_close(file);
 
-    m_sharedData = std::make_shared<const std::vector<float>>(m_samples);
     computePeaks();
     return true;
 }

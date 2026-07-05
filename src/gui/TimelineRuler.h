@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <cstdint>
+#include "core/Constants.h"
 
 class TimelineRuler : public QWidget {
     Q_OBJECT
@@ -55,10 +56,10 @@ private:
                    const QString& label);
 
     int64_t m_scrollOffset = 0;
-    double m_pixelsPerSample = 0.001;
+    double m_pixelsPerSample = vvvdaw::DefaultZoom;
     int64_t m_playheadPos = -1;
     bool m_snapToGrid = true;
-    double m_snapUnit = 48000.0;
+    double m_snapUnit = vvvdaw::DefaultSnapUnitSamples;
 
     int64_t m_loopStart = -1;
     int64_t m_loopEnd = -1;

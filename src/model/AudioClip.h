@@ -35,8 +35,6 @@ public:
     const std::vector<Peak>& peaks() const { return m_peaks; }
     size_t peaksPerFrame() const { return PEAK_STEP_FRAMES; }
 
-    std::shared_ptr<const std::vector<float>> sharedData() const { return m_sharedData; }
-
     static constexpr size_t DEFAULT_STREAMING_THRESHOLD_FRAMES = 30 * 48000;
 
 private:
@@ -45,7 +43,6 @@ private:
 
     QString m_filePath;
     std::vector<float> m_samples;
-    std::shared_ptr<const std::vector<float>> m_sharedData;
     size_t m_frameCount = 0;
     int m_channels = 0;
     int m_sampleRate = 0;

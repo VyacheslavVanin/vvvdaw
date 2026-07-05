@@ -37,7 +37,7 @@ bool Project::save(const QString& filePath) {
 
     // Collect unique clips and copy external files to audio dir
     QSet<const AudioClip*> processedClips;
-    auto saveClip = [&](std::shared_ptr<AudioClip>& clip) {
+    auto saveClip = [&](const std::shared_ptr<AudioClip>& clip) {
         if (!clip || processedClips.contains(clip.get()))
             return;
         processedClips.insert(clip.get());
@@ -87,8 +87,8 @@ bool Project::save(const QString& filePath) {
 
     for (auto& track : m_tracks) {
         for (auto& event : track.events()) {
-            saveClip(event.clip);
-            for (auto& take : event.takes)
+            saveClip(event.clip());
+            for (auto& take : event.takes())
                 saveClip(take);
         }
     }
@@ -183,28 +183,28 @@ QJsonObject Project::toJson() const {
         QJsonArray eventsArr;
         for (const auto& event : track.events()) {
             QJsonObject eObj;
-            if (event.clip) {
-                QString clipPath = event.clip->filePath();
+            if (event.clip()) {
+                QString clipPath = event.clip()->filePath();
                 if (!projDir.isEmpty())
                     clipPath = relativePath(clipPath, projDir);
                 eObj["clipPath"] = clipPath;
-                eObj["clipSampleRate"] = event.clip->sampleRate();
+                eObj["clipSampleRate"] = event.clip()->sampleRate();
             }
-            eObj["startSample"] = static_cast<qint64>(event.startSample);
-            eObj["offsetSample"] = static_cast<qint64>(event.offsetSample);
-            eObj["durationSample"] = static_cast<qint64>(event.durationSample);
+            eObj["startSample"] = static_cast<qint64>(event.startSample());
+            eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
+            eObj["durationSample"] = static_cast<qint64>(event.durationSample());
 
             // Takes
-            if (!event.takes.empty()) {
+            if (!event.takes().empty()) {
                 QJsonArray takesArr;
-                for (const auto& take : event.takes) {
+                for (const auto& take : event.takes()) {
                     QString takePath = take->filePath();
                     if (!projDir.isEmpty())
                         takePath = relativePath(takePath, projDir);
                     takesArr.append(takePath);
                 }
                 eObj["takes"] = takesArr;
-                eObj["activeTakeIndex"] = event.activeTakeIndex;
+                eObj["activeTakeIndex"] = event.activeTakeIndex();
             }
 
             eventsArr.append(eObj);
@@ -272,11 +272,11 @@ void Project::fromJson(const QJsonObject& obj) {
                     : QDir(projDir).absoluteFilePath(clipPath);
                 auto clip = std::make_shared<AudioClip>(absPath);
                 if (clip->isValid())
-                    event.clip = clip;
+                    event.setClip(clip);
             }
-            event.startSample = static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong());
-            event.offsetSample = static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong());
-            event.durationSample = static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong());
+            event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
+            event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
+            event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
 
             // Takes
             if (eObj.contains("takes")) {
@@ -289,12 +289,12 @@ void Project::fromJson(const QJsonObject& obj) {
                             : QDir(projDir).absoluteFilePath(takePath);
                         auto takeClip = std::make_shared<AudioClip>(absPath);
                         if (takeClip->isValid())
-                            event.takes.push_back(takeClip);
+                            event.takes().push_back(takeClip);
                     }
                 }
-                event.activeTakeIndex = eObj["activeTakeIndex"].toInt(-1);
-                if (event.activeTakeIndex >= 0 && event.activeTakeIndex < static_cast<int>(event.takes.size()))
-                    event.clip = event.takes[event.activeTakeIndex];
+                event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
+                if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
+                    event.setClip(event.takes()[event.activeTakeIndex()]);
             }
 
             track.addEvent(event);
