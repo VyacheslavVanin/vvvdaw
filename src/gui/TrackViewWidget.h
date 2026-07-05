@@ -59,6 +59,8 @@ protected:
 private:
     int64_t sampleAtX(int x) const;
     AudioEvent* eventAtX(int x, int& eventIndex);
+    void renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
+                        int x, int y, int w, int h);
 
     Track* m_track = nullptr;
     int64_t m_scrollOffset = 0;

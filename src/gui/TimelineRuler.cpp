@@ -115,45 +115,46 @@ void TimelineRuler::mouseReleaseEvent(QMouseEvent* event) {
 
 void TimelineRuler::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
-    int x = static_cast<int>(event->pos().x());
-    int64_t sample = sampleAtX(x);
+    int64_t sample = sampleAtX(static_cast<int>(event->pos().x()));
 
-    if (m_loopStart >= 0 && m_loopEnd > m_loopStart) {
-        QAction* removeLoop = menu.addAction("Remove Loop");
-        connect(removeLoop, &QAction::triggered, this, [this] {
-            clearLoop();
-            emit loopRemoved();
-        });
-    } else {
-        QAction* setLoop = menu.addAction("Set Loop Here");
-        connect(setLoop, &QAction::triggered, this, [this, sample] {
-            m_loopStart = sample;
-            m_loopEnd = sample + static_cast<int64_t>(m_snapUnit * 4);
-            if (m_snapToGrid)
-                m_loopEnd = TimeUtils::snapSample(m_loopEnd, m_snapUnit);
-            update();
-            emit loopCreated(m_loopStart, m_loopEnd);
-        });
-    }
+    auto addRangeAction = [&](bool active, int64_t& start, int64_t& end,
+                              const QString& setLabel, const QString& removeLabel,
+                              auto clearFn, auto createdFn, auto removedFn)
+    {
+        if (active) {
+            QAction* act = menu.addAction(removeLabel);
+            connect(act, &QAction::triggered, this, [this, clearFn, removedFn] {
+                (this->*clearFn)();
+                (this->*removedFn)();
+            });
+        } else {
+            QAction* act = menu.addAction(setLabel);
+            connect(act, &QAction::triggered, this, [this, sample, &start, &end, createdFn] {
+                start = sample;
+                end = sample + static_cast<int64_t>(m_snapUnit * 4);
+                if (m_snapToGrid)
+                    end = TimeUtils::snapSample(end, m_snapUnit);
+                update();
+                (this->*createdFn)(start, end);
+            });
+        }
+    };
+
+    addRangeAction(m_loopStart >= 0 && m_loopEnd > m_loopStart,
+                   m_loopStart, m_loopEnd,
+                   "Set Loop Here", "Remove Loop",
+                   &TimelineRuler::clearLoop,
+                   &TimelineRuler::loopCreated,
+                   &TimelineRuler::loopRemoved);
+
     menu.addSeparator();
 
-    if (m_rrStart >= 0 && m_rrEnd > m_rrStart) {
-        QAction* removeRR = menu.addAction("Remove Record Region");
-        connect(removeRR, &QAction::triggered, this, [this] {
-            clearRecordRegion();
-            emit recordRegionRemoved();
-        });
-    } else {
-        QAction* setRR = menu.addAction("Set Record Region Here");
-        connect(setRR, &QAction::triggered, this, [this, sample] {
-            m_rrStart = sample;
-            m_rrEnd = sample + static_cast<int64_t>(m_snapUnit * 4);
-            if (m_snapToGrid)
-                m_rrEnd = TimeUtils::snapSample(m_rrEnd, m_snapUnit);
-            update();
-            emit recordRegionCreated(m_rrStart, m_rrEnd);
-        });
-    }
+    addRangeAction(m_rrStart >= 0 && m_rrEnd > m_rrStart,
+                   m_rrStart, m_rrEnd,
+                   "Set Record Region Here", "Remove Record Region",
+                   &TimelineRuler::clearRecordRegion,
+                   &TimelineRuler::recordRegionCreated,
+                   &TimelineRuler::recordRegionRemoved);
 
     menu.exec(event->globalPos());
 }

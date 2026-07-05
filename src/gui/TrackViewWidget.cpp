@@ -119,25 +119,10 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.drawRect(eventRect);
 
         // Waveform thumbnail
-        auto& cache = m_thumbnailCache[event.clip()];
-        if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
-            cache.frameCount != event.clip()->frameCount()) {
+        {
             int th = eventRect.height() - 2;
-            if (!event.clip()->peaks().empty()) {
-                cache.thumbnail = WaveformPainter::renderFromPeaks(
-                    event.clip()->peaks().data(), event.clip()->peaks().size(),
-                    event.clip()->peaksPerFrame(), event.clip()->frameCount(),
-                    w, th);
-            } else {
-                cache.thumbnail = WaveformPainter::render(
-                    event.clip()->data(), event.clip()->frameCount(), event.clip()->channels(),
-                    w, th);
-            }
-            cache.frameCount = event.clip()->frameCount();
-        }
-
-        if (!cache.thumbnail.isNull()) {
-            painter.drawImage(eventRect.x() + 1, eventRect.y() + 1, cache.thumbnail);
+            renderThumbnail(painter, event.clip(),
+                            eventRect.x() + 1, eventRect.y() + 1, w, th);
         }
 
         // Border
@@ -169,25 +154,11 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.drawRect(eventRect);
 
             // Waveform
-            auto clip = m_dragPreview.event->clip();
-            auto& cache = m_thumbnailCache[clip];
-            if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
-                cache.frameCount != clip->frameCount()) {
+            {
+                auto clip = m_dragPreview.event->clip();
                 int th = eventRect.height() - 2;
-                if (!clip->peaks().empty()) {
-                    cache.thumbnail = WaveformPainter::renderFromPeaks(
-                        clip->peaks().data(), clip->peaks().size(),
-                        clip->peaksPerFrame(), clip->frameCount(),
-                        w, th);
-                } else {
-                    cache.thumbnail = WaveformPainter::render(
-                        clip->data(), clip->frameCount(), clip->channels(),
-                        w, th);
-                }
-                cache.frameCount = clip->frameCount();
-            }
-            if (!cache.thumbnail.isNull()) {
-                painter.drawImage(eventRect.x() + 1, eventRect.y() + 1, cache.thumbnail);
+                renderThumbnail(painter, clip,
+                                eventRect.x() + 1, eventRect.y() + 1, w, th);
             }
 
             // Border
@@ -314,6 +285,28 @@ void TrackViewWidget::deleteSelectedEvent() {
     m_thumbnailCache.clear();
     update();
     emit eventsChanged();
+}
+
+void TrackViewWidget::renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
+                                       int x, int y, int w, int h) {
+    auto& cache = m_thumbnailCache[clip];
+    if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
+        cache.frameCount != clip->frameCount()) {
+        if (!clip->peaks().empty()) {
+            cache.thumbnail = WaveformPainter::renderFromPeaks(
+                clip->peaks().data(), clip->peaks().size(),
+                clip->peaksPerFrame(), clip->frameCount(),
+                w, h);
+        } else {
+            cache.thumbnail = WaveformPainter::render(
+                clip->data(), clip->frameCount(), clip->channels(),
+                w, h);
+        }
+        cache.frameCount = clip->frameCount();
+    }
+
+    if (!cache.thumbnail.isNull())
+        painter.drawImage(x, y, cache.thumbnail);
 }
 
 void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {

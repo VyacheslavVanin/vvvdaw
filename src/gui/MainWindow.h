@@ -30,6 +30,8 @@ public:
 private:
     void setupUi();
     void setupMenus();
+    void setupTransportConnections();
+    void setupTimer();
     void loadStyleSheet();
     void rebuildTracks();
     void syncScrollPositions(int value);

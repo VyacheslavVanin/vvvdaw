@@ -184,7 +184,11 @@ void MainWindow::setupUi() {
 
     setCentralWidget(central);
 
-    // Wire transport
+    setupTransportConnections();
+    setupTimer();
+}
+
+void MainWindow::setupTransportConnections() {
     connect(m_transportPanel, &TransportPanel::backClicked, this, [this] {
         m_engine.setPlayPosition(0);
         m_scrollOffset = 0;
@@ -236,7 +240,6 @@ void MainWindow::setupUi() {
         }
     });
 
-    // R toggles recording
     auto* recordShortcut = new QShortcut(QKeySequence(Qt::Key_R), this);
     connect(recordShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
         TransportState s = m_engine.transportState();
@@ -250,7 +253,6 @@ void MainWindow::setupUi() {
         }
     });
 
-    // Spacebar toggles play/pause
     auto* playShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(playShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
         TransportState s = m_engine.transportState();
@@ -287,8 +289,9 @@ void MainWindow::setupUi() {
         }
         m_timelineRuler->setSnapToGrid(snap);
     });
+}
 
-    // Timer for position updates
+void MainWindow::setupTimer() {
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, [this] {
         TransportState s = m_engine.transportState();
@@ -296,7 +299,6 @@ void MainWindow::setupUi() {
         m_transportPanel->setTimeText(TimeUtils::formatTime(pos, m_engine.sampleRate()));
 
         if (s == TransportState::Playing || s == TransportState::Recording) {
-            // Auto-scroll only during playback or recording
             int64_t viewWidth = m_trackContainer->width();
             double pixelPos = pos * m_zoom;
             double viewEnd = m_scrollOffset * m_zoom + viewWidth * 0.7;
@@ -307,7 +309,6 @@ void MainWindow::setupUi() {
             }
         }
 
-        // Update playhead always
         m_timelineRuler->setPlayheadPosition(pos);
         for (auto& row : m_trackRows)
             row.view->setPlayheadPosition(pos);
