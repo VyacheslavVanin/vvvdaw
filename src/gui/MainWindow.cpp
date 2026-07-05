@@ -132,7 +132,7 @@ void MainWindow::setupUi() {
 
     // Tempo widget signals
     auto updateSnapUnit = [this] {
-        double snapUnit = m_project.samplesPerBeat() / m_snapResolution;
+        double snapUnit = m_project.samplesPerBar() / m_snapResolution;
         m_timelineRuler->setSnapUnit(snapUnit);
         m_measureRuler->setTempo(m_project.tempo());
         m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
@@ -663,7 +663,7 @@ void MainWindow::rebuildTracks() {
     m_measureRuler->setScrollOffset(m_scrollOffset);
 
     // Snap unit
-    double snapUnit = m_project.samplesPerBeat() / m_snapResolution;
+    double snapUnit = m_project.samplesPerBar() / m_snapResolution;
     m_timelineRuler->setSnapUnit(snapUnit);
     for (auto& row : m_trackRows) {
         if (row.view)

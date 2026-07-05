@@ -58,7 +58,7 @@ TempoWidget::TempoWidget(QWidget* parent)
     for (int i = 0; i < s_resCount; ++i)
         m_snapCombo->addItem(s_resLabels[i]);
     m_snapCombo->setCurrentIndex(2); // 1/4
-    m_snapCombo->setFixedWidth(52);
+    m_snapCombo->setFixedWidth(64);
     m_snapCombo->setFixedHeight(24);
     m_snapCombo->setStyleSheet(
         "QComboBox { background: #3a3a3a; color: #fff; border: 1px solid #555; "

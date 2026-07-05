@@ -55,5 +55,5 @@ private:
 
     double m_zoom = 0.001;
     int64_t m_scrollOffset = 0;
-    double m_snapResolution = 4.0; // beats per snap unit (1, 2, 4, 8, 16)
+    double m_snapResolution = 4.0; // bar divisions: 1, 2, 4, 8, 16
 };
