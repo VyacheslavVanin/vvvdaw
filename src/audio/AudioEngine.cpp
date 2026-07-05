@@ -340,29 +340,47 @@ std::vector<DeviceInfo> AudioEngine::enumerateOutputDevices() {
 }
 
 void AudioEngine::setTransportState(TransportState state) {
-    // Handle recording transitions
-    if (state == TransportState::Recording && !m_recordingActive) {
-        startRecording();
-        m_transportState.store(state, std::memory_order_release);
-        return;
-    }
-    if (m_recordingActive && state != TransportState::Recording) {
-        m_transportState.store(state, std::memory_order_release);
-        stopRecording();
-        return;
-    }
-
     TransportState prev = m_transportState.load(std::memory_order_acquire);
 
-    if (state == TransportState::Playing && prev != TransportState::Playing) {
-        startPlayback();
-        m_transportState.store(state, std::memory_order_release);
-    } else if (state == TransportState::Stopped || state == TransportState::Paused) {
-        if (prev == TransportState::Playing)
+    // Stopping: stop everything
+    if (state == TransportState::Stopped) {
+        if (m_recordingActive)
+            stopRecording();
+        if (prev == TransportState::Playing || prev == TransportState::Recording || prev == TransportState::Paused)
             stopPlayback();
-        m_transportState.store(state, std::memory_order_release);
-    } else {
-        m_transportState.store(state, std::memory_order_release);
+        m_transportState.store(TransportState::Stopped, std::memory_order_release);
+        return;
+    }
+
+    // Pausing: stop capture and playback but retain position
+    if (state == TransportState::Paused) {
+        if (m_recordingActive)
+            stopRecording();
+        if (prev == TransportState::Playing || prev == TransportState::Recording)
+            stopPlayback();
+        m_transportState.store(TransportState::Paused, std::memory_order_release);
+        return;
+    }
+
+    // Entering Recording: ensure playback, then start recording
+    if (state == TransportState::Recording) {
+        if (!m_recordingActive) {
+            if (prev != TransportState::Playing)
+                startPlayback();
+            startRecording();
+        }
+        m_transportState.store(TransportState::Recording, std::memory_order_release);
+        return;
+    }
+
+    // Entering Playing: stop recording if active, start playback
+    if (state == TransportState::Playing) {
+        if (m_recordingActive)
+            stopRecording();
+        if (prev != TransportState::Playing)
+            startPlayback();
+        m_transportState.store(TransportState::Playing, std::memory_order_release);
+        return;
     }
 }
 
@@ -384,7 +402,16 @@ void AudioEngine::setPlayPosition(int64_t pos) {
 void AudioEngine::startRecording() {
     if (!m_project) return;
     m_recordingActive = true;
-    m_recordStartSample = m_playPosition.load(std::memory_order_acquire);
+
+    // If a record region exists, place recorded event at region start
+    if (m_project->hasRecordRegion()) {
+        m_recordStartSample = m_project->recordRegionStart();
+    } else {
+        m_recordStartSample = m_playPosition.load(std::memory_order_acquire);
+    }
+
+    // If no record region, capture everywhere; otherwise wait to enter region
+    m_regionRecordingActive.store(!m_project->hasRecordRegion(), std::memory_order_release);
 
     QString audioDir = m_project->audioDirectory();
     QDir().mkpath(audioDir);
@@ -425,6 +452,7 @@ void AudioEngine::startRecording() {
 
 void AudioEngine::stopRecording() {
     m_recordingActive = false;
+    m_regionRecordingActive.store(false, std::memory_order_release);
 
     if (m_writerThread.joinable()) {
         m_writerRunning = false;
@@ -529,31 +557,34 @@ void AudioEngine::processAudio(const float* input, float* output,
 
     std::memset(output, 0, frameCount * outCh * sizeof(float));
 
-    // Handle deferred record region transitions
-    if (m_requestRecordStart.exchange(false))
-        setTransportState(TransportState::Recording);
-    if (m_requestRecordStop.exchange(false))
-        setTransportState(TransportState::Playing);
-
     TransportState state = m_transportState.load(std::memory_order_acquire);
 
-    if (state == TransportState::Recording && m_project) {
-        if (input && inCh > 0) {
-            for (auto& [trackIdx, rt] : m_recordingTracks) {
-                if (!rt.buffer) continue;
-                if (inCh == 1) {
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        float s = input[f];
-                        m_stereoScratch[f * 2] = s;
-                        m_stereoScratch[f * 2 + 1] = s;
-                    }
-                    rt.buffer->write(m_stereoScratch.data(), frameCount * 2);
-                } else {
-                    rt.buffer->write(input, frameCount * 2);
-                }
-            }
+    if (state == TransportState::Playing || state == TransportState::Recording ||
+        state == TransportState::Paused) {
+        int64_t pos = m_playPosition.load(std::memory_order_acquire);
 
-            if (m_project) {
+        bool isActive = (state == TransportState::Playing || state == TransportState::Recording);
+
+        if (isActive && m_project) {
+            // --- Audio capture (Recording only, within record region) ---
+            if (state == TransportState::Recording &&
+                m_regionRecordingActive.load(std::memory_order_acquire) &&
+                input && inCh > 0) {
+                for (auto& [trackIdx, rt] : m_recordingTracks) {
+                    if (!rt.buffer) continue;
+                    if (inCh == 1) {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            float s = input[f];
+                            m_stereoScratch[f * 2] = s;
+                            m_stereoScratch[f * 2 + 1] = s;
+                        }
+                        rt.buffer->write(m_stereoScratch.data(), frameCount * 2);
+                    } else {
+                        rt.buffer->write(input, frameCount * 2);
+                    }
+                }
+
+                // Monitoring
                 for (const auto& track : m_project->tracks()) {
                     if (!track.isRecordArmed() || !track.isMonitoring()) continue;
                     float trackVol = track.volume() * 0.7f;
@@ -579,20 +610,11 @@ void AudioEngine::processAudio(const float* input, float* output,
                             output[f] += input[f * inCh] * trackVol;
                     }
                 }
+
+                m_writerCond.notify_one();
             }
 
-            m_writerCond.notify_one();
-        }
-
-        int64_t pos = m_playPosition.load(std::memory_order_acquire);
-        m_playPosition.store(pos + frameCount, std::memory_order_release);
-        return;
-    }
-
-    if (state == TransportState::Playing || state == TransportState::Paused) {
-        int64_t pos = m_playPosition.load(std::memory_order_acquire);
-
-        if (state == TransportState::Playing && m_project) {
+            // --- Playback (events) ---
             bool anySolo = false;
             for (const auto& track : m_project->tracks()) {
                 if (track.isSolo()) { anySolo = true; break; }
@@ -621,7 +643,6 @@ void AudioEngine::processAudio(const float* input, float* output,
                         std::unique_lock<std::mutex> lock(m_streamMutex, std::try_to_lock);
                         if (!lock.owns_lock()) continue;
 
-                        // Find the corresponding playback stream (match clip + position)
                         PlaybackStream* stream = nullptr;
                         for (auto& s : m_playbackStreams) {
                             if (s.clip == activeClip.get() &&
@@ -649,7 +670,6 @@ void AudioEngine::processAudio(const float* input, float* output,
                             }
                         }
 
-                        // Mark finished when reader is done and buffer is drained
                         if (stream->readerFinished && stream->buffer.available() == 0)
                             stream->finished = true;
                     } else {
@@ -677,6 +697,7 @@ void AudioEngine::processAudio(const float* input, float* output,
                 }
             }
 
+            // --- Advance playhead ---
             int64_t newPos = pos + frameCount;
 
             // Loop wrapping
@@ -698,19 +719,22 @@ void AudioEngine::processAudio(const float* input, float* output,
                 m_readerCond.notify_one();
             }
 
-            m_playPosition.store(newPos, std::memory_order_release);
-
-            // Auto record region: check if playhead entered/exited record region
-            if (m_project && m_project->hasRecordRegion()) {
+            // --- Record region: control capture active flag ---
+            if (state == TransportState::Recording &&
+                m_project && m_project->hasRecordRegion()) {
                 int64_t rrStart = m_project->recordRegionStart();
                 int64_t rrEnd = m_project->recordRegionEnd();
-                if (!m_recordingActive && pos < rrEnd && newPos >= rrStart && newPos < rrEnd)
-                    m_requestRecordStart.store(true, std::memory_order_release);
-                else if (m_recordingActive && newPos >= rrEnd)
-                    m_requestRecordStop.store(true, std::memory_order_release);
+                bool regionActive = m_regionRecordingActive.load(std::memory_order_acquire);
+                if (!regionActive && newPos > rrStart && pos < rrEnd) {
+                    // Entered or already inside the region
+                    m_regionRecordingActive.store(true, std::memory_order_release);
+                } else if (regionActive && newPos >= rrEnd) {
+                    m_regionRecordingActive.store(false, std::memory_order_release);
+                }
             }
+
+            m_playPosition.store(newPos, std::memory_order_release);
         }
-        return;
     }
 }
 

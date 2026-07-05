@@ -137,11 +137,8 @@ private:
     std::condition_variable m_writerCond;
     std::atomic<bool> m_writerRunning{false};
     bool m_recordingActive = false;
+    std::atomic<bool> m_regionRecordingActive{false};
     int64_t m_recordStartSample = 0;
-
-    // Auto record region
-    std::atomic<bool> m_requestRecordStart{false};
-    std::atomic<bool> m_requestRecordStop{false};
 
     // Streaming playback
     std::vector<PlaybackStream> m_playbackStreams;
