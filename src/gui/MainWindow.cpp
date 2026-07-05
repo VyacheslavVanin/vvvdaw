@@ -482,6 +482,13 @@ void MainWindow::rebuildTracks() {
         row.view->setScrollOffset(m_scrollOffset);
         row.view->setSnapToGrid(m_project.snapToGrid());
 
+        connect(row.view, &TrackViewWidget::zoomChanged, this, [this](double zoom) {
+            m_zoom = zoom;
+            m_timelineRuler->setZoom(m_zoom);
+            for (auto& r : m_trackRows)
+                r.view->setZoom(m_zoom);
+        });
+
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
             pushUndoState();
             m_project.addTrack();
@@ -572,6 +579,9 @@ void MainWindow::rebuildTracks() {
     }
 
     m_trackLayout->addStretch();
+
+    // Sync zoom to ruler
+    m_timelineRuler->setZoom(m_zoom);
 
     // Restore playhead on new views
     int64_t ph = m_engine.playPosition();

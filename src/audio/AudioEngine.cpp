@@ -172,6 +172,14 @@ void PlaybackStream::close() {
     finished = true;
 }
 
+void PlaybackStream::resetPosition(int64_t startFrame) {
+    if (!file) return;
+    sf_seek(file, startFrame, SEEK_SET);
+    buffer.reset();
+    readerFinished = false;
+    finished = false;
+}
+
 // --- AudioEngine ---
 
 AudioEngine::AudioEngine() = default;
@@ -683,6 +691,13 @@ void AudioEngine::processAudio(const float* input, float* output,
                 }
             }
 
+            // If loop wrapped, signal reader to reset streaming stream positions
+            if (newPos != pos + frameCount) {
+                m_needStreamReset.store(true, std::memory_order_release);
+                m_resetStreamPos.store(newPos, std::memory_order_release);
+                m_readerCond.notify_one();
+            }
+
             m_playPosition.store(newPos, std::memory_order_release);
 
             // Auto record region: check if playhead entered/exited record region
@@ -759,6 +774,7 @@ void AudioEngine::createPlaybackStreams() {
             PlaybackStream stream;
             stream.clip = activeClip.get();
             stream.eventStartSample = event.startSample;
+            stream.eventOffsetSample = event.offsetSample;
             stream.eventDurationSample = event.durationSample;
             int64_t endFrame = std::min<int64_t>(event.offsetSample + event.durationSample,
                                                   activeClip->frameCount());
@@ -803,6 +819,21 @@ void AudioEngine::readerThreadFunc() {
     };
 
     while (m_readerRunning) {
+        // Handle stream reset requests from loop wrapping
+        if (m_needStreamReset.load(std::memory_order_acquire)) {
+            int64_t resetPos = m_resetStreamPos.load(std::memory_order_acquire);
+            {
+                std::lock_guard<std::mutex> lock(m_streamMutex);
+                for (auto& stream : m_playbackStreams) {
+                    int64_t newLocalPos = resetPos - stream.eventStartSample + stream.eventOffsetSample;
+                    if (newLocalPos < stream.eventOffsetSample)
+                        newLocalPos = stream.eventOffsetSample;
+                    stream.resetPosition(newLocalPos);
+                }
+            }
+            m_needStreamReset.store(false, std::memory_order_release);
+        }
+
         fillAll();
 
         std::unique_lock<std::mutex> lock(m_readerMutex);

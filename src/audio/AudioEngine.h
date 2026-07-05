@@ -63,6 +63,7 @@ struct PlaybackStream {
     SF_INFO info{};
     PlaybackBuffer buffer;
     int64_t eventStartSample = 0;
+    int64_t eventOffsetSample = 0;
     int64_t eventDurationSample = 0;
     int64_t endFrame = 0;    // last readable frame in file (exclusive)
     bool readerFinished = false; // reader has reached endFrame
@@ -70,6 +71,7 @@ struct PlaybackStream {
 
     bool open(const QString& filePath, int64_t startFrame, int64_t endFrame);
     void close();
+    void resetPosition(int64_t startFrame);
 };
 
 class AudioEngine {
@@ -148,4 +150,6 @@ private:
     std::mutex m_readerMutex;
     std::condition_variable m_readerCond;
     std::atomic<bool> m_readerRunning{false};
+    std::atomic<bool> m_needStreamReset{false};
+    std::atomic<int64_t> m_resetStreamPos{0};
 };

@@ -38,8 +38,12 @@ void TrackViewWidget::setScrollOffset(int64_t offset) {
 }
 
 void TrackViewWidget::setZoom(double pixelsPerSample) {
-    m_pixelsPerSample = std::clamp(pixelsPerSample, 0.000001, 0.1);
-    update();
+    double clamped = std::clamp(pixelsPerSample, 0.000001, 0.1);
+    if (clamped != m_pixelsPerSample) {
+        m_pixelsPerSample = clamped;
+        update();
+        emit zoomChanged(m_pixelsPerSample);
+    }
 }
 
 void TrackViewWidget::updateFromTrack() {
