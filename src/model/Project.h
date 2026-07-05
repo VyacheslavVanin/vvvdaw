@@ -42,12 +42,28 @@ public:
     bool snapToGrid() const { return m_snapToGrid; }
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
 
+    int64_t loopStart() const { return m_loopStart; }
+    int64_t loopEnd() const { return m_loopEnd; }
+    void setLoop(int64_t start, int64_t end) { m_loopStart = start; m_loopEnd = end; }
+    void clearLoop() { m_loopStart = -1; m_loopEnd = -1; }
+    bool hasLoop() const { return m_loopStart >= 0 && m_loopEnd > m_loopStart; }
+
+    int64_t recordRegionStart() const { return m_recordRegionStart; }
+    int64_t recordRegionEnd() const { return m_recordRegionEnd; }
+    void setRecordRegion(int64_t start, int64_t end) { m_recordRegionStart = start; m_recordRegionEnd = end; }
+    void clearRecordRegion() { m_recordRegionStart = -1; m_recordRegionEnd = -1; }
+    bool hasRecordRegion() const { return m_recordRegionStart >= 0 && m_recordRegionEnd > m_recordRegionStart; }
+
 private:
 
     QString m_filePath;
     QString m_name;
     int m_sampleRate = 48000;
     bool m_snapToGrid = true;
+    int64_t m_loopStart = -1;
+    int64_t m_loopEnd = -1;
+    int64_t m_recordRegionStart = -1;
+    int64_t m_recordRegionEnd = -1;
 
     std::vector<Track> m_tracks;
     std::vector<AudioBus> m_buses;

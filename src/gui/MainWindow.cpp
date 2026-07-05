@@ -64,7 +64,6 @@ void MainWindow::setupUi() {
     rulerRow->addWidget(rulerSpacer);
     rulerRow->addWidget(m_timelineRuler, 1);
     layout->addLayout(rulerRow);
-
     connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
         m_timelineRuler->setPlayheadPosition(sample);
@@ -84,6 +83,28 @@ void MainWindow::setupUi() {
                 .arg(ms, 3, 10, QChar('0')));
         };
         updateTime(sample);
+    });
+
+    // Loop signals
+    connect(m_timelineRuler, &TimelineRuler::loopCreated, this, [this](int64_t start, int64_t end) {
+        m_project.setLoop(start, end);
+    });
+    connect(m_timelineRuler, &TimelineRuler::loopRemoved, this, [this] {
+        m_project.clearLoop();
+    });
+    connect(m_timelineRuler, &TimelineRuler::loopChanged, this, [this](int64_t start, int64_t end) {
+        m_project.setLoop(start, end);
+    });
+
+    // Record region signals
+    connect(m_timelineRuler, &TimelineRuler::recordRegionCreated, this, [this](int64_t start, int64_t end) {
+        m_project.setRecordRegion(start, end);
+    });
+    connect(m_timelineRuler, &TimelineRuler::recordRegionRemoved, this, [this] {
+        m_project.clearRecordRegion();
+    });
+    connect(m_timelineRuler, &TimelineRuler::recordRegionChanged, this, [this](int64_t start, int64_t end) {
+        m_project.setRecordRegion(start, end);
     });
 
     auto* scrollArea = new QScrollArea(this);
@@ -559,6 +580,14 @@ void MainWindow::rebuildTracks() {
         row.view->setPlayheadPosition(ph);
 
     m_timelineRuler->setSnapToGrid(m_project.snapToGrid());
+    if (m_project.hasLoop())
+        m_timelineRuler->setLoop(m_project.loopStart(), m_project.loopEnd());
+    else
+        m_timelineRuler->clearLoop();
+    if (m_project.hasRecordRegion())
+        m_timelineRuler->setRecordRegion(m_project.recordRegionStart(), m_project.recordRegionEnd());
+    else
+        m_timelineRuler->clearRecordRegion();
     m_transportPanel->setSnapToGrid(m_project.snapToGrid());
 }
 

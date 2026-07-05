@@ -146,6 +146,14 @@ QJsonObject Project::toJson() const {
     obj["name"] = m_name;
     obj["sampleRate"] = m_sampleRate;
     obj["snapToGrid"] = m_snapToGrid;
+    if (hasLoop()) {
+        obj["loopStart"] = static_cast<qint64>(m_loopStart);
+        obj["loopEnd"] = static_cast<qint64>(m_loopEnd);
+    }
+    if (hasRecordRegion()) {
+        obj["recordRegionStart"] = static_cast<qint64>(m_recordRegionStart);
+        obj["recordRegionEnd"] = static_cast<qint64>(m_recordRegionEnd);
+    }
 
     QString projDir = m_filePath.isEmpty() ? QString()
                      : QFileInfo(m_filePath).absolutePath();
@@ -175,6 +183,20 @@ QJsonObject Project::toJson() const {
             eObj["startSample"] = static_cast<qint64>(event.startSample);
             eObj["offsetSample"] = static_cast<qint64>(event.offsetSample);
             eObj["durationSample"] = static_cast<qint64>(event.durationSample);
+
+            // Takes
+            if (!event.takes.empty()) {
+                QJsonArray takesArr;
+                for (const auto& take : event.takes) {
+                    QString takePath = take->filePath();
+                    if (!projDir.isEmpty())
+                        takePath = relativePath(takePath, projDir);
+                    takesArr.append(takePath);
+                }
+                eObj["takes"] = takesArr;
+                eObj["activeTakeIndex"] = event.activeTakeIndex;
+            }
+
             eventsArr.append(eObj);
         }
         tObj["events"] = eventsArr;
@@ -199,6 +221,15 @@ void Project::fromJson(const QJsonObject& obj) {
     m_name = obj["name"].toString("Untitled");
     m_sampleRate = obj["sampleRate"].toInt(48000);
     m_snapToGrid = obj["snapToGrid"].toBool(true);
+
+    if (obj.contains("loopStart") && obj.contains("loopEnd")) {
+        m_loopStart = static_cast<int64_t>(obj["loopStart"].toVariant().toLongLong());
+        m_loopEnd = static_cast<int64_t>(obj["loopEnd"].toVariant().toLongLong());
+    }
+    if (obj.contains("recordRegionStart") && obj.contains("recordRegionEnd")) {
+        m_recordRegionStart = static_cast<int64_t>(obj["recordRegionStart"].toVariant().toLongLong());
+        m_recordRegionEnd = static_cast<int64_t>(obj["recordRegionEnd"].toVariant().toLongLong());
+    }
 
     QString projDir = m_filePath.isEmpty() ? QString()
                      : QFileInfo(m_filePath).absolutePath();
@@ -233,6 +264,26 @@ void Project::fromJson(const QJsonObject& obj) {
             event.startSample = static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong());
             event.offsetSample = static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong());
             event.durationSample = static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong());
+
+            // Takes
+            if (eObj.contains("takes")) {
+                const QJsonArray takesArr = eObj["takes"].toArray();
+                for (const auto& takeVal : takesArr) {
+                    QString takePath = takeVal.toString();
+                    if (!takePath.isEmpty()) {
+                        QString absPath = QDir::isAbsolutePath(takePath)
+                            ? takePath
+                            : QDir(projDir).absoluteFilePath(takePath);
+                        auto takeClip = std::make_shared<AudioClip>(absPath);
+                        if (takeClip->isValid())
+                            event.takes.push_back(takeClip);
+                    }
+                }
+                event.activeTakeIndex = eObj["activeTakeIndex"].toInt(-1);
+                if (event.activeTakeIndex >= 0 && event.activeTakeIndex < static_cast<int>(event.takes.size()))
+                    event.clip = event.takes[event.activeTakeIndex];
+            }
+
             track.addEvent(event);
         }
         m_tracks.push_back(std::move(track));

@@ -425,6 +425,10 @@ void AudioEngine::stopRecording() {
     }
 
     // Close all files and create AudioEvents
+    if (!m_project) {
+        m_recordingTracks.clear();
+        return;
+    }
     for (auto& [trackIdx, rt] : m_recordingTracks) {
         if (rt.file) {
             sf_close(rt.file);
@@ -440,13 +444,31 @@ void AudioEngine::stopRecording() {
             continue;
         }
 
-        AudioEvent event;
-        event.clip = clip;
-        event.startSample = m_recordStartSample;
-        event.offsetSample = 0;
-        event.durationSample = clip->frameCount();
+        // If inside a loop, try to add as a take to an existing event
+        bool addedAsTake = false;
+        if (m_project->hasLoop()) {
+            int64_t loopStart = m_project->loopStart();
+            int64_t loopEnd = m_project->loopEnd();
+            auto& track = m_project->tracks()[trackIdx];
+            for (auto& event : track.events()) {
+                // Find event that starts at loopStart within this track
+                if (event.startSample >= loopStart && event.startSample < loopEnd) {
+                    event.addTake(clip);
+                    addedAsTake = true;
+                    break;
+                }
+            }
+        }
 
-        m_project->tracks()[trackIdx].addEvent(event);
+        if (!addedAsTake) {
+            AudioEvent event;
+            event.clip = clip;
+            event.startSample = m_recordStartSample;
+            event.offsetSample = 0;
+            event.durationSample = clip->frameCount();
+
+            m_project->tracks()[trackIdx].addEvent(event);
+        }
     }
 
     m_recordingTracks.clear();
@@ -498,6 +520,12 @@ void AudioEngine::processAudio(const float* input, float* output,
     int inCh = m_inputChannels;
 
     std::memset(output, 0, frameCount * outCh * sizeof(float));
+
+    // Handle deferred record region transitions
+    if (m_requestRecordStart.exchange(false))
+        setTransportState(TransportState::Recording);
+    if (m_requestRecordStop.exchange(false))
+        setTransportState(TransportState::Playing);
 
     TransportState state = m_transportState.load(std::memory_order_acquire);
 
@@ -571,7 +599,8 @@ void AudioEngine::processAudio(const float* input, float* output,
                 float rightGain = std::min(1.0f, 1.0f + pan);
 
                 for (const auto& event : track.events()) {
-                    if (!event.clip || !event.clip->isValid()) continue;
+                    auto activeClip = event.activeClip();
+                    if (!activeClip || !activeClip->isValid()) continue;
 
                     int64_t eventEnd = event.startSample + event.durationSample;
                     if (pos >= eventEnd || pos + frameCount <= event.startSample)
@@ -580,14 +609,14 @@ void AudioEngine::processAudio(const float* input, float* output,
                     int64_t localPos = pos - event.startSample + event.offsetSample;
                     if (localPos < event.offsetSample) localPos = event.offsetSample;
 
-                    if (event.clip->isStreaming()) {
+                    if (activeClip->isStreaming()) {
                         std::unique_lock<std::mutex> lock(m_streamMutex, std::try_to_lock);
                         if (!lock.owns_lock()) continue;
 
                         // Find the corresponding playback stream (match clip + position)
                         PlaybackStream* stream = nullptr;
                         for (auto& s : m_playbackStreams) {
-                            if (s.clip == event.clip.get() &&
+                            if (s.clip == activeClip.get() &&
                                 s.eventStartSample == event.startSample &&
                                 s.eventDurationSample == event.durationSample) {
                                 stream = &s; break;
@@ -595,7 +624,7 @@ void AudioEngine::processAudio(const float* input, float* output,
                         }
                         if (!stream || stream->finished) continue;
 
-                        int ch = event.clip->channels();
+                        int ch = activeClip->channels();
                         size_t samplesNeeded = frameCount * ch;
 
                         size_t samplesRead = stream->buffer.read(m_stereoScratch.data(), samplesNeeded);
@@ -616,9 +645,9 @@ void AudioEngine::processAudio(const float* input, float* output,
                         if (stream->readerFinished && stream->buffer.available() == 0)
                             stream->finished = true;
                     } else {
-                        const float* clipData = event.clip->data();
-                        int ch = event.clip->channels();
-                        size_t clipFrames = event.clip->frameCount();
+                        const float* clipData = activeClip->data();
+                        int ch = activeClip->channels();
+                        size_t clipFrames = activeClip->frameCount();
 
                         for (unsigned long f = 0; f < frameCount; ++f) {
                             int64_t clipFrame = localPos + f;
@@ -640,7 +669,31 @@ void AudioEngine::processAudio(const float* input, float* output,
                 }
             }
 
-            m_playPosition.store(pos + frameCount, std::memory_order_release);
+            int64_t newPos = pos + frameCount;
+
+            // Loop wrapping
+            if (m_project && m_project->hasLoop()) {
+                int64_t loopEnd = m_project->loopEnd();
+                if (newPos >= loopEnd) {
+                    int64_t loopStart = m_project->loopStart();
+                    int64_t excess = newPos - loopEnd;
+                    newPos = loopStart + excess;
+                    if (newPos >= loopEnd)
+                        newPos = loopStart;
+                }
+            }
+
+            m_playPosition.store(newPos, std::memory_order_release);
+
+            // Auto record region: check if playhead entered/exited record region
+            if (m_project && m_project->hasRecordRegion()) {
+                int64_t rrStart = m_project->recordRegionStart();
+                int64_t rrEnd = m_project->recordRegionEnd();
+                if (!m_recordingActive && pos < rrEnd && newPos >= rrStart && newPos < rrEnd)
+                    m_requestRecordStart.store(true, std::memory_order_release);
+                else if (m_recordingActive && newPos >= rrEnd)
+                    m_requestRecordStop.store(true, std::memory_order_release);
+            }
         }
         return;
     }
@@ -691,7 +744,8 @@ void AudioEngine::createPlaybackStreams() {
 
     for (const auto& track : m_project->tracks()) {
         for (const auto& event : track.events()) {
-            if (!event.clip || !event.clip->isValid() || !event.clip->isStreaming())
+            auto activeClip = event.activeClip();
+            if (!activeClip || !activeClip->isValid() || !activeClip->isStreaming())
                 continue;
 
             int64_t eventEnd = event.startSample + event.durationSample;
@@ -703,13 +757,13 @@ void AudioEngine::createPlaybackStreams() {
             if (localPos < event.offsetSample) localPos = event.offsetSample;
 
             PlaybackStream stream;
-            stream.clip = event.clip.get();
+            stream.clip = activeClip.get();
             stream.eventStartSample = event.startSample;
             stream.eventDurationSample = event.durationSample;
             int64_t endFrame = std::min<int64_t>(event.offsetSample + event.durationSample,
-                                                  event.clip->frameCount());
+                                                  activeClip->frameCount());
 
-            if (stream.open(event.clip->filePath(), localPos, endFrame)) {
+            if (stream.open(activeClip->filePath(), localPos, endFrame)) {
                 m_playbackStreams.push_back(std::move(stream));
             }
         }

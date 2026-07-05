@@ -7,6 +7,8 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QMenu>
+#include <QAction>
 #include <algorithm>
 #include <cmath>
 
@@ -137,6 +139,16 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.setPen(QPen(borderColor, 1));
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(eventRect);
+
+        // Take indicator
+        if (event.takes.size() > 1) {
+            painter.setPen(QColor("#aaddff"));
+            QFont takeFont = painter.font();
+            takeFont.setPixelSize(9);
+            painter.setFont(takeFont);
+            painter.drawText(eventRect.x() + 3, eventRect.y() + 12,
+                QString("T%1/%2").arg(event.activeTakeIndex + 1).arg(event.takes.size()));
+        }
     }
 
     // Drag preview on target track (full rendering, same style as normal event)
@@ -303,6 +315,33 @@ void TrackViewWidget::deleteSelectedEvent() {
     m_thumbnailCache.clear();
     update();
     emit eventsChanged();
+}
+
+void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
+    if (!m_track) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+
+    int idx = -1;
+    AudioEvent* ev = eventAtX(static_cast<int>(event->pos().x()), idx);
+    if (!ev || ev->takes.empty()) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+
+    QMenu menu(this);
+    for (size_t i = 0; i < ev->takes.size(); ++i) {
+        QString label = QString("Take %1").arg(i + 1);
+        if (static_cast<int>(i) == ev->activeTakeIndex)
+            label += " ✓";
+        QAction* action = menu.addAction(label);
+        connect(action, &QAction::triggered, this, [this, ev, i] {
+            ev->setActiveTake(static_cast<int>(i));
+            update();
+        });
+    }
+    menu.exec(event->globalPos());
 }
 
 void TrackViewWidget::renderWaveform(QImage& img, const float* samples,
