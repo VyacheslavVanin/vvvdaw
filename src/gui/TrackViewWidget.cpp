@@ -355,6 +355,14 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
         emit eventsChanged();
     });
 
+    QAction* deleteAction = menu.addAction("Delete");
+    connect(deleteAction, &QAction::triggered, this, [this, idx] {
+        if (!m_track) return;
+        emit takeSwitchStarted();
+        m_selectedEventIndex = idx;
+        deleteSelectedEvent();
+    });
+
     if (!ev->takes().empty()) {
         menu.addSeparator();
         for (size_t i = 0; i < ev->takes().size(); ++i) {
