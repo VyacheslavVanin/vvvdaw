@@ -69,6 +69,15 @@ void TimelineRuler::mouseMoveEvent(QMouseEvent* event) {
         int64_t newVal = m_dragStartValue + delta;
         if (newVal < 0) newVal = 0;
 
+        if (m_snapToGrid) {
+            constexpr int64_t snapInterval = 48000;
+            int64_t snapRem = newVal % snapInterval;
+            if (snapRem < snapInterval / 2)
+                newVal -= snapRem;
+            else
+                newVal += (snapInterval - snapRem);
+        }
+
         int64_t* target = nullptr;
         int64_t* other = nullptr;
         if (m_dragHandle == DragHandle::LoopStart) {
