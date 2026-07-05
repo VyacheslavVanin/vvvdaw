@@ -208,6 +208,12 @@ bool RecordingManager::processLoopRecordRegion(AudioClip& clip, const RecordingT
 
         auto takeClip = std::make_shared<AudioClip>(
             std::move(takeSamples), sr, ch);
+        QString takeDir = proj->audioDirectory();
+        QDir().mkpath(takeDir);
+        QString takePath = takeDir + QString("/take_%1_pass_%2.wav")
+            .arg(takeNum).arg(QDateTime::currentMSecsSinceEpoch());
+        takeClip->saveToFile(takePath);
+        takeClip->setFilePath(takePath);
         targetEvent->addTake(takeClip);
         qDebug() << "  take" << takeNum << "offset=" << offset
                  << "frames=" << takeClip->frameCount();

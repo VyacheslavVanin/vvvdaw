@@ -480,12 +480,25 @@ void MainWindow::loadStyleSheet() {
 }
 
 void MainWindow::rebuildTracks() {
+    // Hide and queue deletion of old track widgets before they lose layout
+    for (auto& row : m_trackRows) {
+        if (row.panel) {
+            row.panel->hide();
+            row.panel->deleteLater();
+        }
+        if (row.view) {
+            row.view->hide();
+            row.view->deleteLater();
+        }
+    }
     m_trackRows.clear();
 
-    // Clear layout items — delete widget wrappers
+    // Clear layout items
     while (auto* item = m_trackLayout->takeAt(0)) {
-        if (auto* w = item->widget())
+        if (auto* w = item->widget()) {
+            w->hide();
             w->deleteLater();
+        }
         delete item;
     }
 
@@ -638,6 +651,8 @@ void MainWindow::rebuildTracks() {
         if (row.view)
             row.view->setSnapUnit(snapUnit);
     }
+
+    m_trackContainer->update();
 }
 
 void MainWindow::syncScrollPositions(int value) {

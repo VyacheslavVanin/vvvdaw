@@ -30,7 +30,8 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         QString text = m_nameEdit->text().trimmed();
         if (text.isEmpty()) {
             m_nameEdit->setText(m_track->name());
-        } else {
+        } else if (text != m_track->name()) {
+            emit beforeModify();
             m_track->setName(text);
         }
         m_nameEdit->setReadOnly(true);
