@@ -14,6 +14,14 @@ void TimelineRuler::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_pixelsPerSample > 0) {
         int64_t sample = m_scrollOffset + static_cast<int64_t>(event->position().x() / m_pixelsPerSample);
         if (sample < 0) sample = 0;
+        if (m_snapToGrid) {
+            constexpr int64_t snapInterval = 48000;
+            int64_t snapRem = sample % snapInterval;
+            if (snapRem < snapInterval / 2)
+                sample -= snapRem;
+            else
+                sample += (snapInterval - snapRem);
+        }
         emit playheadClicked(sample);
     }
     QWidget::mousePressEvent(event);

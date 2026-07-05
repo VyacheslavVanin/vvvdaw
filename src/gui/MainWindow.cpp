@@ -224,6 +224,7 @@ void MainWindow::setupUi() {
             if (row.view)
                 row.view->setSnapToGrid(snap);
         }
+        m_timelineRuler->setSnapToGrid(snap);
     });
 
     // Timer for position updates
@@ -557,6 +558,7 @@ void MainWindow::rebuildTracks() {
     for (auto& row : m_trackRows)
         row.view->setPlayheadPosition(ph);
 
+    m_timelineRuler->setSnapToGrid(m_project.snapToGrid());
     m_transportPanel->setSnapToGrid(m_project.snapToGrid());
 }
 
