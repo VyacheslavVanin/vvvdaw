@@ -39,11 +39,15 @@ public:
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& obj);
 
+    bool snapToGrid() const { return m_snapToGrid; }
+    void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
+
 private:
 
     QString m_filePath;
     QString m_name;
     int m_sampleRate = 48000;
+    bool m_snapToGrid = true;
 
     std::vector<Track> m_tracks;
     std::vector<AudioBus> m_buses;

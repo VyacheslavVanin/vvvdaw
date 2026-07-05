@@ -51,5 +51,4 @@ private:
 
     double m_zoom = 0.001;
     int64_t m_scrollOffset = 0;
-    bool m_snapToGrid = true;
 };

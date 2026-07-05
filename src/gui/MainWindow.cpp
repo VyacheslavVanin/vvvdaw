@@ -219,7 +219,7 @@ void MainWindow::setupUi() {
     });
 
     connect(m_transportPanel, &TransportPanel::snapToggled, this, [this](bool snap) {
-        m_snapToGrid = snap;
+        m_project.setSnapToGrid(snap);
         for (auto& row : m_trackRows) {
             if (row.view)
                 row.view->setSnapToGrid(snap);
@@ -458,7 +458,7 @@ void MainWindow::rebuildTracks() {
         row.view->setAlternateRow(odd);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
-        row.view->setSnapToGrid(m_snapToGrid);
+        row.view->setSnapToGrid(m_project.snapToGrid());
 
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
             pushUndoState();
@@ -556,6 +556,8 @@ void MainWindow::rebuildTracks() {
     m_timelineRuler->setPlayheadPosition(ph);
     for (auto& row : m_trackRows)
         row.view->setPlayheadPosition(ph);
+
+    m_transportPanel->setSnapToGrid(m_project.snapToGrid());
 }
 
 void MainWindow::syncScrollPositions(int value) {

@@ -145,6 +145,7 @@ QJsonObject Project::toJson() const {
     obj["formatVersion"] = 1;
     obj["name"] = m_name;
     obj["sampleRate"] = m_sampleRate;
+    obj["snapToGrid"] = m_snapToGrid;
 
     QString projDir = m_filePath.isEmpty() ? QString()
                      : QFileInfo(m_filePath).absolutePath();
@@ -197,6 +198,7 @@ QJsonObject Project::toJson() const {
 void Project::fromJson(const QJsonObject& obj) {
     m_name = obj["name"].toString("Untitled");
     m_sampleRate = obj["sampleRate"].toInt(48000);
+    m_snapToGrid = obj["snapToGrid"].toBool(true);
 
     QString projDir = m_filePath.isEmpty() ? QString()
                      : QFileInfo(m_filePath).absolutePath();
