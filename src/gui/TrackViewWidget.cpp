@@ -341,6 +341,7 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
             label += " ✓";
         QAction* action = menu.addAction(label);
         connect(action, &QAction::triggered, this, [this, ev, i] {
+            emit takeSwitchStarted();
             ev->setActiveTake(static_cast<int>(i));
             update();
         });

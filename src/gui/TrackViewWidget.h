@@ -43,6 +43,7 @@ signals:
     void dragInProgress(int64_t eventId, int64_t currentStartSample, QPoint globalPos);
     void eventDragStarted();
     void zoomChanged(double zoom);
+    void takeSwitchStarted();
 
 protected:
     void paintEvent(QPaintEvent* event) override;

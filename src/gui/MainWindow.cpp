@@ -511,6 +511,10 @@ void MainWindow::rebuildTracks() {
             pushUndoState();
         });
 
+        connect(row.view, &TrackViewWidget::takeSwitchStarted, this, [this] {
+            pushUndoState();
+        });
+
         connect(row.view, &TrackViewWidget::dragInProgress, this,
                 [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
                 (int64_t eventId, int64_t currentStartSample, QPoint globalPos) {
