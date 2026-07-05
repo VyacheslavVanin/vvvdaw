@@ -480,30 +480,108 @@ void AudioEngine::stopRecording() {
             continue;
         }
 
-        // If inside a loop, try to add as a take to an existing event
         bool addedAsTake = false;
-        if (m_project->hasLoop()) {
-            int64_t loopStart = m_project->loopStart();
-            int64_t loopEnd = m_project->loopEnd();
-            auto& track = m_project->tracks()[trackIdx];
-            for (auto& event : track.events()) {
-                // Find event that starts at loopStart within this track
-                if (event.startSample >= loopStart && event.startSample < loopEnd) {
-                    event.addTake(clip);
+        auto& track = m_project->tracks()[trackIdx];
+
+        // Loop + record region: split clip into region-sized takes
+        if (m_project->hasLoop() && m_project->hasRecordRegion()) {
+            int64_t regionLen = m_project->recordRegionEnd() - m_project->recordRegionStart();
+            if (regionLen > 0) {
+                size_t regionFrames = static_cast<size_t>(regionLen);
+                size_t totalFrames = clip->frameCount();
+                int ch = clip->channels();
+                int sr = clip->sampleRate();
+
+                // If streaming (data not in memory), force-load into memory
+                const float* src = clip->data();
+                std::vector<float> ownedData;
+                if (!src || clip->isStreaming()) {
+                    SF_INFO info;
+                    std::memset(&info, 0, sizeof(info));
+                    SNDFILE* f = sf_open(rt.filePath.c_str(), SFM_READ, &info);
+                    if (f) {
+                        ownedData.resize(static_cast<size_t>(info.frames) * info.channels);
+                        sf_readf_float(f, ownedData.data(), info.frames);
+                        sf_close(f);
+                        src = ownedData.data();
+                        ch = info.channels;
+                        sr = info.samplerate;
+                        totalFrames = info.frames;
+                    }
+                }
+
+                if (totalFrames > 0 && src) {
+                    // Find existing event at the record region start
+                    AudioEvent* targetEvent = nullptr;
+                    for (auto& ev : track.events()) {
+                        if (ev.startSample == m_recordStartSample) {
+                            targetEvent = &ev;
+                            break;
+                        }
+                    }
+                    if (!targetEvent) {
+                        AudioEvent newEvent;
+                        newEvent.startSample = m_recordStartSample;
+                        newEvent.offsetSample = 0;
+                        newEvent.durationSample = regionLen;
+                        track.addEvent(newEvent);
+                        // Get a reference to the newly added event
+                        targetEvent = &track.events().back();
+                    }
+
+                    // Split clip into region-sized segments, each becomes a take
+                    size_t offset = 0;
+                    int takeNum = 0;
+                    while (offset < totalFrames) {
+                        size_t takeFrames = std::min(regionFrames, totalFrames - offset);
+                        std::vector<float> takeSamples(takeFrames * ch);
+                        std::copy(src + offset * ch, src + (offset + takeFrames) * ch,
+                                  takeSamples.begin());
+
+                        auto takeClip = std::make_shared<AudioClip>(
+                            std::move(takeSamples), sr, ch);
+                        targetEvent->addTake(takeClip);
+                        qDebug() << "  take" << takeNum << "offset=" << offset
+                                 << "frames=" << takeClip->frameCount();
+                        offset += takeFrames;
+                        ++takeNum;
+                    }
                     addedAsTake = true;
-                    break;
+                    qDebug() << "RR_SPLIT: done, takes=" << targetEvent->takes.size()
+                             << "durationSample=" << targetEvent->durationSample
+                             << "clip.frames=" << (targetEvent->activeClip() ? targetEvent->activeClip()->frameCount() : 0);
+                } else {
+                    qDebug() << "RR_SPLIT: skipped! totalFrames=" << totalFrames << "src=" << (void*)src;
                 }
             }
         }
 
         if (!addedAsTake) {
-            AudioEvent event;
-            event.clip = clip;
-            event.startSample = m_recordStartSample;
-            event.offsetSample = 0;
-            event.durationSample = clip->frameCount();
+            // Without loop+record-region: try to add as take to existing loop event
+            if (m_project->hasLoop()) {
+                int64_t loopStart = m_project->loopStart();
+                int64_t loopEnd = m_project->loopEnd();
+                qDebug() << "RR_SPLIT: fallback hasLoop loopStart=" << loopStart << "loopEnd=" << loopEnd;
+                for (auto& ev : track.events()) {
+                    if (ev.startSample >= loopStart && ev.startSample < loopEnd) {
+                        ev.addTake(clip);
+                        addedAsTake = true;
+                        qDebug() << "  added whole clip as take to existing event at" << ev.startSample;
+                        break;
+                    }
+                }
+            }
 
-            m_project->tracks()[trackIdx].addEvent(event);
+            if (!addedAsTake) {
+                qDebug() << "RR_SPLIT: creating new event at" << m_recordStartSample
+                         << "duration=" << clip->frameCount();
+                AudioEvent event;
+                event.clip = clip;
+                event.startSample = m_recordStartSample;
+                event.offsetSample = 0;
+                event.durationSample = clip->frameCount();
+                track.addEvent(event);
+            }
         }
     }
 
