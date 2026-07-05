@@ -36,53 +36,59 @@ bool Project::save(const QString& filePath) {
 
     // Collect unique clips and copy external files to audio dir
     QSet<const AudioClip*> processedClips;
-    for (auto& track : m_tracks) {
-        for (auto& event : track.events()) {
-            if (!event.clip || processedClips.contains(event.clip.get()))
-                continue;
-            processedClips.insert(event.clip.get());
+    auto saveClip = [&](std::shared_ptr<AudioClip>& clip) {
+        if (!clip || processedClips.contains(clip.get()))
+            return;
+        processedClips.insert(clip.get());
 
-            QString srcPath = event.clip->filePath();
-            QString targetPath;
-            if (srcPath.isEmpty()) {
-                // Generated clip with no backing file — write it out
-                QString name = QString("clip_%1.wav").arg(
-                    QString::number(reinterpret_cast<quintptr>(event.clip.get()), 16));
-                targetPath = audioDir + "/" + name;
-                event.clip->saveToFile(targetPath);
+        QString srcPath = clip->filePath();
+        QString targetPath;
+        if (srcPath.isEmpty()) {
+            // Generated clip with no backing file — write it out
+            QString name = QString("clip_%1.wav").arg(
+                QString::number(reinterpret_cast<quintptr>(clip.get()), 16));
+            targetPath = audioDir + "/" + name;
+            clip->saveToFile(targetPath);
+        } else {
+            QFileInfo srcInfo(srcPath);
+            QString srcAbs = srcInfo.absoluteFilePath();
+            QString audioAbs = QDir(audioDir).absolutePath();
+
+            if (srcInfo.absolutePath() == audioAbs) {
+                // Already in audio dir
+                targetPath = srcAbs;
             } else {
-                QFileInfo srcInfo(srcPath);
-                QString srcAbs = srcInfo.absoluteFilePath();
-                QString audioAbs = QDir(audioDir).absolutePath();
+                // Copy to audio dir
+                QString baseName = srcInfo.completeBaseName();
+                QString ext = srcInfo.suffix();
+                if (ext.isEmpty()) ext = "wav";
+                targetPath = audioDir + "/" + baseName + "." + ext;
 
-                if (srcInfo.absolutePath() == audioAbs) {
-                    // Already in audio dir
-                    targetPath = srcAbs;
-                } else {
-                    // Copy to audio dir
-                    QString baseName = srcInfo.completeBaseName();
-                    QString ext = srcInfo.suffix();
-                    if (ext.isEmpty()) ext = "wav";
-                    targetPath = audioDir + "/" + baseName + "." + ext;
+                // Handle name collisions
+                int counter = 1;
+                while (QFile::exists(targetPath)
+                       && QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
+                    targetPath = audioDir + "/" + baseName + "_" + QString::number(counter++) + "." + ext;
+                }
 
-                    // Handle name collisions
-                    int counter = 1;
-                    while (QFile::exists(targetPath)
-                           && QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
-                        targetPath = audioDir + "/" + baseName + "_" + QString::number(counter++) + "." + ext;
-                    }
-
-                    // Copy if not already the same file
-                    if (QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
-                        if (!QFile::copy(srcPath, targetPath)) {
-                            qWarning() << "Failed to copy audio file:" << srcPath << "→" << targetPath;
-                            continue;
-                        }
+                // Copy if not already the same file
+                if (QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
+                    if (!QFile::copy(srcPath, targetPath)) {
+                        qWarning() << "Failed to copy audio file:" << srcPath << "→" << targetPath;
+                        return;
                     }
                 }
             }
+        }
 
-            event.clip->setFilePath(targetPath);
+        clip->setFilePath(targetPath);
+    };
+
+    for (auto& track : m_tracks) {
+        for (auto& event : track.events()) {
+            saveClip(event.clip);
+            for (auto& take : event.takes)
+                saveClip(take);
         }
     }
 
