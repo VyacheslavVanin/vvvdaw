@@ -217,12 +217,25 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
         AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), idx);
         if (ev) {
             m_selectedEventIndex = idx;
-            m_dragEventIndex = idx;
+
+            bool ctrlDrag = (event->modifiers() & Qt::ControlModifier);
+            if (ctrlDrag) {
+                emit eventDragStarted();
+                AudioEvent copy = *ev;
+                copy.setStartSample(copy.startSample() +
+                    static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+                m_track->addEvent(std::move(copy));
+                m_selectedEventIndex = static_cast<int>(m_track->events().size() - 1);
+            }
+
+            m_dragEventIndex = m_selectedEventIndex;
             m_dragging = true;
-            m_dragStartSample = ev->startSample();
+            m_dragStartSample = m_track->events()[m_selectedEventIndex].startSample();
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
-            emit eventDragStarted();
+
+            if (!ctrlDrag)
+                emit eventDragStarted();
         } else {
             m_selectedEventIndex = -1;
         }
@@ -321,23 +334,42 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
 
     int idx = -1;
     AudioEvent* ev = eventAtX(static_cast<int>(event->pos().x()), idx);
-    if (!ev || ev->takes().empty()) {
+    if (!ev) {
         QWidget::contextMenuEvent(event);
         return;
     }
 
     QMenu menu(this);
-    for (size_t i = 0; i < ev->takes().size(); ++i) {
-        QString label = QString("Take %1").arg(i + 1);
-        if (static_cast<int>(i) == ev->activeTakeIndex())
-            label += " ✓";
-        QAction* action = menu.addAction(label);
-        connect(action, &QAction::triggered, this, [this, ev, i] {
-            emit takeSwitchStarted();
-            ev->setActiveTake(static_cast<int>(i));
-            update();
-        });
+
+    QAction* duplicateAction = menu.addAction("Duplicate");
+    connect(duplicateAction, &QAction::triggered, this, [this, eventData = *ev] {
+        if (!m_track) return;
+        emit takeSwitchStarted();
+        AudioEvent copy = eventData;
+        copy.setStartSample(copy.startSample() +
+            static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+        m_track->addEvent(std::move(copy));
+        m_selectedEventIndex = static_cast<int>(m_track->events().size() - 1);
+        m_thumbnailCache.clear();
+        update();
+        emit eventsChanged();
+    });
+
+    if (!ev->takes().empty()) {
+        menu.addSeparator();
+        for (size_t i = 0; i < ev->takes().size(); ++i) {
+            QString label = QString("Take %1").arg(i + 1);
+            if (static_cast<int>(i) == ev->activeTakeIndex())
+                label += " ✓";
+            QAction* action = menu.addAction(label);
+            connect(action, &QAction::triggered, this, [this, ev, i] {
+                emit takeSwitchStarted();
+                ev->setActiveTake(static_cast<int>(i));
+                update();
+            });
+        }
     }
+
     menu.exec(event->globalPos());
 }
 
