@@ -17,6 +17,7 @@ public:
     int64_t playheadPosition() const { return m_playheadPos; }
 
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
+    void setSnapUnit(double samples) { m_snapUnit = samples; }
 
     void setLoop(int64_t start, int64_t end) { m_loopStart = start; m_loopEnd = end; update(); }
     void clearLoop() { m_loopStart = -1; m_loopEnd = -1; update(); }
@@ -57,6 +58,7 @@ private:
     double m_pixelsPerSample = 0.001;
     int64_t m_playheadPos = -1;
     bool m_snapToGrid = true;
+    double m_snapUnit = 48000.0;
 
     int64_t m_loopStart = -1;
     int64_t m_loopEnd = -1;

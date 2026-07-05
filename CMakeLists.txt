@@ -27,6 +27,8 @@ add_executable(vvvdaw
     src/gui/TrackViewWidget.cpp
     src/gui/WaveformPainter.cpp
     src/gui/TimelineRuler.cpp
+    src/gui/MeasureRuler.cpp
+    src/gui/TempoWidget.cpp
     src/gui/SettingsDialog.cpp
 )
 

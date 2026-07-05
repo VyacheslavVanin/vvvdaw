@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QSet>
 #include <QStandardPaths>
+#include <cmath>
 
 Project::Project()
     : m_name("Untitled")
@@ -152,6 +153,9 @@ QJsonObject Project::toJson() const {
     obj["name"] = m_name;
     obj["sampleRate"] = m_sampleRate;
     obj["snapToGrid"] = m_snapToGrid;
+    obj["tempo"] = m_tempo;
+    obj["timeSigNum"] = m_timeSigNum;
+    obj["timeSigDen"] = m_timeSigDen;
     if (hasLoop()) {
         obj["loopStart"] = static_cast<qint64>(m_loopStart);
         obj["loopEnd"] = static_cast<qint64>(m_loopEnd);
@@ -227,6 +231,9 @@ void Project::fromJson(const QJsonObject& obj) {
     m_name = obj["name"].toString("Untitled");
     m_sampleRate = obj["sampleRate"].toInt(48000);
     m_snapToGrid = obj["snapToGrid"].toBool(true);
+    m_tempo = obj["tempo"].toDouble(120.0);
+    m_timeSigNum = obj["timeSigNum"].toInt(4);
+    m_timeSigDen = obj["timeSigDen"].toInt(4);
 
     if (obj.contains("loopStart") && obj.contains("loopEnd")) {
         m_loopStart = static_cast<int64_t>(obj["loopStart"].toVariant().toLongLong());
@@ -305,4 +312,11 @@ void Project::fromJson(const QJsonObject& obj) {
         bus.channel = bObj["channel"].toInt(0);
         m_buses.push_back(bus);
     }
+}
+
+int64_t Project::snapSample(int64_t sample, int beatDivision) const {
+    double unit = samplesPerBeat() / static_cast<double>(beatDivision);
+    double beats = sample / unit;
+    int64_t snapped = static_cast<int64_t>(std::round(beats));
+    return static_cast<int64_t>(snapped * unit);
 }

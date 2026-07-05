@@ -34,6 +34,7 @@ public:
     }
 
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
+    void setSnapUnit(double samples) { m_snapUnit = samples; }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
@@ -97,4 +98,5 @@ private:
     DragPreview m_dragPreview;
 
     bool m_snapToGrid = true;
+    double m_snapUnit = 48000.0;
 };

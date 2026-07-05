@@ -42,6 +42,17 @@ public:
     bool snapToGrid() const { return m_snapToGrid; }
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
 
+    double tempo() const { return m_tempo; }
+    void setTempo(double bpm) { m_tempo = bpm; }
+
+    int timeSigNum() const { return m_timeSigNum; }
+    int timeSigDen() const { return m_timeSigDen; }
+    void setTimeSignature(int num, int den) { m_timeSigNum = num; m_timeSigDen = den; }
+
+    double samplesPerBeat() const { return (60.0 / m_tempo) * m_sampleRate; }
+    double samplesPerBar() const { return samplesPerBeat() * m_timeSigNum; }
+    int64_t snapSample(int64_t sample, int beatDivision = 4) const;
+
     int64_t loopStart() const { return m_loopStart; }
     int64_t loopEnd() const { return m_loopEnd; }
     void setLoop(int64_t start, int64_t end) { m_loopStart = start; m_loopEnd = end; }
@@ -59,6 +70,9 @@ private:
     QString m_filePath;
     QString m_name;
     int m_sampleRate = 48000;
+    double m_tempo = 120.0;
+    int m_timeSigNum = 4;
+    int m_timeSigDen = 4;
     bool m_snapToGrid = true;
     int64_t m_loopStart = -1;
     int64_t m_loopEnd = -1;

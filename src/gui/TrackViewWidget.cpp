@@ -81,12 +81,12 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 
     // Grid lines
     painter.setPen(QPen(QColor("#3a3a3a"), 1));
-    int64_t gridInterval = 48000;
+    double gridInterval = m_snapUnit;
     if (gridInterval * m_pixelsPerSample < 40) gridInterval *= 4;
     int64_t startSample = m_scrollOffset;
     int64_t endSample = sampleAtX(width());
-    int64_t firstGrid = (startSample / gridInterval) * gridInterval;
-    for (int64_t s = firstGrid; s <= endSample; s += gridInterval) {
+    double firstGrid = std::floor(startSample / gridInterval) * gridInterval;
+    for (double s = firstGrid; s <= endSample; s += gridInterval) {
         int x = static_cast<int>((s - m_scrollOffset) * m_pixelsPerSample);
         painter.drawLine(x, 0, x, trackHeight);
     }
@@ -260,13 +260,12 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
         int64_t newStart = m_dragStartSample + static_cast<int64_t>(dx / m_pixelsPerSample);
 
         if (m_snapToGrid) {
-            // Snap to grid (48000 sample = 1 sec at 48kHz)
-            constexpr int64_t snapInterval = 48000;
-            int64_t snapRem = newStart % snapInterval;
-            if (snapRem < snapInterval / 2)
-                newStart -= snapRem;
+            double snapUnit = m_snapUnit;
+            double snapRem = std::fmod(static_cast<double>(newStart), snapUnit);
+            if (snapRem < snapUnit / 2.0)
+                newStart -= static_cast<int64_t>(snapRem);
             else
-                newStart += (snapInterval - snapRem);
+                newStart += static_cast<int64_t>(snapUnit - snapRem);
         }
 
         if (newStart < 0) newStart = 0;

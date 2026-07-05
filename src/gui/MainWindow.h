@@ -11,6 +11,8 @@ class AudioEngine;
 class Settings;
 class TransportPanel;
 class TimelineRuler;
+class MeasureRuler;
+class TempoWidget;
 class TrackPanelWidget;
 class TrackViewWidget;
 class QVBoxLayout;
@@ -38,7 +40,9 @@ private:
     UndoStack m_undoStack;
 
     TransportPanel* m_transportPanel = nullptr;
+    TempoWidget* m_tempoWidget = nullptr;
     TimelineRuler* m_timelineRuler = nullptr;
+    MeasureRuler* m_measureRuler = nullptr;
     QScrollBar* m_horizontalScroll = nullptr;
     QWidget* m_trackContainer = nullptr;
     QVBoxLayout* m_trackLayout = nullptr;

@@ -17,12 +17,12 @@ int64_t TimelineRuler::sampleAtX(int x) const {
     int64_t sample = m_scrollOffset + static_cast<int64_t>(x / m_pixelsPerSample);
     if (sample < 0) sample = 0;
     if (m_snapToGrid) {
-        constexpr int64_t snapInterval = 48000;
-        int64_t snapRem = sample % snapInterval;
-        if (snapRem < snapInterval / 2)
-            sample -= snapRem;
+        double snapUnit = m_snapUnit;
+        double snapRem = std::fmod(static_cast<double>(sample), snapUnit);
+        if (snapRem < snapUnit / 2.0)
+            sample -= static_cast<int64_t>(snapRem);
         else
-            sample += (snapInterval - snapRem);
+            sample += static_cast<int64_t>(snapUnit - snapRem);
     }
     return sample;
 }
@@ -70,12 +70,12 @@ void TimelineRuler::mouseMoveEvent(QMouseEvent* event) {
         if (newVal < 0) newVal = 0;
 
         if (m_snapToGrid) {
-            constexpr int64_t snapInterval = 48000;
-            int64_t snapRem = newVal % snapInterval;
-            if (snapRem < snapInterval / 2)
-                newVal -= snapRem;
+            double snapUnit = m_snapUnit;
+            double snapRem = std::fmod(static_cast<double>(newVal), snapUnit);
+            if (snapRem < snapUnit / 2.0)
+                newVal -= static_cast<int64_t>(snapRem);
             else
-                newVal += (snapInterval - snapRem);
+                newVal += static_cast<int64_t>(snapUnit - snapRem);
         }
 
         int64_t* target = nullptr;
@@ -140,10 +140,11 @@ void TimelineRuler::contextMenuEvent(QContextMenuEvent* event) {
         QAction* setLoop = menu.addAction("Set Loop Here");
         connect(setLoop, &QAction::triggered, this, [this, sample] {
             m_loopStart = sample;
-            m_loopEnd = sample + 48000 * 4; // default 4 second loop
+            m_loopEnd = sample + static_cast<int64_t>(m_snapUnit * 4);
             if (m_snapToGrid) {
-                constexpr int64_t snap = 48000;
-                m_loopEnd = ((m_loopEnd / snap) + 1) * snap;
+                double snapRem = std::fmod(static_cast<double>(m_loopEnd), m_snapUnit);
+                if (snapRem > 0)
+                    m_loopEnd += static_cast<int64_t>(m_snapUnit - snapRem);
             }
             update();
             emit loopCreated(m_loopStart, m_loopEnd);
@@ -161,10 +162,11 @@ void TimelineRuler::contextMenuEvent(QContextMenuEvent* event) {
         QAction* setRR = menu.addAction("Set Record Region Here");
         connect(setRR, &QAction::triggered, this, [this, sample] {
             m_rrStart = sample;
-            m_rrEnd = sample + 48000 * 4;
+            m_rrEnd = sample + static_cast<int64_t>(m_snapUnit * 4);
             if (m_snapToGrid) {
-                constexpr int64_t snap = 48000;
-                m_rrEnd = ((m_rrEnd / snap) + 1) * snap;
+                double snapRem = std::fmod(static_cast<double>(m_rrEnd), m_snapUnit);
+                if (snapRem > 0)
+                    m_rrEnd += static_cast<int64_t>(m_snapUnit - snapRem);
             }
             update();
             emit recordRegionCreated(m_rrStart, m_rrEnd);

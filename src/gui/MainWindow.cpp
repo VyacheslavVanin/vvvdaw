@@ -2,6 +2,8 @@
 #include "SettingsDialog.h"
 #include "TransportPanel.h"
 #include "TimelineRuler.h"
+#include "MeasureRuler.h"
+#include "TempoWidget.h"
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
 #include "core/UndoStack.h"
@@ -51,19 +53,40 @@ void MainWindow::setupUi() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
+    // Transport row: transport panel (centered) + tempo widget (right)
     m_transportPanel = new TransportPanel(this);
-    layout->addWidget(m_transportPanel, 0, Qt::AlignCenter);
+    auto* transportRow = new QHBoxLayout;
+    transportRow->setContentsMargins(0, 0, 0, 0);
+    transportRow->addStretch();
+    transportRow->addWidget(m_transportPanel, 0, Qt::AlignCenter);
+    transportRow->addStretch();
+    m_tempoWidget = new TempoWidget(this);
+    transportRow->addWidget(m_tempoWidget, 0, Qt::AlignRight);
+    layout->addLayout(transportRow);
 
-    auto* rulerRow = new QHBoxLayout;
-    rulerRow->setContentsMargins(0, 0, 0, 0);
-    rulerRow->setSpacing(0);
-    auto* rulerSpacer = new QWidget(this);
-    rulerSpacer->setFixedWidth(200);
-    rulerSpacer->setStyleSheet("background-color: #2a2a2a;");
+    // Ruler row 1: spacer + TimelineRuler
+    auto* rulerRow1 = new QHBoxLayout;
+    rulerRow1->setContentsMargins(0, 0, 0, 0);
+    rulerRow1->setSpacing(0);
+    auto* rulerSpacer1 = new QWidget(this);
+    rulerSpacer1->setFixedWidth(200);
+    rulerSpacer1->setStyleSheet("background-color: #2a2a2a;");
     m_timelineRuler = new TimelineRuler(this);
-    rulerRow->addWidget(rulerSpacer);
-    rulerRow->addWidget(m_timelineRuler, 1);
-    layout->addLayout(rulerRow);
+    rulerRow1->addWidget(rulerSpacer1);
+    rulerRow1->addWidget(m_timelineRuler, 1);
+    layout->addLayout(rulerRow1);
+
+    // Ruler row 2: spacer + MeasureRuler
+    auto* rulerRow2 = new QHBoxLayout;
+    rulerRow2->setContentsMargins(0, 0, 0, 0);
+    rulerRow2->setSpacing(0);
+    auto* rulerSpacer2 = new QWidget(this);
+    rulerSpacer2->setFixedWidth(200);
+    rulerSpacer2->setStyleSheet("background-color: #252525;");
+    m_measureRuler = new MeasureRuler(this);
+    rulerRow2->addWidget(rulerSpacer2);
+    rulerRow2->addWidget(m_measureRuler, 1);
+    layout->addLayout(rulerRow2);
     connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
         m_timelineRuler->setPlayheadPosition(sample);
@@ -105,6 +128,29 @@ void MainWindow::setupUi() {
     });
     connect(m_timelineRuler, &TimelineRuler::recordRegionChanged, this, [this](int64_t start, int64_t end) {
         m_project.setRecordRegion(start, end);
+    });
+
+    // Tempo widget signals
+    auto updateSnapUnit = [this] {
+        double snapUnit = m_project.samplesPerBeat() / 4.0;
+        m_timelineRuler->setSnapUnit(snapUnit);
+        m_measureRuler->setTempo(m_project.tempo());
+        m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
+        for (auto& row : m_trackRows) {
+            if (row.view) {
+                row.view->setSnapUnit(snapUnit);
+            }
+        }
+    };
+    connect(m_tempoWidget, &TempoWidget::tempoChanged, this, [this, updateSnapUnit](double bpm) {
+        pushUndoState();
+        m_project.setTempo(bpm);
+        updateSnapUnit();
+    });
+    connect(m_tempoWidget, &TempoWidget::timeSignatureChanged, this, [this, updateSnapUnit](int num, int den) {
+        pushUndoState();
+        m_project.setTimeSignature(num, den);
+        updateSnapUnit();
     });
 
     auto* scrollArea = new QScrollArea(this);
@@ -485,6 +531,7 @@ void MainWindow::rebuildTracks() {
         connect(row.view, &TrackViewWidget::zoomChanged, this, [this](double zoom) {
             m_zoom = zoom;
             m_timelineRuler->setZoom(m_zoom);
+            m_measureRuler->setZoom(m_zoom);
             for (auto& r : m_trackRows)
                 r.view->setZoom(m_zoom);
         });
@@ -563,6 +610,7 @@ void MainWindow::rebuildTracks() {
         connect(row.view, &TrackViewWidget::scrollOffsetChanged, this, [this](int64_t offset) {
             m_scrollOffset = offset;
             m_timelineRuler->setScrollOffset(offset);
+            m_measureRuler->setScrollOffset(offset);
             for (auto& r : m_trackRows) {
                 if (r.view)
                     r.view->setScrollOffset(offset);
@@ -603,11 +651,26 @@ void MainWindow::rebuildTracks() {
     else
         m_timelineRuler->clearRecordRegion();
     m_transportPanel->setSnapToGrid(m_project.snapToGrid());
+
+    // Sync MeasureRuler
+    m_measureRuler->setTempo(m_project.tempo());
+    m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
+    m_measureRuler->setZoom(m_zoom);
+    m_measureRuler->setScrollOffset(m_scrollOffset);
+
+    // Snap unit
+    double snapUnit = m_project.samplesPerBeat() / 4.0;
+    m_timelineRuler->setSnapUnit(snapUnit);
+    for (auto& row : m_trackRows) {
+        if (row.view)
+            row.view->setSnapUnit(snapUnit);
+    }
 }
 
 void MainWindow::syncScrollPositions(int value) {
     m_scrollOffset = static_cast<int64_t>(value) * 48;
     m_timelineRuler->setScrollOffset(m_scrollOffset);
+    m_measureRuler->setScrollOffset(m_scrollOffset);
     for (auto& row : m_trackRows)
         row.view->setScrollOffset(m_scrollOffset);
 }
