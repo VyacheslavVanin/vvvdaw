@@ -10,6 +10,10 @@ static const SigEntry s_sigs[] = {
 };
 static constexpr int s_sigCount = sizeof(s_sigs) / sizeof(s_sigs[0]);
 
+static constexpr double s_resolutions[] = {1.0, 2.0, 4.0, 8.0, 16.0};
+static constexpr int s_resCount = sizeof(s_resolutions) / sizeof(s_resolutions[0]);
+static const char* s_resLabels[] = {"1", "1/2", "1/4", "1/8", "1/16"};
+
 TempoWidget::TempoWidget(QWidget* parent)
     : QWidget(parent)
 {
@@ -46,12 +50,34 @@ TempoWidget::TempoWidget(QWidget* parent)
         "QComboBox QAbstractItemView { background: #3a3a3a; color: #fff; selection-background-color: #557799; }");
     layout->addWidget(m_sigCombo);
 
+    auto* snapLabel = new QLabel("Snap:", this);
+    snapLabel->setStyleSheet("color: #ccc; font-size: 11px;");
+    layout->addWidget(snapLabel);
+
+    m_snapCombo = new QComboBox(this);
+    for (int i = 0; i < s_resCount; ++i)
+        m_snapCombo->addItem(s_resLabels[i]);
+    m_snapCombo->setCurrentIndex(2); // 1/4
+    m_snapCombo->setFixedWidth(52);
+    m_snapCombo->setFixedHeight(24);
+    m_snapCombo->setStyleSheet(
+        "QComboBox { background: #3a3a3a; color: #fff; border: 1px solid #555; "
+        "border-radius: 3px; padding: 2px 4px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background: #3a3a3a; color: #fff; selection-background-color: #557799; }");
+    layout->addWidget(m_snapCombo);
+
     connect(m_bpmSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, &TempoWidget::tempoChanged);
     connect(m_sigCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
         if (idx >= 0 && idx < s_sigCount)
             emit timeSignatureChanged(s_sigs[idx].num, s_sigs[idx].den);
+    });
+    connect(m_snapCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        if (idx >= 0 && idx < s_resCount)
+            emit snapResolutionChanged(s_resolutions[idx]);
     });
 
     setFixedHeight(32);
@@ -71,5 +97,13 @@ void TempoWidget::setTimeSignature(int num, int den) {
             m_sigCombo->blockSignals(false);
             return;
         }
+    }
+}
+
+void TempoWidget::setSnapResolution(int index) {
+    if (index >= 0 && index < s_resCount) {
+        m_snapCombo->blockSignals(true);
+        m_snapCombo->setCurrentIndex(index);
+        m_snapCombo->blockSignals(false);
     }
 }
