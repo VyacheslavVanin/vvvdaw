@@ -33,6 +33,8 @@ public:
         if (m_dragSourceVisible != visible) { m_dragSourceVisible = visible; update(); }
     }
 
+    void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
+
 signals:
     void scrollOffsetChanged(int64_t offset);
     void eventMoved(int64_t eventId, int64_t newStartSample);
@@ -90,4 +92,6 @@ private:
         int64_t startSample = 0;
     };
     DragPreview m_dragPreview;
+
+    bool m_snapToGrid = true;
 };

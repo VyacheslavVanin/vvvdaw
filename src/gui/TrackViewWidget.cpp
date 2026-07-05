@@ -243,13 +243,15 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
         int dx = static_cast<int>(event->position().x()) - m_dragStartMouseX;
         int64_t newStart = m_dragStartSample + static_cast<int64_t>(dx / m_pixelsPerSample);
 
-        // Snap to grid (48000 sample = 1 sec at 48kHz)
-        constexpr int64_t snapInterval = 48000;
-        int64_t snapRem = newStart % snapInterval;
-        if (snapRem < snapInterval / 2)
-            newStart -= snapRem;
-        else
-            newStart += (snapInterval - snapRem);
+        if (m_snapToGrid) {
+            // Snap to grid (48000 sample = 1 sec at 48kHz)
+            constexpr int64_t snapInterval = 48000;
+            int64_t snapRem = newStart % snapInterval;
+            if (snapRem < snapInterval / 2)
+                newStart -= snapRem;
+            else
+                newStart += (snapInterval - snapRem);
+        }
 
         if (newStart < 0) newStart = 0;
         m_track->events()[m_dragEventIndex].startSample = newStart;

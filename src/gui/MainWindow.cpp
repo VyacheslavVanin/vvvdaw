@@ -218,6 +218,14 @@ void MainWindow::setupUi() {
         m_engine.setPlayPosition(maxEnd > 0 ? maxEnd : 48000 * 30);
     });
 
+    connect(m_transportPanel, &TransportPanel::snapToggled, this, [this](bool snap) {
+        m_snapToGrid = snap;
+        for (auto& row : m_trackRows) {
+            if (row.view)
+                row.view->setSnapToGrid(snap);
+        }
+    });
+
     // Timer for position updates
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, [this] {
@@ -450,6 +458,7 @@ void MainWindow::rebuildTracks() {
         row.view->setAlternateRow(odd);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
+        row.view->setSnapToGrid(m_snapToGrid);
 
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
             pushUndoState();

@@ -25,12 +25,26 @@ TransportPanel::TransportPanel(QWidget* parent)
     m_recordButton = makeBtn("●", "Record");
     m_forwardButton = makeBtn("⏭", "Forward to end");
 
+    m_snapButton = new QPushButton("⧉", this);
+    m_snapButton->setFixedHeight(28);
+    m_snapButton->setToolTip("Toggle snap to grid");
+    m_snapButton->setCheckable(true);
+    m_snapButton->setChecked(true);
+    layout->addWidget(m_snapButton);
+
     connect(m_backButton, &QPushButton::clicked, this, &TransportPanel::backClicked);
     connect(m_playButton, &QPushButton::clicked, this, &TransportPanel::playClicked);
     connect(m_pauseButton, &QPushButton::clicked, this, &TransportPanel::pauseClicked);
     connect(m_stopButton, &QPushButton::clicked, this, &TransportPanel::stopClicked);
     connect(m_recordButton, &QPushButton::clicked, this, &TransportPanel::recordClicked);
     connect(m_forwardButton, &QPushButton::clicked, this, &TransportPanel::forwardClicked);
+    connect(m_snapButton, &QPushButton::toggled, this, [this](bool snap) {
+        m_snapToGrid = snap;
+        m_snapButton->setStyleSheet(snap
+            ? "QPushButton { background: #335577; color: white; border: 1px solid #5599cc; }"
+            : "");
+        emit snapToggled(snap);
+    });
 
     m_timeLabel = new QLabel("00:00:00.000", this);
     m_timeLabel->setStyleSheet("padding: 0 8px;");
@@ -60,4 +74,9 @@ void TransportPanel::setRecording(bool recording) {
     m_recordButton->setStyleSheet(recording
         ? "QPushButton { background: #882222; color: white; border: 1px solid #cc4444; }"
         : "");
+}
+
+void TransportPanel::setSnapToGrid(bool snap) {
+    m_snapToGrid = snap;
+    m_snapButton->setChecked(snap);
 }

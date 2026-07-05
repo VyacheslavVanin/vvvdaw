@@ -12,6 +12,7 @@ public:
     void setTimeText(const QString& text);
     void setPlaying(bool playing);
     void setRecording(bool recording);
+    void setSnapToGrid(bool snap);
 
 signals:
     void backClicked();
@@ -20,6 +21,7 @@ signals:
     void stopClicked();
     void recordClicked();
     void forwardClicked();
+    void snapToggled(bool snap);
 
 private:
     QPushButton* m_backButton;
@@ -28,5 +30,7 @@ private:
     QPushButton* m_stopButton;
     QPushButton* m_recordButton;
     QPushButton* m_forwardButton;
+    QPushButton* m_snapButton;
     QLabel* m_timeLabel;
+    bool m_snapToGrid = true;
 };
