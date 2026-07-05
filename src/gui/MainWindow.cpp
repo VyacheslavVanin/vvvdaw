@@ -644,6 +644,10 @@ void MainWindow::rebuildTracks() {
     m_measureRuler->setZoom(m_zoom);
     m_measureRuler->setScrollOffset(m_scrollOffset);
 
+    // Sync TempoWidget
+    m_tempoWidget->setTempo(m_project.tempo());
+    m_tempoWidget->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
+
     // Snap unit
     double snapUnit = m_project.samplesPerBar() / m_snapResolution;
     m_timelineRuler->setSnapUnit(snapUnit);
