@@ -11,6 +11,7 @@
 #include <QMenu>
 #include <QAction>
 #include <algorithm>
+#include <cstdlib>
 
 TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
     : QWidget(parent)
@@ -198,9 +199,12 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
     int deltaX = static_cast<int>(event->angleDelta().x());
     int deltaY = static_cast<int>(event->angleDelta().y());
-    if (event->modifiers() & Qt::ControlModifier) {
-        double zoomFactor = (deltaY > 0) ? vvvdaw::ZoomFactor : (1.0 / vvvdaw::ZoomFactor);
-        setZoom(m_pixelsPerSample * zoomFactor);
+    if (event->modifiers() & Qt::ControlModifier && deltaY != 0) {
+        double factor = 1.0 + (std::abs(deltaY) / 120.0) * (vvvdaw::ZoomFactor - 1.0);
+        if (deltaY > 0)
+            setZoom(m_pixelsPerSample * factor);
+        else
+            setZoom(m_pixelsPerSample / factor);
     } else if (deltaX != 0) {
         setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * vvvdaw::ScrollStepSamples));
     }
