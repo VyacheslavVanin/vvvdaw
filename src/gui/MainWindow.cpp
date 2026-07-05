@@ -411,6 +411,14 @@ void MainWindow::setupMenus() {
     auto* redoAction = editMenu->addAction("&Redo", QKeySequence::Redo);
     connect(redoAction, &QAction::triggered, this, &MainWindow::performRedo);
 
+    auto* viewMenu = menuBar()->addMenu("&View");
+    auto* resetZoomAction = viewMenu->addAction("Reset &Zoom", QKeySequence("Ctrl+0"));
+    connect(resetZoomAction, &QAction::triggered, this, [this] {
+        m_zoom = vvvdaw::DefaultZoom;
+        syncZoom();
+        m_trackContainer->update();
+    });
+
     connect(settingsAction, &QAction::triggered, this, [this] {
         SettingsDialog dialog(m_settings, m_engine, this);
         if (dialog.exec() == QDialog::Accepted) {
@@ -516,10 +524,7 @@ void MainWindow::rebuildTracks() {
 
         connect(row.view, &TrackViewWidget::zoomChanged, this, [this](double zoom) {
             m_zoom = zoom;
-            m_timelineRuler->setZoom(m_zoom);
-            m_measureRuler->setZoom(m_zoom);
-            for (auto& r : m_trackRows)
-                r.view->setZoom(m_zoom);
+            syncZoom();
         });
 
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
@@ -618,8 +623,8 @@ void MainWindow::rebuildTracks() {
 
     m_trackLayout->addStretch();
 
-    // Sync zoom to ruler
-    m_timelineRuler->setZoom(m_zoom);
+    // Sync zoom to rulers
+    syncZoom();
 
     // Restore playhead on new views
     int64_t ph = m_engine.playPosition();
@@ -641,7 +646,6 @@ void MainWindow::rebuildTracks() {
     // Sync MeasureRuler
     m_measureRuler->setTempo(m_project.tempo());
     m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
-    m_measureRuler->setZoom(m_zoom);
     m_measureRuler->setScrollOffset(m_scrollOffset);
 
     // Sync TempoWidget
@@ -657,6 +661,13 @@ void MainWindow::rebuildTracks() {
     }
 
     m_trackContainer->update();
+}
+
+void MainWindow::syncZoom() {
+    m_timelineRuler->setZoom(m_zoom);
+    m_measureRuler->setZoom(m_zoom);
+    for (auto& row : m_trackRows)
+        row.view->setZoom(m_zoom);
 }
 
 void MainWindow::syncScrollPositions(int value) {

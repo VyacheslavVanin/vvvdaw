@@ -1,5 +1,6 @@
 #pragma once
 #include <QWidget>
+#include <algorithm>
 #include <cstdint>
 #include "core/Constants.h"
 
@@ -11,7 +12,10 @@ public:
     void setScrollOffset(int64_t offset) { m_scrollOffset = offset; update(); }
     int64_t scrollOffset() const { return m_scrollOffset; }
 
-    void setZoom(double pixelsPerSample) { m_pixelsPerSample = pixelsPerSample; update(); }
+    void setZoom(double pixelsPerSample) {
+        m_pixelsPerSample = std::clamp(pixelsPerSample, vvvdaw::MinZoom, vvvdaw::MaxZoom);
+        update();
+    }
     double zoom() const { return m_pixelsPerSample; }
 
     void setTempo(double bpm) { m_tempo = bpm; update(); }

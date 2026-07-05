@@ -34,6 +34,7 @@ private:
     void setupTimer();
     void loadStyleSheet();
     void rebuildTracks();
+    void syncZoom();
     void syncScrollPositions(int value);
     void pushUndoState();
     void performUndo();
