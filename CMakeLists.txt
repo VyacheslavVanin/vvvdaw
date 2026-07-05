@@ -17,6 +17,8 @@ add_executable(vvvdaw
     src/core/Settings.cpp
     src/core/UndoStack.cpp
     src/audio/AudioEngine.cpp
+    src/audio/RecordingManager.cpp
+    src/audio/StreamingManager.cpp
     src/model/AudioClip.cpp
     src/model/AudioEvent.cpp
     src/model/Track.cpp

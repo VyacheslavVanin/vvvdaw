@@ -1,21 +1,16 @@
 #pragma once
 #include <portaudio.h>
-#include <sndfile.h>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <string>
-#include <QString>
-#include <thread>
-#include <unordered_map>
 #include <vector>
 #include "core/Constants.h"
 #include "core/Settings.h"
-#include "RingBuffer.h"
+#include "RecordingManager.h"
+#include "StreamingManager.h"
 
 class Project;
-class AudioClip;
 class Track;
 
 enum class TransportState : uint8_t {
@@ -23,30 +18,6 @@ enum class TransportState : uint8_t {
     Playing,
     Paused,
     Recording
-};
-
-struct RecordingTrack {
-    std::unique_ptr<RingBuffer> buffer;
-    std::string filePath;
-    SNDFILE* file = nullptr;
-    SF_INFO info{};
-};
-
-struct PlaybackStream {
-    AudioClip* clip = nullptr;
-    SNDFILE* file = nullptr;
-    SF_INFO info{};
-    RingBuffer buffer;
-    int64_t eventStartSample = 0;
-    int64_t eventOffsetSample = 0;
-    int64_t eventDurationSample = 0;
-    int64_t endFrame = 0;    // last readable frame in file (exclusive)
-    bool readerFinished = false; // reader has reached endFrame
-    bool finished = false;      // all data consumed by callback
-
-    bool open(const QString& filePath, int64_t startFrame, int64_t endFrame);
-    void close();
-    void resetPosition(int64_t startFrame);
 };
 
 class AudioEngine {
@@ -88,14 +59,9 @@ private:
                              void* userData);
 
     void processAudio(const float* input, float* output, unsigned long frameCount);
-    void writerThreadFunc();
 
     void startPlayback();
     void stopPlayback();
-    void createPlaybackStreams();
-    void readerThreadFunc();
-
-    bool processLoopRecordRegion(AudioClip& clip, const RecordingTrack& rt, Track& track);
 
     PaStream* m_stream = nullptr;
     std::atomic<Project*> m_project{nullptr};
@@ -107,24 +73,8 @@ private:
     std::atomic<TransportState> m_transportState{TransportState::Stopped};
     std::atomic<int64_t> m_playPosition{0};
 
-    // Recording
     std::vector<float> m_stereoScratch;
-    std::unordered_map<int, RecordingTrack> m_recordingTracks;
-    std::thread m_writerThread;
-    std::mutex m_writerMutex;
-    std::condition_variable m_writerCond;
-    std::atomic<bool> m_writerRunning{false};
-    std::atomic<bool> m_recordingActive{false};
-    std::atomic<bool> m_regionRecordingActive{false};
-    int64_t m_recordStartSample = 0;
 
-    // Streaming playback
-    std::vector<PlaybackStream> m_playbackStreams;
-    std::mutex m_streamMutex;
-    std::thread m_readerThread;
-    std::mutex m_readerMutex;
-    std::condition_variable m_readerCond;
-    std::atomic<bool> m_readerRunning{false};
-    std::atomic<bool> m_needStreamReset{false};
-    std::atomic<int64_t> m_resetStreamPos{0};
+    RecordingManager m_recordingManager;
+    StreamingManager m_streamingManager;
 };
