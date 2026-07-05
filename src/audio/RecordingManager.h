@@ -48,6 +48,7 @@ private:
     bool processLoopRecordRegion(AudioClip& clip, const RecordingTrack& rt, Track& track,
                                   Project* proj, int64_t recordStartSample);
 
+    std::mutex m_recordingTracksMutex;
     std::unordered_map<int, RecordingTrack> m_recordingTracks;
     std::thread m_writerThread;
     std::mutex m_writerMutex;

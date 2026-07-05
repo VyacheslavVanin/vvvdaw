@@ -4,6 +4,7 @@
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
 #include "core/Constants.h"
+#include "AudioUtils.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -37,34 +38,37 @@ void RecordingManager::start(Project* project, int sampleRate, int64_t playPosit
     QString audioDir = project->audioDirectory();
     QDir().mkpath(audioDir);
 
-    for (size_t i = 0; i < project->tracks().size(); ++i) {
-        auto& track = project->tracks()[i];
-        if (!track.isRecordArmed()) continue;
+    {
+        std::unique_lock tracksLock(m_recordingTracksMutex);
+        for (size_t i = 0; i < project->tracks().size(); ++i) {
+            auto& track = project->tracks()[i];
+            if (!track.isRecordArmed()) continue;
 
-        QString filePath = audioDir + QString("/track_%1_%2.wav")
-            .arg(static_cast<int>(i))
-            .arg(QDateTime::currentMSecsSinceEpoch());
+            QString filePath = audioDir + QString("/track_%1_%2.wav")
+                .arg(static_cast<int>(i))
+                .arg(QDateTime::currentMSecsSinceEpoch());
 
-        SF_INFO info;
-        std::memset(&info, 0, sizeof(info));
-        info.samplerate = sampleRate;
-        info.channels = 2;
-        info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
+            SF_INFO info;
+            std::memset(&info, 0, sizeof(info));
+            info.samplerate = sampleRate;
+            info.channels = 2;
+            info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
 
-        SNDFILE* file = sf_open(filePath.toUtf8().constData(), SFM_WRITE, &info);
-        if (!file) {
-            qWarning() << "Failed to open recording file:" << filePath << sf_strerror(nullptr);
-            continue;
+            SNDFILE* file = sf_open(filePath.toUtf8().constData(), SFM_WRITE, &info);
+            if (!file) {
+                qWarning() << "Failed to open recording file:" << filePath << sf_strerror(nullptr);
+                continue;
+            }
+
+            RecordingTrack rt;
+            rt.buffer = std::make_unique<RingBuffer>(static_cast<size_t>(sampleRate) * vvvdaw::RecordBufferSeconds);
+            rt.filePath = filePath.toStdString();
+            rt.info = info;
+            rt.file = file;
+
+            qDebug() << "Recording to:" << filePath;
+            m_recordingTracks.emplace(static_cast<int>(i), std::move(rt));
         }
-
-        RecordingTrack rt;
-        rt.buffer = std::make_unique<RingBuffer>(static_cast<size_t>(sampleRate) * vvvdaw::RecordBufferSeconds);
-        rt.filePath = filePath.toStdString();
-        rt.info = info;
-        rt.file = file;
-
-        qDebug() << "Recording to:" << filePath;
-        m_recordingTracks.emplace(static_cast<int>(i), std::move(rt));
     }
 
     m_writerRunning = true;
@@ -82,11 +86,15 @@ void RecordingManager::stop(Project* project) {
     }
 
     if (!project) {
-        m_recordingTracks.clear();
+        {
+            std::unique_lock lock(m_recordingTracksMutex);
+            m_recordingTracks.clear();
+        }
         return;
     }
 
     std::unique_lock projectLock(project->mutex());
+    std::unique_lock tracksLock(m_recordingTracksMutex);
     for (auto& [trackIdx, rt] : m_recordingTracks) {
         if (rt.file) {
             sf_close(rt.file);
@@ -214,6 +222,9 @@ bool RecordingManager::processLoopRecordRegion(AudioClip& clip, const RecordingT
 }
 
 void RecordingManager::processCapture(const float* input, unsigned long frameCount, int inCh) {
+    std::unique_lock lock(m_recordingTracksMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+
     for (auto& [trackIdx, rt] : m_recordingTracks) {
         if (!rt.buffer) continue;
         if (inCh == 1) {
@@ -235,8 +246,7 @@ void RecordingManager::processMonitoring(Project* proj, const float* input, floa
         if (!track.isRecordArmed() || !track.isMonitoring()) continue;
         float trackVol = track.volume() * vvvdaw::MonitoringVolumeFactor;
         float pan = track.pan();
-        float leftGain  = std::min(1.0f, 1.0f - pan);
-        float rightGain = std::min(1.0f, 1.0f + pan);
+        auto [leftGain, rightGain] = panGains(pan);
 
         if (outCh >= 2) {
             if (inCh == 1) {

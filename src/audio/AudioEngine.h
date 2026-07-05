@@ -7,18 +7,12 @@
 #include <vector>
 #include "core/Constants.h"
 #include "core/Settings.h"
+#include "DeviceInfo.h"
 #include "RecordingManager.h"
 #include "StreamingManager.h"
 
 class Project;
 class Track;
-
-enum class TransportState : uint8_t {
-    Stopped,
-    Playing,
-    Paused,
-    Recording
-};
 
 class AudioEngine {
 public:
@@ -38,8 +32,8 @@ public:
 
     void setProject(Project* project) { m_project.store(project, std::memory_order_release); }
 
-    void setTransportState(TransportState state);
-    TransportState transportState() const;
+    void setTransportState(vvvdaw::TransportState state);
+    vvvdaw::TransportState transportState() const;
 
     int64_t playPosition() const { return m_playPosition.load(std::memory_order_acquire); }
     void setPlayPosition(int64_t pos);
@@ -60,6 +54,11 @@ private:
 
     void processAudio(const float* input, float* output, unsigned long frameCount);
 
+    void mixPlayback(Project* proj, float* output, unsigned long frameCount,
+                     int64_t pos, int outCh);
+    int64_t advancePlayhead(Project* proj, int64_t pos, unsigned long frameCount,
+                            vvvdaw::TransportState state);
+
     void startPlayback();
     void stopPlayback();
 
@@ -70,7 +69,7 @@ private:
     int m_inputChannels = 0;
     int m_outputChannels = 2;
 
-    std::atomic<TransportState> m_transportState{TransportState::Stopped};
+    std::atomic<vvvdaw::TransportState> m_transportState{vvvdaw::TransportState::Stopped};
     std::atomic<int64_t> m_playPosition{0};
 
     std::vector<float> m_stereoScratch;

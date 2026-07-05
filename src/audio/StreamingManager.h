@@ -45,7 +45,6 @@ public:
                    float* scratch, size_t maxFrames, int ch, size_t& outFramesRead);
 
     void signalReset(int64_t newPos);
-    void notifyReader();
     void closeAll();
 
 private:

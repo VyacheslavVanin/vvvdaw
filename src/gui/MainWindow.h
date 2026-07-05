@@ -1,7 +1,9 @@
 #pragma once
 #include <QMainWindow>
+#include <QJsonObject>
 #include <QScrollBar>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "core/Constants.h"
@@ -34,6 +36,7 @@ private:
     void pushUndoState();
     void performUndo();
     void performRedo();
+    void applyState(const std::optional<QJsonObject>& state);
 
     Project& m_project;
     AudioEngine& m_engine;

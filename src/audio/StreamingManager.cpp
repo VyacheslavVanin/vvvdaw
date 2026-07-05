@@ -163,10 +163,6 @@ void StreamingManager::signalReset(int64_t newPos) {
     m_readerCond.notify_one();
 }
 
-void StreamingManager::notifyReader() {
-    m_readerCond.notify_one();
-}
-
 void StreamingManager::closeAll() {
     std::lock_guard<std::mutex> lock(m_streamMutex);
     for (auto& stream : m_playbackStreams)

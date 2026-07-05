@@ -1,14 +1,6 @@
 #pragma once
 #include <QString>
 #include <QJsonObject>
-#include <vector>
-
-struct DeviceInfo {
-    int id = -1;
-    QString name;
-    int maxInputChannels = 0;
-    int maxOutputChannels = 0;
-};
 
 class Settings {
 public:
@@ -26,9 +18,6 @@ public:
     int streamingThresholdSec;
 
     QString lastProjectPath;
-
-    std::vector<DeviceInfo> inputDevices;
-    std::vector<DeviceInfo> outputDevices;
 
 private:
     QString configFilePath() const;

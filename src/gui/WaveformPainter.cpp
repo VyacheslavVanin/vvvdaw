@@ -1,7 +1,6 @@
 #include "WaveformPainter.h"
 #include <algorithm>
 #include <cmath>
-#include <QDebug>
 
 QImage WaveformPainter::render(const float* samples, size_t frameCount,
                                 int channels, int width, int height,
@@ -14,30 +13,15 @@ QImage WaveformPainter::render(const float* samples, size_t frameCount,
 
     QPainter painter(&img);
     painter.setRenderHint(QPainter::Antialiasing, false);
-    paint(painter, img.rect(), samples, frameCount, channels, 0, frameCount, color);
-    painter.end();
-
-    return img;
-}
-
-void WaveformPainter::paint(QPainter& painter, const QRect& rect,
-                             const float* samples, size_t frameCount,
-                             int channels, int64_t offsetSamples,
-                             int64_t visibleSamples, const QColor& color) {
-    if (!samples || frameCount == 0 || rect.width() <= 0 || rect.height() <= 0)
-        return;
-
-    if (visibleSamples == 0) visibleSamples = frameCount;
-
     painter.setPen(Qt::NoPen);
     painter.setBrush(color);
 
-    int h2 = rect.height() / 2;
-    int yCenter = rect.y() + h2;
+    int h2 = height / 2;
+    int yCenter = h2;
 
-    for (int x = 0; x < rect.width(); ++x) {
-        int64_t startIdx = offsetSamples + (visibleSamples * x) / rect.width();
-        int64_t endIdx = offsetSamples + (visibleSamples * (x + 1)) / rect.width();
+    for (int x = 0; x < width; ++x) {
+        int64_t startIdx = static_cast<int64_t>(frameCount) * x / width;
+        int64_t endIdx = static_cast<int64_t>(frameCount) * (x + 1) / width;
         if (startIdx >= static_cast<int64_t>(frameCount)) break;
         if (endIdx > static_cast<int64_t>(frameCount)) endIdx = frameCount;
 
@@ -51,8 +35,11 @@ void WaveformPainter::paint(QPainter& painter, const QRect& rect,
         int barHeight = static_cast<int>(maxVal * h2);
         if (barHeight < 1) barHeight = 1;
 
-        painter.drawRect(rect.x() + x, yCenter - barHeight, 1, barHeight * 2);
+        painter.drawRect(x, yCenter - barHeight, 1, barHeight * 2);
     }
+    painter.end();
+
+    return img;
 }
 
 QImage WaveformPainter::renderFromPeaks(const AudioClip::Peak* peaks, size_t peakCount,
@@ -67,32 +54,15 @@ QImage WaveformPainter::renderFromPeaks(const AudioClip::Peak* peaks, size_t pea
 
     QPainter painter(&img);
     painter.setRenderHint(QPainter::Antialiasing, false);
-    paintPeaks(painter, img.rect(), peaks, peakCount, framesPerPeak, totalFrames,
-               0, totalFrames, color);
-    painter.end();
-
-    return img;
-}
-
-void WaveformPainter::paintPeaks(QPainter& painter, const QRect& rect,
-                                  const AudioClip::Peak* peaks, size_t peakCount,
-                                  size_t framesPerPeak, size_t totalFrames,
-                                  int64_t offsetSamples, int64_t visibleSamples,
-                                  const QColor& color) {
-    if (!peaks || peakCount == 0 || rect.width() <= 0 || rect.height() <= 0)
-        return;
-
-    if (visibleSamples == 0) visibleSamples = totalFrames;
-
     painter.setPen(Qt::NoPen);
     painter.setBrush(color);
 
-    int h2 = rect.height() / 2;
-    int yCenter = rect.y() + h2;
+    int h2 = height / 2;
+    int yCenter = h2;
 
-    for (int x = 0; x < rect.width(); ++x) {
-        int64_t startSample = offsetSamples + (visibleSamples * x) / rect.width();
-        int64_t endSample = offsetSamples + (visibleSamples * (x + 1)) / rect.width();
+    for (int x = 0; x < width; ++x) {
+        int64_t startSample = static_cast<int64_t>(totalFrames) * x / width;
+        int64_t endSample = static_cast<int64_t>(totalFrames) * (x + 1) / width;
         if (startSample >= static_cast<int64_t>(totalFrames)) break;
         if (endSample > static_cast<int64_t>(totalFrames)) endSample = totalFrames;
 
@@ -109,6 +79,9 @@ void WaveformPainter::paintPeaks(QPainter& painter, const QRect& rect,
         int barHeight = static_cast<int>(maxVal * h2);
         if (barHeight < 1) barHeight = 1;
 
-        painter.drawRect(rect.x() + x, yCenter - barHeight, 1, barHeight * 2);
+        painter.drawRect(x, yCenter - barHeight, 1, barHeight * 2);
     }
+    painter.end();
+
+    return img;
 }

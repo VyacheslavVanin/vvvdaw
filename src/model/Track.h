@@ -42,8 +42,8 @@ public:
     std::vector<AudioEvent>& events() { return m_events; }
     const std::vector<AudioEvent>& events() const { return m_events; }
 
-    void addEvent(const AudioEvent& event);
-    void importEvent(const AudioEvent& event);
+    void addEvent(AudioEvent event);
+    void importEvent(AudioEvent event);
     void removeEvent(int64_t eventId);
     AudioEvent* findEvent(int64_t eventId);
 

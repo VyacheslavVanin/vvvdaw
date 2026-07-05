@@ -5,14 +5,13 @@ Track::Track(const QString& name)
 {
 }
 
-void Track::addEvent(const AudioEvent& event) {
-    AudioEvent ev = event;
-    ev.setId(m_nextEventId++);
-    m_events.push_back(ev);
+void Track::addEvent(AudioEvent event) {
+    event.setId(m_nextEventId++);
+    m_events.push_back(std::move(event));
 }
 
-void Track::importEvent(const AudioEvent& event) {
-    m_events.push_back(event);
+void Track::importEvent(AudioEvent event) {
+    m_events.push_back(std::move(event));
 }
 
 void Track::removeEvent(int64_t eventId) {

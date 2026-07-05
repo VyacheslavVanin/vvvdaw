@@ -2,9 +2,12 @@
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/AudioClip.h"
+#include "AudioUtils.h"
 #include <algorithm>
 #include <cstring>
 #include <QDebug>
+
+using vvvdaw::TransportState;
 
 // --- AudioEngine ---
 
@@ -275,110 +278,113 @@ void AudioEngine::processAudio(const float* input, float* output,
                 m_recordingManager.notifyWriter();
             }
 
-            // --- Playback (events) ---
-            bool anySolo = false;
-            for (const auto& track : proj->tracks()) {
-                if (track.isSolo()) { anySolo = true; break; }
-            }
+            mixPlayback(proj, output, frameCount, pos, outCh);
 
-            for (const auto& track : proj->tracks()) {
-                if (track.isMuted()) continue;
-                if (anySolo && !track.isSolo()) continue;
-                float trackVol = track.volume();
-                float pan = track.pan();
-                float leftGain  = std::min(1.0f, 1.0f - pan);
-                float rightGain = std::min(1.0f, 1.0f + pan);
-
-                for (const auto& event : track.events()) {
-                    auto activeClip = event.activeClip();
-                    if (!activeClip || !activeClip->isValid()) continue;
-
-                    int64_t eventEnd = event.startSample() + event.durationSample();
-                    if (pos >= eventEnd || pos + frameCount <= event.startSample())
-                        continue;
-
-                    int64_t localPos = pos - event.startSample() + event.offsetSample();
-                    if (localPos < event.offsetSample()) localPos = event.offsetSample();
-
-                    if (activeClip->isStreaming()) {
-                        int ch = activeClip->channels();
-                        size_t framesAvail = 0;
-                        if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
-                                                          event.durationSample(),
-                                                          m_stereoScratch.data(), frameCount, ch,
-                                                          framesAvail)) {
-                            for (unsigned long f = 0; f < framesAvail; ++f) {
-                                float sL = m_stereoScratch[f * ch];
-                                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                                if (outCh >= 2) {
-                                    output[f * 2]     += sL * trackVol * leftGain;
-                                    output[f * 2 + 1] += sR * trackVol * rightGain;
-                                } else {
-                                    output[f] += (sL + sR) * 0.5f * trackVol;
-                                }
-                            }
-                        }
-                    } else {
-                        const float* clipData = activeClip->data();
-                        int ch = activeClip->channels();
-                        size_t clipFrames = activeClip->frameCount();
-
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            int64_t clipFrame = localPos + f;
-                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                                clipFrame >= event.offsetSample() + event.durationSample())
-                                continue;
-
-                            float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                            float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
-
-                            if (outCh >= 2) {
-                                output[f * 2]     += sL * trackVol * leftGain;
-                                output[f * 2 + 1] += sR * trackVol * rightGain;
-                            } else {
-                                output[f] += (sL + sR) * 0.5f * trackVol;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // --- Advance playhead ---
-            int64_t newPos = pos + frameCount;
-
-            // Loop wrapping
-            if (proj->hasLoop()) {
-                int64_t loopEnd = proj->loopEnd();
-                if (newPos >= loopEnd) {
-                    int64_t loopStart = proj->loopStart();
-                    int64_t excess = newPos - loopEnd;
-                    newPos = loopStart + excess;
-                    if (newPos >= loopEnd)
-                        newPos = loopStart;
-                }
-            }
-
-            // If loop wrapped, signal reader to reset streaming stream positions
-            if (newPos != pos + frameCount) {
-                m_streamingManager.signalReset(newPos);
-            }
-
-            // --- Record region: control capture active flag ---
-            if (state == TransportState::Recording &&
-                proj->hasRecordRegion()) {
-                int64_t rrStart = proj->recordRegionStart();
-                int64_t rrEnd = proj->recordRegionEnd();
-                bool regionActive = m_recordingManager.isRegionActive();
-                if (!regionActive && newPos > rrStart && pos < rrEnd) {
-                    m_recordingManager.setRegionActive(true);
-                } else if (regionActive && newPos >= rrEnd) {
-                    m_recordingManager.setRegionActive(false);
-                }
-            }
+            int64_t newPos = advancePlayhead(proj, pos, frameCount, state);
 
             m_playPosition.store(newPos, std::memory_order_release);
         }
     }
+}
+
+void AudioEngine::mixPlayback(Project* proj, float* output, unsigned long frameCount,
+                               int64_t pos, int outCh) {
+    bool anySolo = false;
+    for (const auto& track : proj->tracks()) {
+        if (track.isSolo()) { anySolo = true; break; }
+    }
+
+    for (const auto& track : proj->tracks()) {
+        if (track.isMuted()) continue;
+        if (anySolo && !track.isSolo()) continue;
+        float trackVol = track.volume();
+        float pan = track.pan();
+        auto [leftGain, rightGain] = panGains(pan);
+
+        for (const auto& event : track.events()) {
+            auto activeClip = event.activeClip();
+            if (!activeClip || !activeClip->isValid()) continue;
+
+            int64_t eventEnd = event.startSample() + event.durationSample();
+            if (pos >= eventEnd || pos + frameCount <= event.startSample())
+                continue;
+
+            int64_t localPos = pos - event.startSample() + event.offsetSample();
+            if (localPos < event.offsetSample()) localPos = event.offsetSample();
+
+            if (activeClip->isStreaming()) {
+                int ch = activeClip->channels();
+                size_t framesAvail = 0;
+                if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
+                                                  event.durationSample(),
+                                                  m_stereoScratch.data(), frameCount, ch,
+                                                  framesAvail)) {
+                    for (unsigned long f = 0; f < framesAvail; ++f) {
+                        float sL = m_stereoScratch[f * ch];
+                        float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                        if (outCh >= 2) {
+                            output[f * 2]     += sL * trackVol * leftGain;
+                            output[f * 2 + 1] += sR * trackVol * rightGain;
+                        } else {
+                            output[f] += (sL + sR) * 0.5f * trackVol;
+                        }
+                    }
+                }
+            } else {
+                const float* clipData = activeClip->data();
+                int ch = activeClip->channels();
+                size_t clipFrames = activeClip->frameCount();
+
+                for (unsigned long f = 0; f < frameCount; ++f) {
+                    int64_t clipFrame = localPos + f;
+                    if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                        clipFrame >= event.offsetSample() + event.durationSample())
+                        continue;
+
+                    float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
+                    float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+
+                    if (outCh >= 2) {
+                        output[f * 2]     += sL * trackVol * leftGain;
+                        output[f * 2 + 1] += sR * trackVol * rightGain;
+                    } else {
+                        output[f] += (sL + sR) * 0.5f * trackVol;
+                    }
+                }
+            }
+        }
+    }
+}
+
+int64_t AudioEngine::advancePlayhead(Project* proj, int64_t pos, unsigned long frameCount,
+                                      TransportState state) {
+    int64_t newPos = pos + frameCount;
+
+    if (proj->hasLoop()) {
+        int64_t loopEnd = proj->loopEnd();
+        if (newPos >= loopEnd) {
+            int64_t loopStart = proj->loopStart();
+            int64_t excess = newPos - loopEnd;
+            newPos = loopStart + excess;
+            if (newPos >= loopEnd)
+                newPos = loopStart;
+        }
+    }
+
+    if (newPos != pos + frameCount)
+        m_streamingManager.signalReset(newPos);
+
+    if (state == TransportState::Recording && proj->hasRecordRegion()) {
+        int64_t rrStart = proj->recordRegionStart();
+        int64_t rrEnd = proj->recordRegionEnd();
+        bool regionActive = m_recordingManager.isRegionActive();
+        if (!regionActive && newPos > rrStart && pos < rrEnd)
+            m_recordingManager.setRegionActive(true);
+        else if (regionActive && newPos >= rrEnd)
+            m_recordingManager.setRegionActive(false);
+    }
+
+    return newPos;
 }
 
 void AudioEngine::startPlayback() {

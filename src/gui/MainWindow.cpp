@@ -14,6 +14,8 @@
 #include "model/AudioClip.h"
 #include "audio/AudioEngine.h"
 #include "core/Settings.h"
+
+using vvvdaw::TransportState;
 #include <QApplication>
 #include <QFile>
 #include <QFileDialog>
@@ -318,17 +320,14 @@ void MainWindow::pushUndoState() {
 }
 
 void MainWindow::performUndo() {
-    auto state = m_undoStack.undo(m_project.toJson());
-    if (!state) return;
-    m_engine.setTransportState(TransportState::Stopped);
-    m_engine.setProject(nullptr);
-    m_project.fromJson(*state);
-    m_engine.setProject(&m_project);
-    rebuildTracks();
+    applyState(m_undoStack.undo(m_project.toJson()));
 }
 
 void MainWindow::performRedo() {
-    auto state = m_undoStack.redo(m_project.toJson());
+    applyState(m_undoStack.redo(m_project.toJson()));
+}
+
+void MainWindow::applyState(const std::optional<QJsonObject>& state) {
     if (!state) return;
     m_engine.setTransportState(TransportState::Stopped);
     m_engine.setProject(nullptr);

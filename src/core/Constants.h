@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 namespace vvvdaw {
 
@@ -32,5 +33,12 @@ inline constexpr int TickIntervalSamples = 48000;
 
 // Audio
 inline constexpr float MonitoringVolumeFactor = 0.7f;
+
+enum class TransportState : uint8_t {
+    Stopped,
+    Playing,
+    Paused,
+    Recording
+};
 
 } // namespace vvvdaw
