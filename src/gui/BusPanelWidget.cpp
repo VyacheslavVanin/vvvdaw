@@ -57,6 +57,14 @@ void BusPanelWidget::rebuild() {
     }
     m_busRows.clear();
 
+    while (auto* item = m_containerLayout->takeAt(0)) {
+        if (auto* w = item->widget()) {
+            w->hide();
+            w->deleteLater();
+        }
+        delete item;
+    }
+
     const auto& buses = m_project.buses();
 
     for (int i = 0; i < static_cast<int>(buses.size()); ++i) {
