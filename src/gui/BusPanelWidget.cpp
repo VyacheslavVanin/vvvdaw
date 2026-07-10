@@ -7,6 +7,19 @@
 #include <QFrame>
 #include <QEvent>
 
+static bool wouldCreateCycle(const std::vector<AudioBus>& buses, int fromIndex, int toIndex) {
+    if (toIndex < 0) return false;
+    if (toIndex == fromIndex) return true;
+    int busCount = static_cast<int>(buses.size());
+    int current = toIndex;
+    for (int step = 0; step < busCount; ++step) {
+        if (current == fromIndex) return true;
+        if (current < 0 || current >= busCount) return false;
+        current = buses[current].outputBusIndex;
+    }
+    return false;
+}
+
 BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     : QScrollArea(parent)
     , m_project(project)
@@ -116,9 +129,16 @@ void BusPanelWidget::rebuild() {
             "QComboBox::drop-down { border: none; width: 12px; }"
             "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
         );
+        row.outCombo->addItem("Output Device", -1);
         for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
             if (j == i) continue;
+            bool cycle = wouldCreateCycle(buses, i, j);
             row.outCombo->addItem(buses[j].name, j);
+            int lastIdx = row.outCombo->count() - 1;
+            if (cycle) {
+                row.outCombo->setItemData(lastIdx, QVariant(), Qt::UserRole - 1);
+                row.outCombo->setItemText(lastIdx, buses[j].name + " (x)");
+            }
         }
         int outTarget = bus.outputBusIndex;
         for (int c = 0; c < row.outCombo->count(); ++c) {
@@ -176,8 +196,18 @@ void BusPanelWidget::rebuild() {
         row.nameEdit->installEventFilter(this);
 
         connect(row.outCombo, QOverload<int>::of(&QComboBox::activated), this,
-                [this, row, busIndex](int) {
-            int targetBusIdx = row.outCombo->currentData().toInt();
+                [this, row, busIndex](int comboIdx) {
+            int targetBusIdx = row.outCombo->itemData(comboIdx).toInt();
+            if (targetBusIdx >= 0 && wouldCreateCycle(m_project.buses(), busIndex, targetBusIdx)) {
+                int outTarget = m_project.buses()[busIndex].outputBusIndex;
+                for (int c = 0; c < row.outCombo->count(); ++c) {
+                    if (row.outCombo->itemData(c).toInt() == outTarget) {
+                        row.outCombo->setCurrentIndex(c);
+                        break;
+                    }
+                }
+                return;
+            }
             m_project.buses()[busIndex].outputBusIndex = targetBusIdx;
             emit busChanged();
         });

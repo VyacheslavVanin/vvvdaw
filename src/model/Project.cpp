@@ -17,7 +17,7 @@ Project::Project()
     master.name = "Master";
     master.volume = 1.0f;
     master.pan = 0.0f;
-    master.outputBusIndex = 0;
+    master.outputBusIndex = -1;
     m_buses.push_back(master);
 }
 
@@ -322,7 +322,7 @@ void Project::fromJson(const QJsonObject& obj) {
         master.name = "Master";
         master.volume = 1.0f;
         master.pan = 0.0f;
-        master.outputBusIndex = 0;
+        master.outputBusIndex = -1;
         m_buses.push_back(master);
     } else {
         for (const auto& bVal : busesArr) {
@@ -341,7 +341,7 @@ void Project::fromJson(const QJsonObject& obj) {
         master.name = "Master";
         master.volume = 1.0f;
         master.pan = 0.0f;
-        master.outputBusIndex = 0;
+        master.outputBusIndex = -1;
         m_buses.insert(m_buses.begin(), master);
     }
 }

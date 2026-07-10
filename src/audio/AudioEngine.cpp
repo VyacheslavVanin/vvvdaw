@@ -406,8 +406,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         float bVol = bus.volume;
 
         int parentIdx = bus.outputBusIndex;
-        bool routeToOutput = (parentIdx == idx) ||
-                             (parentIdx < 0 || parentIdx >= busCount);
+        bool routeToOutput = (parentIdx < 0 || parentIdx >= busCount);
 
         if (routeToOutput) {
             float* buf = m_busBuffers[idx].data();
