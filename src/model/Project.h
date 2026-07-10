@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <shared_mutex>
+#include <mutex>
 #include "Track.h"
 #include "AudioBus.h"
 
