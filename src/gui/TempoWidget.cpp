@@ -3,6 +3,7 @@
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 
 struct SigEntry { int num; int den; };
 static const SigEntry s_sigs[] = {
@@ -67,6 +68,29 @@ TempoWidget::TempoWidget(QWidget* parent)
         "QComboBox QAbstractItemView { background: #3a3a3a; color: #fff; selection-background-color: #557799; }");
     layout->addWidget(m_snapCombo);
 
+    m_metronomeBtn = new QPushButton("M", this);
+    m_metronomeBtn->setCheckable(true);
+    m_metronomeBtn->setToolTip("Metronome");
+    m_metronomeBtn->setFixedSize(24, 24);
+    m_metronomeBtn->setStyleSheet(
+        "QPushButton { background: #3a3a3a; color: #ccc; border: 1px solid #555; "
+        "border-radius: 3px; font-size: 11px; font-weight: bold; }"
+        "QPushButton:checked { background: #335577; color: white; border: 1px solid #5599cc; }");
+    layout->addWidget(m_metronomeBtn);
+
+    m_precountBtn = new QPushButton("P", this);
+    m_precountBtn->setCheckable(true);
+    m_precountBtn->setToolTip("Precount");
+    m_precountBtn->setFixedSize(24, 24);
+    m_precountBtn->setStyleSheet(
+        "QPushButton { background: #3a3a3a; color: #ccc; border: 1px solid #555; "
+        "border-radius: 3px; font-size: 11px; font-weight: bold; }"
+        "QPushButton:checked { background: #335577; color: white; border: 1px solid #5599cc; }");
+    layout->addWidget(m_precountBtn);
+
+    connect(m_metronomeBtn, &QPushButton::toggled, this, &TempoWidget::metronomeToggled);
+    connect(m_precountBtn, &QPushButton::toggled, this, &TempoWidget::precountToggled);
+
     connect(m_bpmSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, &TempoWidget::tempoChanged);
     connect(m_sigCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -106,4 +130,16 @@ void TempoWidget::setSnapResolution(int index) {
         m_snapCombo->setCurrentIndex(index);
         m_snapCombo->blockSignals(false);
     }
+}
+
+void TempoWidget::setMetronomeEnabled(bool enabled) {
+    m_metronomeBtn->blockSignals(true);
+    m_metronomeBtn->setChecked(enabled);
+    m_metronomeBtn->blockSignals(false);
+}
+
+void TempoWidget::setPrecountEnabled(bool enabled) {
+    m_precountBtn->blockSignals(true);
+    m_precountBtn->setChecked(enabled);
+    m_precountBtn->blockSignals(false);
 }

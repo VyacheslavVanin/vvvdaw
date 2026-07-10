@@ -222,7 +222,7 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
         auto* ce = static_cast<QContextMenuEvent*>(event);
         for (int i = 0; i < static_cast<int>(m_busRows.size()); ++i) {
             if (m_busRows[i].widget == obj) {
-                if (i == 0) return true;
+                if (!m_project.buses()[i].removable) return true;
                 QMenu menu(m_busRows[i].widget);
                 QAction* deleteAction = menu.addAction("Delete Bus");
                 connect(deleteAction, &QAction::triggered, this, [this, i] {

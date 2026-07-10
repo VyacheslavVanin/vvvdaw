@@ -183,6 +183,15 @@ void MainWindow::setupUi() {
         updateSnapUnit();
     });
 
+    connect(m_tempoWidget, &TempoWidget::metronomeToggled, this, [this](bool on) {
+        m_project.setMetronomeEnabled(on);
+        m_engine.setMetronomeEnabled(on);
+    });
+    connect(m_tempoWidget, &TempoWidget::precountToggled, this, [this](bool on) {
+        m_project.setPrecountEnabled(on);
+        m_engine.setPrecountEnabled(on);
+    });
+
     // Bus panel
     m_busPanel = new BusPanelWidget(m_project, this);
     m_busPanel->hide();
@@ -202,6 +211,8 @@ void MainWindow::setupUi() {
 
     connect(m_busPanel, &BusPanelWidget::removeBusRequested, this, [this](int index) {
         if (index <= 0 || index >= static_cast<int>(m_project.buses().size()))
+            return;
+        if (!m_project.buses()[index].removable)
             return;
         pushUndoState();
         m_project.removeBus(index);
@@ -752,6 +763,10 @@ void MainWindow::rebuildTracks() {
 
     m_tempoWidget->setTempo(m_project.tempo());
     m_tempoWidget->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
+    m_tempoWidget->setMetronomeEnabled(m_project.metronomeEnabled());
+    m_tempoWidget->setPrecountEnabled(m_project.precountEnabled());
+    m_engine.setMetronomeEnabled(m_project.metronomeEnabled());
+    m_engine.setPrecountEnabled(m_project.precountEnabled());
 
     double snapUnit = m_project.samplesPerBar() / m_snapResolution;
     m_timelineRuler->setSnapUnit(snapUnit);

@@ -6,6 +6,7 @@
 #include "AudioUtils.h"
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <QDebug>
 
 using vvvdaw::TransportState;
@@ -103,6 +104,14 @@ bool AudioEngine::init(const Settings& settings) {
         return false;
     }
 
+    m_clickEnvelopeSize = m_sampleRate * 5 / 1000;
+    m_clickEnvelope.resize(m_clickEnvelopeSize);
+    for (int i = 0; i < m_clickEnvelopeSize; ++i) {
+        double t = static_cast<double>(i) / m_sampleRate;
+        double decay = std::exp(-t * 800.0);
+        m_clickEnvelope[i] = static_cast<float>(std::sin(2.0 * M_PI * 1000.0 * t) * decay);
+    }
+
     return true;
 }
 
@@ -158,7 +167,7 @@ void AudioEngine::setTransportState(TransportState state) {
     if (state == TransportState::Stopped) {
         if (m_recordingManager.isActive())
             stopRecording();
-        if (prev == TransportState::Playing || prev == TransportState::Recording || prev == TransportState::Paused)
+        if (prev == TransportState::Playing || prev == TransportState::Recording || prev == TransportState::Paused || prev == TransportState::Precounting)
             stopPlayback();
         m_transportState.store(TransportState::Stopped, std::memory_order_release);
         return;
@@ -175,6 +184,11 @@ void AudioEngine::setTransportState(TransportState state) {
 
     if (state == TransportState::Recording) {
         if (!m_recordingManager.isActive()) {
+            if (m_precountEnabled && prev == TransportState::Stopped) {
+                startPrecount();
+                m_transportState.store(TransportState::Precounting, std::memory_order_release);
+                return;
+            }
             if (prev != TransportState::Playing)
                 startPlayback();
             startRecording();
@@ -237,6 +251,15 @@ void AudioEngine::processAudio(const float* input, float* output,
     std::memset(output, 0, frameCount * outCh * sizeof(float));
 
     TransportState state = m_transportState.load(std::memory_order_acquire);
+
+    if (state == TransportState::Precounting) {
+        auto* proj = m_project.load(std::memory_order_acquire);
+        if (!proj) return;
+        std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
+        if (!projectLock) return;
+        processPrecounting(proj, output, frameCount, outCh);
+        return;
+    }
 
     if (state == TransportState::Playing || state == TransportState::Recording ||
         state == TransportState::Paused) {
@@ -399,6 +422,13 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         }
     }
 
+    if (m_metronomeEnabled) {
+        int metroIdx = 1;
+        if (metroIdx < busCount) {
+            generateClick(proj, m_busBuffers[metroIdx].data(), frameCount, pos, outCh);
+        }
+    }
+
     for (int idx : m_busProcessOrder) {
         const auto& bus = proj->buses()[idx];
 
@@ -539,4 +569,91 @@ void AudioEngine::startPlayback() {
 
 void AudioEngine::stopPlayback() {
     m_streamingManager.stop();
+}
+
+void AudioEngine::generateClick(Project* proj, float* buffer, unsigned long frameCount,
+                                 int64_t pos, int outCh) {
+    double samplesPerBeat = proj->samplesPerBeat();
+    double samplesPerBar = proj->samplesPerBar();
+    if (samplesPerBeat <= 0) return;
+
+    for (unsigned long f = 0; f < frameCount; ++f) {
+        int64_t samplePos = pos + f;
+        double beatInBar = std::fmod(static_cast<double>(samplePos), samplesPerBar) / samplesPerBeat;
+        double beatFrac = beatInBar - std::floor(beatInBar);
+        double samplesFrac = beatFrac * samplesPerBeat;
+
+        bool isDownbeat = (beatFrac < 0.5 / samplesPerBeat);
+
+        if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
+            m_clickPlayhead = 0;
+            m_clickIsDownbeat = isDownbeat;
+        }
+
+        if (m_clickPlayhead >= 0 && m_clickPlayhead < m_clickEnvelopeSize) {
+            float clickSample = m_clickEnvelope[m_clickPlayhead];
+            if (!m_clickIsDownbeat)
+                clickSample *= 0.6f;
+            buffer[f * 2]     += clickSample;
+            buffer[f * 2 + 1] += clickSample;
+            m_clickPlayhead++;
+        } else {
+            m_clickPlayhead = -1;
+        }
+    }
+}
+
+void AudioEngine::processPrecounting(Project* proj, float* output, unsigned long frameCount,
+                                      int outCh) {
+    if (m_precountTotalSamples <= 0) {
+        m_transportState.store(TransportState::Stopped, std::memory_order_release);
+        return;
+    }
+
+    double samplesPerBeat = proj->samplesPerBeat();
+    double samplesPerBar = proj->samplesPerBar();
+    if (samplesPerBeat <= 0) return;
+
+    for (unsigned long f = 0; f < frameCount; ++f) {
+        if (m_precountPosition >= m_precountTotalSamples) break;
+
+        double beatInBar = std::fmod(static_cast<double>(m_precountPosition), samplesPerBar) / samplesPerBeat;
+        double beatFrac = beatInBar - std::floor(beatInBar);
+
+        bool isDownbeat = (beatFrac < 0.5 / samplesPerBeat);
+
+        if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
+            m_clickPlayhead = 0;
+            m_clickIsDownbeat = isDownbeat;
+        }
+
+        if (m_clickPlayhead >= 0 && m_clickPlayhead < m_clickEnvelopeSize) {
+            float clickSample = m_clickEnvelope[m_clickPlayhead];
+            if (!m_clickIsDownbeat)
+                clickSample *= 0.6f;
+            output[f * 2]     += clickSample;
+            output[f * 2 + 1] += clickSample;
+            m_clickPlayhead++;
+        } else {
+            m_clickPlayhead = -1;
+        }
+
+        m_precountPosition++;
+    }
+
+    if (m_precountPosition >= m_precountTotalSamples) {
+        m_playPosition.store(m_precountStartPlayhead, std::memory_order_release);
+        startPlayback();
+        startRecording();
+        m_transportState.store(TransportState::Recording, std::memory_order_release);
+    }
+}
+
+void AudioEngine::startPrecount() {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+    m_precountStartPlayhead = m_playPosition.load(std::memory_order_acquire);
+    m_precountTotalSamples = static_cast<int64_t>(proj->samplesPerBar());
+    m_precountPosition = 0;
+    m_clickPlayhead = -1;
 }

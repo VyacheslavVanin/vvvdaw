@@ -18,7 +18,16 @@ Project::Project()
     master.volume = 1.0f;
     master.pan = 0.0f;
     master.outputBusIndex = -1;
+    master.removable = false;
     m_buses.push_back(master);
+
+    AudioBus metro;
+    metro.name = "Metronome";
+    metro.volume = 0.8f;
+    metro.pan = 0.0f;
+    metro.outputBusIndex = 0;
+    metro.removable = false;
+    m_buses.push_back(metro);
 }
 
 bool Project::load(const QString& filePath) {
@@ -124,6 +133,8 @@ int Project::addBus(const AudioBus& bus) {
 bool Project::removeBus(int index) {
     if (index <= 0 || index >= static_cast<int>(m_buses.size()))
         return false;
+    if (!m_buses[index].removable)
+        return false;
 
     m_buses.erase(m_buses.begin() + index);
 
@@ -168,6 +179,8 @@ QJsonObject Project::toJson() const {
     obj["name"] = m_name;
     obj["sampleRate"] = m_sampleRate;
     obj["snapToGrid"] = m_snapToGrid;
+    obj["metronomeEnabled"] = m_metronomeEnabled;
+    obj["precountEnabled"] = m_precountEnabled;
     obj["tempo"] = m_tempo;
     obj["timeSigNum"] = m_timeSigNum;
     obj["timeSigDen"] = m_timeSigDen;
@@ -235,6 +248,7 @@ QJsonObject Project::toJson() const {
         bObj["pan"] = bus.pan;
         bObj["volume"] = bus.volume;
         bObj["outputBusIndex"] = bus.outputBusIndex;
+        bObj["removable"] = bus.removable;
         busesArr.append(bObj);
     }
     obj["buses"] = busesArr;
@@ -246,6 +260,8 @@ void Project::fromJson(const QJsonObject& obj) {
     m_name = obj["name"].toString("Untitled");
     m_sampleRate = obj["sampleRate"].toInt(48000);
     m_snapToGrid = obj["snapToGrid"].toBool(true);
+    m_metronomeEnabled = obj["metronomeEnabled"].toBool(false);
+    m_precountEnabled = obj["precountEnabled"].toBool(false);
     m_tempo = obj["tempo"].toDouble(120.0);
     m_timeSigNum = obj["timeSigNum"].toInt(4);
     m_timeSigDen = obj["timeSigDen"].toInt(4);
@@ -323,6 +339,7 @@ void Project::fromJson(const QJsonObject& obj) {
         master.volume = 1.0f;
         master.pan = 0.0f;
         master.outputBusIndex = -1;
+        master.removable = false;
         m_buses.push_back(master);
     } else {
         for (const auto& bVal : busesArr) {
@@ -332,6 +349,7 @@ void Project::fromJson(const QJsonObject& obj) {
             bus.pan = static_cast<float>(bObj["pan"].toDouble(0.0));
             bus.volume = static_cast<float>(bObj["volume"].toDouble(1.0));
             bus.outputBusIndex = bObj["outputBusIndex"].toInt(0);
+            bus.removable = bObj["removable"].toBool(true);
             m_buses.push_back(bus);
         }
     }
@@ -342,7 +360,38 @@ void Project::fromJson(const QJsonObject& obj) {
         master.volume = 1.0f;
         master.pan = 0.0f;
         master.outputBusIndex = -1;
+        master.removable = false;
         m_buses.insert(m_buses.begin(), master);
+    }
+
+    bool hasMetronome = (static_cast<int>(m_buses.size()) > MetronomeBusIndex
+                         && m_buses[MetronomeBusIndex].name == "Metronome");
+    if (!hasMetronome) {
+        AudioBus metro;
+        metro.name = "Metronome";
+        metro.volume = 0.8f;
+        metro.pan = 0.0f;
+        metro.outputBusIndex = 0;
+        metro.removable = false;
+        m_buses.insert(m_buses.begin() + MetronomeBusIndex, metro);
+
+        for (auto& track : m_tracks) {
+            int busIdx = track.outputBusIndex();
+            if (busIdx >= MetronomeBusIndex)
+                track.setOutputBusIndex(busIdx + 1);
+        }
+        for (int i = 0; i < static_cast<int>(m_buses.size()); ++i) {
+            if (i == MetronomeBusIndex) continue;
+            int parent = m_buses[i].outputBusIndex;
+            if (parent >= MetronomeBusIndex)
+                m_buses[i].outputBusIndex = parent + 1;
+        }
+    }
+
+    m_buses[0].removable = false;
+    m_buses[0].outputBusIndex = -1;
+    if (static_cast<int>(m_buses.size()) > MetronomeBusIndex) {
+        m_buses[MetronomeBusIndex].removable = false;
     }
 }
 

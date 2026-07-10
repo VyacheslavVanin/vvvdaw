@@ -12,6 +12,8 @@ class Project {
 public:
     Project();
 
+    static constexpr int MetronomeBusIndex = 1;
+
     bool load(const QString& filePath);
     bool save(const QString& filePath);
 
@@ -46,6 +48,12 @@ public:
 
     bool snapToGrid() const { return m_snapToGrid; }
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
+
+    bool metronomeEnabled() const { return m_metronomeEnabled; }
+    void setMetronomeEnabled(bool enabled) { m_metronomeEnabled = enabled; }
+
+    bool precountEnabled() const { return m_precountEnabled; }
+    void setPrecountEnabled(bool enabled) { m_precountEnabled = enabled; }
 
     double tempo() const { return m_tempo; }
     void setTempo(double bpm) { m_tempo = bpm; }
@@ -85,6 +93,8 @@ private:
     int m_timeSigNum = 4;
     int m_timeSigDen = 4;
     bool m_snapToGrid = true;
+    bool m_metronomeEnabled = false;
+    bool m_precountEnabled = false;
     int64_t m_loopStart = -1;
     int64_t m_loopEnd = -1;
     int64_t m_recordRegionStart = -1;

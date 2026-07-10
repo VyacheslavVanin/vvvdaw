@@ -38,7 +38,8 @@ enum class TransportState : uint8_t {
     Stopped,
     Playing,
     Paused,
-    Recording
+    Recording,
+    Precounting
 };
 
 } // namespace vvvdaw

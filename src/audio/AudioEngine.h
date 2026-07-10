@@ -38,6 +38,11 @@ public:
     int64_t playPosition() const { return m_playPosition.load(std::memory_order_acquire); }
     void setPlayPosition(int64_t pos);
 
+    void setMetronomeEnabled(bool enabled) { m_metronomeEnabled = enabled; }
+    void setPrecountEnabled(bool enabled) { m_precountEnabled = enabled; }
+    bool metronomeEnabled() const { return m_metronomeEnabled; }
+    bool precountEnabled() const { return m_precountEnabled; }
+
     int sampleRate() const { return m_sampleRate; }
     int bufferSize() const { return m_bufferSize; }
     bool isActive() const { return m_stream != nullptr; }
@@ -62,6 +67,11 @@ private:
     int64_t advancePlayhead(Project* proj, int64_t pos, unsigned long frameCount,
                             vvvdaw::TransportState state);
 
+    void generateClick(Project* proj, float* buffer, unsigned long frameCount,
+                       int64_t pos, int outCh);
+    void processPrecounting(Project* proj, float* output, unsigned long frameCount, int outCh);
+    void startPrecount();
+
     void startPlayback();
     void stopPlayback();
 
@@ -82,4 +92,15 @@ private:
 
     RecordingManager m_recordingManager;
     StreamingManager m_streamingManager;
+
+    bool m_metronomeEnabled = false;
+    bool m_precountEnabled = false;
+    std::vector<float> m_clickEnvelope;
+    int m_clickEnvelopeSize = 0;
+    int m_clickPlayhead = -1;
+    bool m_clickIsDownbeat = false;
+
+    int64_t m_precountPosition = 0;
+    int64_t m_precountTotalSamples = 0;
+    int64_t m_precountStartPlayhead = 0;
 };
