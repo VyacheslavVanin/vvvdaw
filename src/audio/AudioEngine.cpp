@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "model/Project.h"
 #include "model/Track.h"
+#include "model/AudioBus.h"
 #include "model/AudioClip.h"
 #include "AudioUtils.h"
 #include <algorithm>
@@ -8,8 +9,6 @@
 #include <QDebug>
 
 using vvvdaw::TransportState;
-
-// --- AudioEngine ---
 
 AudioEngine::AudioEngine() = default;
 
@@ -156,7 +155,6 @@ std::vector<DeviceInfo> AudioEngine::enumerateDevices(bool input) {
 void AudioEngine::setTransportState(TransportState state) {
     TransportState prev = m_transportState.load(std::memory_order_acquire);
 
-    // Stopping: stop everything
     if (state == TransportState::Stopped) {
         if (m_recordingManager.isActive())
             stopRecording();
@@ -166,7 +164,6 @@ void AudioEngine::setTransportState(TransportState state) {
         return;
     }
 
-    // Pausing: stop capture and playback but retain position
     if (state == TransportState::Paused) {
         if (m_recordingManager.isActive())
             stopRecording();
@@ -176,7 +173,6 @@ void AudioEngine::setTransportState(TransportState state) {
         return;
     }
 
-    // Entering Recording: ensure playback, then start recording
     if (state == TransportState::Recording) {
         if (!m_recordingManager.isActive()) {
             if (prev != TransportState::Playing)
@@ -187,7 +183,6 @@ void AudioEngine::setTransportState(TransportState state) {
         return;
     }
 
-    // Entering Playing: stop recording if active, start playback
     if (state == TransportState::Playing) {
         if (m_recordingManager.isActive())
             stopRecording();
@@ -250,14 +245,12 @@ void AudioEngine::processAudio(const float* input, float* output,
         bool isActive = (state == TransportState::Playing || state == TransportState::Recording);
 
         if (isActive) {
-            // --- Audio capture (Recording only) ---
             if (state == TransportState::Recording &&
                 m_recordingManager.isRegionActive() &&
                 input && inCh > 0) {
                 m_recordingManager.processCapture(input, frameCount, inCh);
             }
 
-            // Access project data under shared (read) lock — skip if writer is active
             auto* proj = m_project.load(std::memory_order_acquire);
             if (!proj) {
                 m_playPosition.store(pos + frameCount, std::memory_order_release);
@@ -270,7 +263,6 @@ void AudioEngine::processAudio(const float* input, float* output,
                 return;
             }
 
-            // Monitoring (only if recording and inside record region)
             if (state == TransportState::Recording &&
                 m_recordingManager.isRegionActive() &&
                 input && inCh > 0) {
@@ -278,11 +270,164 @@ void AudioEngine::processAudio(const float* input, float* output,
                 m_recordingManager.notifyWriter();
             }
 
-            mixPlayback(proj, output, frameCount, pos, outCh);
+            processBusMixing(proj, output, frameCount, pos, outCh);
 
             int64_t newPos = advancePlayhead(proj, pos, frameCount, state);
 
             m_playPosition.store(newPos, std::memory_order_release);
+        }
+    }
+}
+
+void AudioEngine::rebuildBusGraph(Project* proj) {
+    int busCount = static_cast<int>(proj->buses().size());
+    m_busCount = busCount;
+
+    m_busBuffers.resize(busCount);
+    for (int i = 0; i < busCount; ++i)
+        m_busBuffers[i].resize(static_cast<size_t>(m_bufferSize) * 2, 0.0f);
+
+    std::vector<int> inDegree(busCount, 0);
+    for (int i = 0; i < busCount; ++i) {
+        int parent = proj->buses()[i].outputBusIndex;
+        if (parent >= 0 && parent < busCount && parent != i)
+            inDegree[parent]++;
+    }
+
+    m_busProcessOrder.clear();
+    m_busProcessOrder.reserve(busCount);
+    std::vector<int> queue;
+    for (int i = 0; i < busCount; ++i) {
+        if (inDegree[i] == 0)
+            queue.push_back(i);
+    }
+
+    while (!queue.empty()) {
+        int node = queue.back();
+        queue.pop_back();
+        m_busProcessOrder.push_back(node);
+
+        int parent = proj->buses()[node].outputBusIndex;
+        if (parent >= 0 && parent < busCount && parent != node) {
+            inDegree[parent]--;
+            if (inDegree[parent] == 0)
+                queue.push_back(parent);
+        }
+    }
+
+    if (static_cast<int>(m_busProcessOrder.size()) < busCount) {
+        for (int i = 0; i < busCount; ++i) {
+            if (std::find(m_busProcessOrder.begin(), m_busProcessOrder.end(), i) == m_busProcessOrder.end()) {
+                m_busProcessOrder.push_back(i);
+            }
+        }
+    }
+}
+
+void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long frameCount,
+                                    int64_t pos, int outCh) {
+    int busCount = static_cast<int>(proj->buses().size());
+    if (busCount == 0) return;
+
+    if (busCount != m_busCount)
+        rebuildBusGraph(proj);
+
+    for (int i = 0; i < busCount; ++i)
+        std::fill(m_busBuffers[i].begin(), m_busBuffers[i].end(), 0.0f);
+
+    bool anySolo = false;
+    for (const auto& track : proj->tracks()) {
+        if (track.isSolo()) { anySolo = true; break; }
+    }
+
+    for (const auto& track : proj->tracks()) {
+        if (track.isMuted()) continue;
+        if (anySolo && !track.isSolo()) continue;
+
+        int busIdx = track.outputBusIndex();
+        if (busIdx < 0 || busIdx >= busCount) busIdx = 0;
+
+        float trackVol = track.volume();
+        float pan = track.pan();
+        auto [leftGain, rightGain] = panGains(pan);
+
+        float* busBuf = m_busBuffers[busIdx].data();
+
+        for (const auto& event : track.events()) {
+            auto activeClip = event.activeClip();
+            if (!activeClip || !activeClip->isValid()) continue;
+
+            int64_t eventEnd = event.startSample() + event.durationSample();
+            if (pos >= eventEnd || pos + frameCount <= event.startSample())
+                continue;
+
+            int64_t localPos = pos - event.startSample() + event.offsetSample();
+            if (localPos < event.offsetSample()) localPos = event.offsetSample();
+
+            if (activeClip->isStreaming()) {
+                int ch = activeClip->channels();
+                size_t framesAvail = 0;
+                if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
+                                                  event.durationSample(),
+                                                  m_stereoScratch.data(), frameCount, ch,
+                                                  framesAvail)) {
+                    for (unsigned long f = 0; f < framesAvail; ++f) {
+                        float sL = m_stereoScratch[f * ch];
+                        float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                        busBuf[f * 2]     += sL * trackVol * leftGain;
+                        busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                    }
+                }
+            } else {
+                const float* clipData = activeClip->data();
+                int ch = activeClip->channels();
+                size_t clipFrames = activeClip->frameCount();
+
+                for (unsigned long f = 0; f < frameCount; ++f) {
+                    int64_t clipFrame = localPos + f;
+                    if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                        clipFrame >= event.offsetSample() + event.durationSample())
+                        continue;
+
+                    float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
+                    float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+
+                    busBuf[f * 2]     += sL * trackVol * leftGain;
+                    busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                }
+            }
+        }
+    }
+
+    for (int idx : m_busProcessOrder) {
+        const auto& bus = proj->buses()[idx];
+
+        auto [bLeftGain, bRightGain] = panGains(bus.pan);
+        float bVol = bus.volume;
+
+        int parentIdx = bus.outputBusIndex;
+        bool routeToOutput = (parentIdx == idx) ||
+                             (parentIdx < 0 || parentIdx >= busCount);
+
+        if (routeToOutput) {
+            float* buf = m_busBuffers[idx].data();
+            if (outCh >= 2) {
+                for (unsigned long f = 0; f < frameCount; ++f) {
+                    output[f * 2]     += buf[f * 2]     * bVol * bLeftGain;
+                    output[f * 2 + 1] += buf[f * 2 + 1] * bVol * bRightGain;
+                }
+            } else {
+                for (unsigned long f = 0; f < frameCount; ++f) {
+                    output[f] += (buf[f * 2] + buf[f * 2 + 1]) * 0.5f * bVol;
+                }
+            }
+        } else {
+            float* srcBuf = m_busBuffers[idx].data();
+            float* dstBuf = m_busBuffers[parentIdx].data();
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                dstBuf[f * 2]     += srcBuf[f * 2]     * bVol * bLeftGain;
+                dstBuf[f * 2 + 1] += srcBuf[f * 2 + 1] * bVol * bRightGain;
+            }
         }
     }
 }

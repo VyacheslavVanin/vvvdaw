@@ -4,8 +4,12 @@
 #include <QSlider>
 #include <QLabel>
 #include <QLineEdit>
+#include <QComboBox>
+#include <vector>
 
 class Track;
+struct AudioBus;
+struct DeviceInfo;
 
 class TrackPanelWidget : public QWidget {
     Q_OBJECT
@@ -17,6 +21,9 @@ public:
     void updateFromTrack();
     void setAlternateRow(bool alternate);
 
+    void updateBusList(const std::vector<AudioBus>& buses);
+    void updateInputDeviceList(const std::vector<DeviceInfo>& devices);
+
 signals:
     void armToggled(bool armed);
     void soloToggled(bool solo);
@@ -24,6 +31,8 @@ signals:
     void monitorToggled(bool monitoring);
     void panChanged(float pan);
     void volumeChanged(float volume);
+    void outputBusChanged(int index);
+    void inputDeviceChanged(int deviceId);
     void deleteRequested();
     void addTrackRequested();
     void beforeModify();
@@ -41,4 +50,6 @@ private:
     QPushButton* m_monitorButton = nullptr;
     QSlider* m_panSlider = nullptr;
     QSlider* m_volumeSlider = nullptr;
+    QComboBox* m_outputBusCombo = nullptr;
+    QComboBox* m_inputDeviceCombo = nullptr;
 };

@@ -6,13 +6,16 @@
 #include "TempoWidget.h"
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
+#include "BusPanelWidget.h"
 #include "core/UndoStack.h"
 #include "core/TimeUtils.h"
 #include "model/Project.h"
 #include "model/Track.h"
+#include "model/AudioBus.h"
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
 #include "audio/AudioEngine.h"
+#include "audio/DeviceInfo.h"
 #include "core/Settings.h"
 
 using vvvdaw::TransportState;
@@ -56,7 +59,7 @@ void MainWindow::setupUi() {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // Transport row: transport panel (centered) + tempo widget (right)
+    // Transport row
     m_transportPanel = new TransportPanel(this);
     auto* transportRow = new QHBoxLayout;
     transportRow->setContentsMargins(0, 0, 0, 0);
@@ -67,7 +70,7 @@ void MainWindow::setupUi() {
     transportRow->addWidget(m_tempoWidget, 0, Qt::AlignRight);
     layout->addLayout(transportRow);
 
-    // Ruler row 1: spacer + TimelineRuler
+    // Ruler row 1
     auto* rulerRow1 = new QHBoxLayout;
     rulerRow1->setContentsMargins(0, 0, 0, 0);
     rulerRow1->setSpacing(0);
@@ -79,7 +82,7 @@ void MainWindow::setupUi() {
     rulerRow1->addWidget(m_timelineRuler, 1);
     layout->addLayout(rulerRow1);
 
-    // Ruler row 2: spacer + MeasureRuler
+    // Ruler row 2
     auto* rulerRow2 = new QHBoxLayout;
     rulerRow2->setContentsMargins(0, 0, 0, 0);
     rulerRow2->setSpacing(0);
@@ -90,6 +93,7 @@ void MainWindow::setupUi() {
     rulerRow2->addWidget(rulerSpacer2);
     rulerRow2->addWidget(m_measureRuler, 1);
     layout->addLayout(rulerRow2);
+
     auto onPlayheadClicked = [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
         m_timelineRuler->setPlayheadPosition(sample);
@@ -179,6 +183,37 @@ void MainWindow::setupUi() {
         updateSnapUnit();
     });
 
+    // Bus panel
+    m_busPanel = new BusPanelWidget(m_project, this);
+    m_busPanel->hide();
+    layout->addWidget(m_busPanel);
+
+    connect(m_busPanel, &BusPanelWidget::addBusRequested, this, [this] {
+        pushUndoState();
+        AudioBus newBus;
+        newBus.name = QString("Bus %1").arg(m_project.buses().size());
+        newBus.volume = 1.0f;
+        newBus.pan = 0.0f;
+        newBus.outputBusIndex = 0;
+        m_project.addBus(newBus);
+        m_busPanel->rebuild();
+        refreshBusCombos();
+    });
+
+    connect(m_busPanel, &BusPanelWidget::removeBusRequested, this, [this](int index) {
+        if (index <= 0 || index >= static_cast<int>(m_project.buses().size()))
+            return;
+        pushUndoState();
+        m_project.removeBus(index);
+        m_busPanel->rebuild();
+        refreshBusCombos();
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busChanged, this, [this] {
+        pushUndoState();
+    });
+
+    // Track scroll area
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -454,6 +489,15 @@ void MainWindow::setupMenus() {
         m_trackContainer->update();
     });
 
+    auto* toggleBusPanelAction = viewMenu->addAction("Show &Bus Panel", QKeySequence("Ctrl+B"));
+    toggleBusPanelAction->setCheckable(true);
+    toggleBusPanelAction->setChecked(false);
+    connect(toggleBusPanelAction, &QAction::triggered, this, [this](bool checked) {
+        m_busPanel->setVisible(checked);
+        if (checked)
+            m_busPanel->rebuild();
+    });
+
     connect(settingsAction, &QAction::triggered, this, [this] {
         SettingsDialog dialog(m_settings, m_engine, this);
         if (dialog.exec() == QDialog::Accepted) {
@@ -499,6 +543,34 @@ void MainWindow::setupMenus() {
         }
     });
 
+    trackMenu->addSeparator();
+
+    auto* addBusAction = trackMenu->addAction("Add &Bus");
+    connect(addBusAction, &QAction::triggered, this, [this] {
+        pushUndoState();
+        AudioBus newBus;
+        newBus.name = QString("Bus %1").arg(m_project.buses().size());
+        newBus.volume = 1.0f;
+        newBus.pan = 0.0f;
+        newBus.outputBusIndex = 0;
+        m_project.addBus(newBus);
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
+        refreshBusCombos();
+    });
+
+    auto* deleteBusAction = trackMenu->addAction("Delete Bus");
+    connect(deleteBusAction, &QAction::triggered, this, [this] {
+        if (m_project.buses().size() <= 1) return;
+        pushUndoState();
+        m_project.removeBus(static_cast<int>(m_project.buses().size()) - 1);
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
+        refreshBusCombos();
+    });
+
+    trackMenu->addSeparator();
+
     auto* deleteAction = trackMenu->addAction("&Delete Event");
     connect(deleteAction, &QAction::triggered, this, [this] {
         for (auto& row : m_trackRows) {
@@ -522,8 +594,17 @@ void MainWindow::loadStyleSheet() {
         qApp->setStyleSheet(QString::fromUtf8(qss.readAll()));
 }
 
+void MainWindow::refreshBusCombos() {
+    auto devices = AudioEngine::enumerateInputDevices();
+    for (auto& row : m_trackRows) {
+        if (row.panel) {
+            row.panel->updateBusList(m_project.buses());
+            row.panel->updateInputDeviceList(devices);
+        }
+    }
+}
+
 void MainWindow::rebuildTracks() {
-    // Hide and queue deletion of old track widgets before they lose layout
     for (auto& row : m_trackRows) {
         if (row.panel) {
             row.panel->hide();
@@ -536,7 +617,6 @@ void MainWindow::rebuildTracks() {
     }
     m_trackRows.clear();
 
-    // Clear layout items
     while (auto* item = m_trackLayout->takeAt(0)) {
         if (auto* w = item->widget()) {
             w->hide();
@@ -545,11 +625,15 @@ void MainWindow::rebuildTracks() {
         delete item;
     }
 
+    auto devices = AudioEngine::enumerateInputDevices();
+
     for (auto& track : m_project.tracks()) {
         TrackRow row;
         bool odd = (static_cast<int>(&track - m_project.tracks().data()) % 2) != 0;
         row.panel = new TrackPanelWidget(&track, m_trackContainer);
         row.panel->setAlternateRow(odd);
+        row.panel->updateBusList(m_project.buses());
+        row.panel->updateInputDeviceList(devices);
         row.panel->updateFromTrack();
         row.view = new TrackViewWidget(&track, m_trackContainer);
         row.view->setAlternateRow(odd);
@@ -609,7 +693,6 @@ void MainWindow::rebuildTracks() {
         connect(row.view, &TrackViewWidget::eventDragFinished, this,
                 [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
                 (int64_t eventId, int64_t newStartSample, QPoint globalPos) {
-            // Clear drag state on all views
             for (auto& r : m_trackRows) {
                 r.view->setDragPreview(nullptr, 0);
                 r.view->setDragSourceVisible(true);
@@ -658,10 +741,8 @@ void MainWindow::rebuildTracks() {
 
     m_trackLayout->addStretch();
 
-    // Sync zoom to rulers
     syncZoom();
 
-    // Restore playhead on new views
     int64_t ph = m_engine.playPosition();
     m_timelineRuler->setPlayheadPosition(ph);
     m_measureRuler->setPlayheadPosition(ph);
@@ -691,16 +772,13 @@ void MainWindow::rebuildTracks() {
     }
     m_transportPanel->setSnapToGrid(snap);
 
-    // Sync MeasureRuler
     m_measureRuler->setTempo(m_project.tempo());
     m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
     m_measureRuler->setScrollOffset(m_scrollOffset);
 
-    // Sync TempoWidget
     m_tempoWidget->setTempo(m_project.tempo());
     m_tempoWidget->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
 
-    // Snap unit
     double snapUnit = m_project.samplesPerBar() / m_snapResolution;
     m_timelineRuler->setSnapUnit(snapUnit);
     m_measureRuler->setSnapUnit(snapUnit);
@@ -708,6 +786,9 @@ void MainWindow::rebuildTracks() {
         if (row.view)
             row.view->setSnapUnit(snapUnit);
     }
+
+    if (m_busPanel->isVisible())
+        m_busPanel->rebuild();
 
     m_trackContainer->update();
 }

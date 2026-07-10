@@ -56,6 +56,9 @@ private:
 
     void mixPlayback(Project* proj, float* output, unsigned long frameCount,
                      int64_t pos, int outCh);
+    void processBusMixing(Project* proj, float* output, unsigned long frameCount,
+                          int64_t pos, int outCh);
+    void rebuildBusGraph(Project* proj);
     int64_t advancePlayhead(Project* proj, int64_t pos, unsigned long frameCount,
                             vvvdaw::TransportState state);
 
@@ -73,6 +76,9 @@ private:
     std::atomic<int64_t> m_playPosition{0};
 
     std::vector<float> m_stereoScratch;
+    std::vector<std::vector<float>> m_busBuffers;
+    std::vector<int> m_busProcessOrder;
+    int m_busCount = 0;
 
     RecordingManager m_recordingManager;
     StreamingManager m_streamingManager;

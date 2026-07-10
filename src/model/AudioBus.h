@@ -2,10 +2,8 @@
 #include <QString>
 
 struct AudioBus {
-    int id = -1;
     QString name;
-    int deviceId = -1;
-    int channel = 0;
-
-    bool isValid() const { return deviceId >= 0; }
+    float pan = 0.0f;
+    float volume = 1.0f;
+    int outputBusIndex = 0;
 };

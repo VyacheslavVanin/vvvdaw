@@ -30,6 +30,9 @@ public:
     std::vector<AudioBus>& buses() { return m_buses; }
     const std::vector<AudioBus>& buses() const { return m_buses; }
 
+    AudioBus& masterBus() { return m_buses[0]; }
+    const AudioBus& masterBus() const { return m_buses[0]; }
+
     Track* addTrack(const QString& name = {});
     bool removeTrack(int index);
 

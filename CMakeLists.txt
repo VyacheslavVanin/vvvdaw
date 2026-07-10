@@ -26,6 +26,7 @@ add_executable(vvvdaw
     src/gui/MainWindow.cpp
     src/gui/TransportPanel.cpp
     src/gui/TrackPanelWidget.cpp
+    src/gui/BusPanelWidget.cpp
     src/gui/TrackViewWidget.cpp
     src/gui/WaveformPainter.cpp
     src/gui/TimelineRuler.cpp

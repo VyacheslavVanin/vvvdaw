@@ -1,5 +1,7 @@
 #include "TrackPanelWidget.h"
 #include "model/Track.h"
+#include "model/AudioBus.h"
+#include "audio/DeviceInfo.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMenu>
@@ -83,6 +85,32 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     layout->addLayout(topRow);
 
+    auto* outRow = new QHBoxLayout;
+    auto* outLabel = new QLabel("out:", this);
+    outLabel->setStyleSheet("font-size: 10px; color: #aaa;");
+    outRow->addWidget(outLabel);
+    m_outputBusCombo = new QComboBox(this);
+    m_outputBusCombo->setStyleSheet(
+        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
+        "QComboBox::drop-down { border: none; width: 14px; }"
+        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
+    );
+    outRow->addWidget(m_outputBusCombo, 1);
+    layout->addLayout(outRow);
+
+    auto* inRow = new QHBoxLayout;
+    auto* inLabel = new QLabel("in: ", this);
+    inLabel->setStyleSheet("font-size: 10px; color: #aaa;");
+    inRow->addWidget(inLabel);
+    m_inputDeviceCombo = new QComboBox(this);
+    m_inputDeviceCombo->setStyleSheet(
+        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
+        "QComboBox::drop-down { border: none; width: 14px; }"
+        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
+    );
+    inRow->addWidget(m_inputDeviceCombo, 1);
+    layout->addLayout(inRow);
+
     auto* panRow = new QHBoxLayout;
     auto* panLabel = new QLabel("pan:", this);
     panLabel->setStyleSheet("font-size: 10px; color: #aaa;");
@@ -131,7 +159,6 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         if (m_track) m_track->setMonitoring(checked);
         emit monitorToggled(checked);
     });
-    // Capture undo snapshot before user interaction starts
     connect(m_panSlider, &QSlider::sliderPressed, this, [this] { emit beforeModify(); });
     connect(m_volumeSlider, &QSlider::sliderPressed, this, [this] { emit beforeModify(); });
     for (auto* btn : {m_muteButton, m_soloButton, m_armButton, m_monitorButton}) {
@@ -148,6 +175,22 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         if (m_track) m_track->setVolume(vol);
         emit volumeChanged(vol);
     });
+
+    connect(m_outputBusCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        if (m_track) {
+            emit beforeModify();
+            m_track->setOutputBusIndex(index);
+            emit outputBusChanged(index);
+        }
+    });
+    connect(m_inputDeviceCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        if (m_track) {
+            emit beforeModify();
+            int deviceId = m_inputDeviceCombo->currentData().toInt();
+            m_track->setInputDeviceId(deviceId);
+            emit inputDeviceChanged(deviceId);
+        }
+    });
 }
 
 void TrackPanelWidget::updateFromTrack() {
@@ -159,6 +202,41 @@ void TrackPanelWidget::updateFromTrack() {
     m_monitorButton->setChecked(m_track->isMonitoring());
     m_panSlider->setValue(static_cast<int>(m_track->pan() * 100));
     m_volumeSlider->setValue(static_cast<int>(m_track->volume() * 100));
+
+    int busIdx = m_track->outputBusIndex();
+    if (busIdx >= 0 && busIdx < m_outputBusCombo->count())
+        m_outputBusCombo->setCurrentIndex(busIdx);
+}
+
+void TrackPanelWidget::updateBusList(const std::vector<AudioBus>& buses) {
+    QSignalBlocker blocker(m_outputBusCombo);
+    m_outputBusCombo->clear();
+    for (const auto& bus : buses) {
+        m_outputBusCombo->addItem(bus.name);
+    }
+    if (m_track) {
+        int idx = m_track->outputBusIndex();
+        if (idx >= 0 && idx < m_outputBusCombo->count())
+            m_outputBusCombo->setCurrentIndex(idx);
+    }
+}
+
+void TrackPanelWidget::updateInputDeviceList(const std::vector<DeviceInfo>& devices) {
+    QSignalBlocker blocker(m_inputDeviceCombo);
+    m_inputDeviceCombo->clear();
+    m_inputDeviceCombo->addItem("None");
+    m_inputDeviceCombo->setItemData(0, -1);
+    int comboIdx = 1;
+    int currentDeviceId = m_track ? m_track->inputDeviceId() : -1;
+    int selectIdx = 0;
+    for (const auto& dev : devices) {
+        m_inputDeviceCombo->addItem(dev.name);
+        m_inputDeviceCombo->setItemData(comboIdx, dev.id);
+        if (dev.id == currentDeviceId)
+            selectIdx = comboIdx;
+        ++comboIdx;
+    }
+    m_inputDeviceCombo->setCurrentIndex(selectIdx);
 }
 
 void TrackPanelWidget::setAlternateRow(bool alternate) {

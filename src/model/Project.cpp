@@ -13,6 +13,12 @@
 Project::Project()
     : m_name("Untitled")
 {
+    AudioBus master;
+    master.name = "Master";
+    master.volume = 1.0f;
+    master.pan = 0.0f;
+    master.outputBusIndex = 0;
+    m_buses.push_back(master);
 }
 
 bool Project::load(const QString& filePath) {
@@ -35,7 +41,6 @@ bool Project::save(const QString& filePath) {
     QString audioDir = projectDir + "/audio";
     QDir().mkpath(audioDir);
 
-    // Collect unique clips and copy external files to audio dir
     QSet<const AudioClip*> processedClips;
     auto saveClip = [&](const std::shared_ptr<AudioClip>& clip) {
         if (!clip || processedClips.contains(clip.get()))
@@ -45,7 +50,6 @@ bool Project::save(const QString& filePath) {
         QString srcPath = clip->filePath();
         QString targetPath;
         if (srcPath.isEmpty()) {
-            // Generated clip with no backing file — write it out
             QString name = QString("clip_%1.wav").arg(
                 QString::number(reinterpret_cast<quintptr>(clip.get()), 16));
             targetPath = audioDir + "/" + name;
@@ -56,26 +60,22 @@ bool Project::save(const QString& filePath) {
             QString audioAbs = QDir(audioDir).absolutePath();
 
             if (srcInfo.absolutePath() == audioAbs) {
-                // Already in audio dir
                 targetPath = srcAbs;
             } else {
-                // Copy to audio dir
                 QString baseName = srcInfo.completeBaseName();
                 QString ext = srcInfo.suffix();
                 if (ext.isEmpty()) ext = "wav";
                 targetPath = audioDir + "/" + baseName + "." + ext;
 
-                // Handle name collisions
                 int counter = 1;
                 while (QFile::exists(targetPath)
                        && QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
                     targetPath = audioDir + "/" + baseName + "_" + QString::number(counter++) + "." + ext;
                 }
 
-                // Copy if not already the same file
                 if (QFileInfo(targetPath).absoluteFilePath() != srcAbs) {
                     if (!QFile::copy(srcPath, targetPath)) {
-                        qWarning() << "Failed to copy audio file:" << srcPath << "→" << targetPath;
+                        qWarning() << "Failed to copy audio file:" << srcPath << "->" << targetPath;
                         return;
                     }
                 }
@@ -93,7 +93,6 @@ bool Project::save(const QString& filePath) {
         }
     }
 
-    // Write project.json
     m_filePath = filePath;
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly))
@@ -123,9 +122,25 @@ int Project::addBus(const AudioBus& bus) {
 }
 
 bool Project::removeBus(int index) {
-    if (index < 0 || index >= static_cast<int>(m_buses.size()))
+    if (index <= 0 || index >= static_cast<int>(m_buses.size()))
         return false;
+
     m_buses.erase(m_buses.begin() + index);
+
+    for (auto& track : m_tracks) {
+        if (track.outputBusIndex() == index)
+            track.setOutputBusIndex(0);
+        else if (track.outputBusIndex() > index)
+            track.setOutputBusIndex(track.outputBusIndex() - 1);
+    }
+
+    for (auto& bus : m_buses) {
+        if (bus.outputBusIndex == index)
+            bus.outputBusIndex = 0;
+        else if (bus.outputBusIndex > index)
+            bus.outputBusIndex -= 1;
+    }
+
     return true;
 }
 
@@ -149,7 +164,7 @@ static QString relativePath(const QString& filePath, const QString& projectDir) 
 
 QJsonObject Project::toJson() const {
     QJsonObject obj;
-    obj["formatVersion"] = 1;
+    obj["formatVersion"] = 2;
     obj["name"] = m_name;
     obj["sampleRate"] = m_sampleRate;
     obj["snapToGrid"] = m_snapToGrid;
@@ -194,7 +209,6 @@ QJsonObject Project::toJson() const {
             eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
             eObj["durationSample"] = static_cast<qint64>(event.durationSample());
 
-            // Takes
             if (!event.takes().empty()) {
                 QJsonArray takesArr;
                 for (const auto& take : event.takes()) {
@@ -218,8 +232,9 @@ QJsonObject Project::toJson() const {
     for (const auto& bus : m_buses) {
         QJsonObject bObj;
         bObj["name"] = bus.name;
-        bObj["deviceId"] = bus.deviceId;
-        bObj["channel"] = bus.channel;
+        bObj["pan"] = bus.pan;
+        bObj["volume"] = bus.volume;
+        bObj["outputBusIndex"] = bus.outputBusIndex;
         busesArr.append(bObj);
     }
     obj["buses"] = busesArr;
@@ -266,7 +281,6 @@ void Project::fromJson(const QJsonObject& obj) {
             AudioEvent event;
             QString clipPath = eObj["clipPath"].toString();
             if (!clipPath.isEmpty()) {
-                // Resolve relative path
                 QString absPath = QDir::isAbsolutePath(clipPath)
                     ? clipPath
                     : QDir(projDir).absoluteFilePath(clipPath);
@@ -278,7 +292,6 @@ void Project::fromJson(const QJsonObject& obj) {
             event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
             event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
 
-            // Takes
             if (eObj.contains("takes")) {
                 const QJsonArray takesArr = eObj["takes"].toArray();
                 for (const auto& takeVal : takesArr) {
@@ -304,13 +317,32 @@ void Project::fromJson(const QJsonObject& obj) {
 
     m_buses.clear();
     const QJsonArray busesArr = obj["buses"].toArray();
-    for (const auto& bVal : busesArr) {
-        QJsonObject bObj = bVal.toObject();
-        AudioBus bus;
-        bus.name = bObj["name"].toString();
-        bus.deviceId = bObj["deviceId"].toInt(-1);
-        bus.channel = bObj["channel"].toInt(0);
-        m_buses.push_back(bus);
+    if (busesArr.isEmpty()) {
+        AudioBus master;
+        master.name = "Master";
+        master.volume = 1.0f;
+        master.pan = 0.0f;
+        master.outputBusIndex = 0;
+        m_buses.push_back(master);
+    } else {
+        for (const auto& bVal : busesArr) {
+            QJsonObject bObj = bVal.toObject();
+            AudioBus bus;
+            bus.name = bObj["name"].toString("Bus");
+            bus.pan = static_cast<float>(bObj["pan"].toDouble(0.0));
+            bus.volume = static_cast<float>(bObj["volume"].toDouble(1.0));
+            bus.outputBusIndex = bObj["outputBusIndex"].toInt(0);
+            m_buses.push_back(bus);
+        }
+    }
+
+    if (m_buses.empty() || m_buses[0].name != "Master") {
+        AudioBus master;
+        master.name = "Master";
+        master.volume = 1.0f;
+        master.pan = 0.0f;
+        master.outputBusIndex = 0;
+        m_buses.insert(m_buses.begin(), master);
     }
 }
 

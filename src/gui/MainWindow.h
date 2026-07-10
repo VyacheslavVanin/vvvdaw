@@ -18,6 +18,7 @@ class MeasureRuler;
 class TempoWidget;
 class TrackPanelWidget;
 class TrackViewWidget;
+class BusPanelWidget;
 class QVBoxLayout;
 
 class MainWindow : public QMainWindow {
@@ -34,6 +35,7 @@ private:
     void setupTimer();
     void loadStyleSheet();
     void rebuildTracks();
+    void refreshBusCombos();
     void syncZoom();
     void syncScrollPositions(int value);
     void pushUndoState();
@@ -53,6 +55,7 @@ private:
     QScrollBar* m_horizontalScroll = nullptr;
     QWidget* m_trackContainer = nullptr;
     QVBoxLayout* m_trackLayout = nullptr;
+    BusPanelWidget* m_busPanel = nullptr;
 
     struct TrackRow {
         TrackPanelWidget* panel = nullptr;
@@ -62,5 +65,5 @@ private:
 
     double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;
-    double m_snapResolution = 4.0; // bar divisions: 1, 2, 4, 8, 16
+    double m_snapResolution = 4.0;
 };
