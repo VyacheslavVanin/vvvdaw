@@ -545,32 +545,6 @@ void MainWindow::setupMenus() {
 
     trackMenu->addSeparator();
 
-    auto* addBusAction = trackMenu->addAction("Add &Bus");
-    connect(addBusAction, &QAction::triggered, this, [this] {
-        pushUndoState();
-        AudioBus newBus;
-        newBus.name = QString("Bus %1").arg(m_project.buses().size());
-        newBus.volume = 1.0f;
-        newBus.pan = 0.0f;
-        newBus.outputBusIndex = 0;
-        m_project.addBus(newBus);
-        if (m_busPanel->isVisible())
-            m_busPanel->rebuild();
-        refreshBusCombos();
-    });
-
-    auto* deleteBusAction = trackMenu->addAction("Delete Bus");
-    connect(deleteBusAction, &QAction::triggered, this, [this] {
-        if (m_project.buses().size() <= 1) return;
-        pushUndoState();
-        m_project.removeBus(static_cast<int>(m_project.buses().size()) - 1);
-        if (m_busPanel->isVisible())
-            m_busPanel->rebuild();
-        refreshBusCombos();
-    });
-
-    trackMenu->addSeparator();
-
     auto* deleteAction = trackMenu->addAction("&Delete Event");
     connect(deleteAction, &QAction::triggered, this, [this] {
         for (auto& row : m_trackRows) {

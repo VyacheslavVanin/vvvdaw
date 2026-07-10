@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QFrame>
 #include <QEvent>
+#include <QMenu>
+#include <QContextMenuEvent>
 
 static bool wouldCreateCycle(const std::vector<AudioBus>& buses, int fromIndex, int toIndex) {
     if (toIndex < 0) return false;
@@ -34,6 +36,7 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     QPalette pal = m_container->palette();
     pal.setColor(QPalette::Window, QColor("#252525"));
     m_container->setPalette(pal);
+    m_container->installEventFilter(this);
 
     auto* rootLayout = new QHBoxLayout(m_container);
     rootLayout->setContentsMargins(4, 4, 4, 4);
@@ -43,20 +46,6 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     m_containerLayout->setContentsMargins(0, 0, 0, 0);
     m_containerLayout->setSpacing(4);
     rootLayout->addLayout(m_containerLayout, 1);
-
-    m_addBusBtn = new QPushButton("+", m_container);
-    m_addBusBtn->setFixedSize(28, 28);
-    m_addBusBtn->setStyleSheet(
-        "QPushButton { background: #3c3c3c; color: #88cc88; border: 1px solid #555; "
-        "border-radius: 3px; font-size: 16px; font-weight: bold; }"
-        "QPushButton:hover { background: #4a4a4a; }"
-    );
-    m_addBusBtn->setToolTip("Add Bus");
-    rootLayout->addWidget(m_addBusBtn, 0, Qt::AlignTop);
-
-    connect(m_addBusBtn, &QPushButton::clicked, this, [this] {
-        emit addBusRequested();
-    });
 
     setWidget(m_container);
 }
@@ -90,6 +79,7 @@ void BusPanelWidget::rebuild() {
         QPalette wp = row.widget->palette();
         wp.setColor(QPalette::Window, (i % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333"));
         row.widget->setPalette(wp);
+        row.widget->installEventFilter(this);
 
         auto* layout = new QVBoxLayout(row.widget);
         layout->setContentsMargins(4, 4, 4, 4);
@@ -103,20 +93,6 @@ void BusPanelWidget::rebuild() {
             "QLineEdit:focus { background: #333; border: 1px solid #6688cc; }"
         );
         nameRow->addWidget(row.nameEdit, 1);
-
-        bool isMaster = (i == 0);
-        if (!isMaster) {
-            row.deleteBtn = new QPushButton(QString::fromUtf8("\xc3\x97"), row.widget);
-            row.deleteBtn->setFixedSize(18, 18);
-            row.deleteBtn->setStyleSheet(
-                "QPushButton { background: #442222; color: #cc6666; border: 1px solid #553333; "
-                "border-radius: 2px; font-size: 10px; padding: 0px; }"
-                "QPushButton:hover { background: #663333; }"
-            );
-            row.deleteBtn->setToolTip("Remove Bus");
-            nameRow->addWidget(row.deleteBtn, 0, Qt::AlignRight);
-        }
-
         layout->addLayout(nameRow);
 
         auto* outRow = new QHBoxLayout;
@@ -224,13 +200,6 @@ void BusPanelWidget::rebuild() {
             emit busChanged();
         });
 
-        if (row.deleteBtn) {
-            connect(row.deleteBtn, &QPushButton::clicked, this,
-                    [this, busIndex] {
-                emit removeBusRequested(busIndex);
-            });
-        }
-
         m_containerLayout->addWidget(row.widget);
         m_busRows.push_back(row);
     }
@@ -247,6 +216,30 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
                 row.nameEdit->setFocus();
                 return true;
             }
+        }
+    }
+    if (event->type() == QEvent::ContextMenu) {
+        auto* ce = static_cast<QContextMenuEvent*>(event);
+        for (int i = 0; i < static_cast<int>(m_busRows.size()); ++i) {
+            if (m_busRows[i].widget == obj) {
+                if (i == 0) return true;
+                QMenu menu(m_busRows[i].widget);
+                QAction* deleteAction = menu.addAction("Delete Bus");
+                connect(deleteAction, &QAction::triggered, this, [this, i] {
+                    emit removeBusRequested(i);
+                });
+                menu.exec(ce->globalPos());
+                return true;
+            }
+        }
+        if (obj == m_container) {
+            QMenu menu(m_container);
+            QAction* addAction = menu.addAction("Add Bus");
+            connect(addAction, &QAction::triggered, this, [this] {
+                emit addBusRequested();
+            });
+            menu.exec(ce->globalPos());
+            return true;
         }
     }
     return QScrollArea::eventFilter(obj, event);

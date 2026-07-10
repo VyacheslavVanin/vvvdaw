@@ -33,12 +33,10 @@ private:
         QComboBox* outCombo = nullptr;
         QSlider* panSlider = nullptr;
         QSlider* volumeSlider = nullptr;
-        QPushButton* deleteBtn = nullptr;
     };
 
     Project& m_project;
     QWidget* m_container = nullptr;
     QHBoxLayout* m_containerLayout = nullptr;
     std::vector<BusRow> m_busRows;
-    QPushButton* m_addBusBtn = nullptr;
 };
