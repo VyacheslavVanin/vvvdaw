@@ -614,6 +614,10 @@ void AudioEngine::processPrecounting(Project* proj, float* output, unsigned long
     double samplesPerBar = proj->samplesPerBar();
     if (samplesPerBeat <= 0) return;
 
+    float metroVol = 1.0f;
+    if (static_cast<int>(proj->buses().size()) > 1)
+        metroVol = proj->buses()[1].volume;
+
     for (unsigned long f = 0; f < frameCount; ++f) {
         if (m_precountPosition >= m_precountTotalSamples) break;
 
@@ -632,8 +636,8 @@ void AudioEngine::processPrecounting(Project* proj, float* output, unsigned long
             float clickSample = m_clickEnvelope[m_clickPlayhead];
             if (!m_clickIsDownbeat)
                 clickSample *= 0.6f;
-            output[f * 2]     += clickSample;
-            output[f * 2 + 1] += clickSample;
+            output[f * 2]     += clickSample * metroVol;
+            output[f * 2 + 1] += clickSample * metroVol;
             m_clickPlayhead++;
         } else {
             m_clickPlayhead = -1;
