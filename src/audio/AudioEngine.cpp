@@ -184,7 +184,7 @@ void AudioEngine::setTransportState(TransportState state) {
 
     if (state == TransportState::Recording) {
         if (!m_recordingManager.isActive()) {
-            if (m_precountEnabled && prev == TransportState::Stopped) {
+            if (m_precountEnabled && (prev == TransportState::Stopped || prev == TransportState::Paused)) {
                 startPrecount();
                 m_transportState.store(TransportState::Precounting, std::memory_order_release);
                 return;
@@ -580,10 +580,10 @@ void AudioEngine::generateClick(Project* proj, float* buffer, unsigned long fram
     for (unsigned long f = 0; f < frameCount; ++f) {
         int64_t samplePos = pos + f;
         double beatInBar = std::fmod(static_cast<double>(samplePos), samplesPerBar) / samplesPerBeat;
+        int beatNum = static_cast<int>(std::floor(beatInBar));
         double beatFrac = beatInBar - std::floor(beatInBar);
-        double samplesFrac = beatFrac * samplesPerBeat;
 
-        bool isDownbeat = (beatFrac < 0.5 / samplesPerBeat);
+        bool isDownbeat = (beatNum == 0);
 
         if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
             m_clickPlayhead = 0;
@@ -618,9 +618,10 @@ void AudioEngine::processPrecounting(Project* proj, float* output, unsigned long
         if (m_precountPosition >= m_precountTotalSamples) break;
 
         double beatInBar = std::fmod(static_cast<double>(m_precountPosition), samplesPerBar) / samplesPerBeat;
+        int beatNum = static_cast<int>(std::floor(beatInBar));
         double beatFrac = beatInBar - std::floor(beatInBar);
 
-        bool isDownbeat = (beatFrac < 0.5 / samplesPerBeat);
+        bool isDownbeat = (beatNum == 0);
 
         if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
             m_clickPlayhead = 0;
