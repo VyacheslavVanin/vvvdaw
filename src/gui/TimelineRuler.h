@@ -18,6 +18,8 @@ public:
     }
     double zoom() const { return m_pixelsPerSample; }
 
+    void setSampleRate(int rate) { m_sampleRate = rate; update(); }
+
     void setPlayheadPosition(int64_t sample) { m_playheadPos = sample; update(); }
     int64_t playheadPosition() const { return m_playheadPos; }
 
@@ -61,6 +63,7 @@ private:
 
     int64_t m_scrollOffset = 0;
     double m_pixelsPerSample = vvvdaw::DefaultZoom;
+    int m_sampleRate = vvvdaw::DefaultSampleRate;
     int64_t m_playheadPos = -1;
     bool m_snapToGrid = true;
     double m_snapUnit = vvvdaw::DefaultSnapUnitSamples;

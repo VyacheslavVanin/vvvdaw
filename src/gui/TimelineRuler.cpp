@@ -212,7 +212,7 @@ void TimelineRuler::paintEvent(QPaintEvent* /*event*/) {
 
         painter.drawLine(x, 16, x, 28);
 
-        int seconds = static_cast<int>(s / vvvdaw::DefaultSampleRate);
+        int seconds = static_cast<int>(s / m_sampleRate);
         int minutes = seconds / 60;
         int secs = seconds % 60;
         QString label = QString("%1:%2")

@@ -764,6 +764,7 @@ void MainWindow::rebuildTracks() {
     m_measureRuler->setTempo(m_project.tempo());
     m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
     m_measureRuler->setSampleRate(m_engine.sampleRate());
+    m_timelineRuler->setSampleRate(m_engine.sampleRate());
     m_measureRuler->setScrollOffset(m_scrollOffset);
 
     m_tempoWidget->setTempo(m_project.tempo());
