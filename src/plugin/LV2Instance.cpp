@@ -322,6 +322,25 @@ std::vector<PluginPortInfo> LV2Instance::ports() const {
     return result;
 }
 
+void LV2Instance::setParameter(int index, float value) {
+    for (size_t i = 0; i < m_controlInPorts.size(); ++i) {
+        if (static_cast<int>(m_controlInPorts[i]) == index) {
+            m_controlValues[i] = value;
+            if (m_instance)
+                lilv_instance_connect_port(m_instance, m_controlInPorts[i], &m_controlValues[i]);
+            return;
+        }
+    }
+}
+
+float LV2Instance::getParameter(int index) const {
+    for (size_t i = 0; i < m_controlInPorts.size(); ++i) {
+        if (static_cast<int>(m_controlInPorts[i]) == index)
+            return m_controlValues[i];
+    }
+    return 0.0f;
+}
+
 bool LV2Instance::hasEditor() const {
     if (!m_plugin || !m_world) return false;
     const LilvUIs* uis = lilv_plugin_get_uis(m_plugin);
@@ -330,6 +349,7 @@ bool LV2Instance::hasEditor() const {
 
 void* LV2Instance::createEditor(void* parentWindow) {
     Q_UNUSED(parentWindow);
+    qInfo() << name() << ": LV2 GUI not implemented";
     return nullptr;
 }
 

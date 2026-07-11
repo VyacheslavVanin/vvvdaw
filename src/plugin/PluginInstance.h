@@ -40,6 +40,9 @@ public:
 
     virtual std::vector<PluginPortInfo> ports() const = 0;
 
+    virtual void setParameter(int index, float value) = 0;
+    virtual float getParameter(int index) const = 0;
+
     virtual bool hasEditor() const = 0;
     virtual void* createEditor(void* parentWindow) = 0;
     virtual void destroyEditor() = 0;

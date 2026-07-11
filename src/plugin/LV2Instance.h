@@ -34,6 +34,9 @@ public:
     int latencySamples() const override;
     std::vector<PluginPortInfo> ports() const override;
 
+    void setParameter(int index, float value) override;
+    float getParameter(int index) const override;
+
     bool hasEditor() const override;
     void* createEditor(void* parentWindow) override;
     void destroyEditor() override;

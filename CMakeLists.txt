@@ -39,6 +39,7 @@ add_executable(vvvdaw
     src/gui/SettingsDialog.cpp
     src/gui/PluginListWidget.cpp
     src/gui/PluginWindow.cpp
+    src/gui/PluginParameterWidget.cpp
 )
 
 target_include_directories(vvvdaw PRIVATE

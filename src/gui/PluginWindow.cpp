@@ -1,4 +1,5 @@
 #include "PluginWindow.h"
+#include "PluginParameterWidget.h"
 #include "plugin/PluginInstance.h"
 #include <QCloseEvent>
 #include <QResizeEvent>
@@ -39,18 +40,19 @@ void PluginWindow::open() {
 
     QTimer::singleShot(0, this, [this]() {
         m_editorHandle = m_plugin->createEditor(static_cast<void*>(this));
-        if (!m_editorHandle) {
-            auto* lbl = findChild<QLabel*>();
-            if (lbl) {
-                lbl->setText("GUI not yet supported");
-                lbl->show();
-            }
+        if (m_editorHandle) {
+            int w = 0, h = 0;
+            if (m_plugin->getEditorSize(w, h))
+                resize(w, h);
             return;
         }
-        int w = 0, h = 0;
-        if (m_plugin->getEditorSize(w, h)) {
-            resize(w, h);
-        }
+
+        auto* label = findChild<QLabel*>();
+        if (label) label->hide();
+
+        auto* paramWidget = new PluginParameterWidget(m_plugin, this);
+        layout()->addWidget(paramWidget);
+        adjustSize();
     });
 }
 

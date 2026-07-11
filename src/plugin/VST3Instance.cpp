@@ -203,7 +203,7 @@ bool VST3Instance::load(const QString& path) {
     }
     m_audioProcessor = Steinberg::owned(ap);
 
-    std::string stem = fs::path(soPath).parent_path().parent_path().stem().string();
+    std::string stem = fs::path(soPath).parent_path().parent_path().parent_path().stem().string();
     m_name = QString::fromStdString(stem);
     m_pluginId = QString::fromStdString(stem);
 
@@ -375,21 +375,34 @@ std::vector<PluginPortInfo> VST3Instance::ports() const {
     return result;
 }
 
+void VST3Instance::setParameter(int index, float value) {
+    if (!m_controller) return;
+    m_controller->setParamNormalized(index, qBound(0.0f, value, 1.0f));
+}
+
+float VST3Instance::getParameter(int index) const {
+    if (!m_controller) return 0.0f;
+    return static_cast<float>(m_controller->getParamNormalized(index));
+}
+
 bool VST3Instance::hasEditor() const {
     return m_controller != nullptr;
 }
 
 void* VST3Instance::createEditor(void* parentWindow) {
-    if (!m_controller) return nullptr;
+    if (!m_controller) { qWarning() << m_name << ": no controller"; return nullptr; }
     if (m_editorView) return parentWindow;
 
     auto* parentWidget = reinterpret_cast<QWidget*>(parentWindow);
     auto x11WindowId = reinterpret_cast<void*>(parentWidget->winId());
 
     auto* view = m_controller->createView(ViewType::kEditor);
-    if (!view) return nullptr;
+    if (!view) { qWarning() << m_name << ": createView returned nullptr"; return nullptr; }
 
-    if (view->isPlatformTypeSupported(kPlatformTypeX11EmbedWindowID) == kResultTrue) {
+    auto x11support = view->isPlatformTypeSupported(kPlatformTypeX11EmbedWindowID);
+    qInfo() << m_name << ": isPlatformTypeSupported(X11) =" << x11support;
+
+    if (x11support == kResultTrue) {
         if (!m_frame) {
             auto* frame = new PluginFrame();
             frame->setHostWindow(parentWidget);
@@ -406,6 +419,7 @@ void* VST3Instance::createEditor(void* parentWindow) {
         return parentWindow;
     }
 
+    qWarning() << m_name << ": X11 not supported, releasing view";
     view->release();
     return nullptr;
 }
