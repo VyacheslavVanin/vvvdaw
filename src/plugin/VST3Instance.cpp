@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <vector>
+#include <QWidget>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -15,6 +16,93 @@
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 using vvvdaw::StateStream;
+
+#include <QTimer>
+#include <QSocketNotifier>
+#include <unordered_map>
+
+namespace {
+
+class PluginFrame : public IPlugFrame, public Linux::IRunLoop {
+public:
+    void setHostWindow(QWidget* w) { m_window = w; }
+
+    tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* newSize) override {
+        if (m_window && newSize) {
+            m_window->resize(newSize->right - newSize->left, newSize->bottom - newSize->top);
+        }
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API registerEventHandler(Linux::IEventHandler* handler, Linux::FileDescriptor fd) override {
+        if (m_fdNotifiers.count(fd)) return kResultFalse;
+        auto* notifier = new QSocketNotifier(fd, QSocketNotifier::Read, m_window);
+        QObject::connect(notifier, &QSocketNotifier::activated, [handler](int fd) {
+            handler->onFDIsSet(fd);
+        });
+        m_fdNotifiers[fd] = notifier;
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API unregisterEventHandler(Linux::IEventHandler* handler) override {
+        for (auto it = m_fdNotifiers.begin(); it != m_fdNotifiers.end(); ++it) {
+            it->second->deleteLater();
+            m_fdNotifiers.erase(it);
+            return kResultTrue;
+        }
+        return kResultFalse;
+    }
+
+    tresult PLUGIN_API registerTimer(Linux::ITimerHandler* handler, Linux::TimerInterval ms) override {
+        for (auto& [h, t] : m_timers)
+            if (h == handler) return kResultFalse;
+        auto* timer = new QTimer(m_window);
+        QObject::connect(timer, &QTimer::timeout, [handler]() { handler->onTimer(); });
+        timer->start(static_cast<int>(ms));
+        m_timers.push_back({handler, timer});
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API unregisterTimer(Linux::ITimerHandler* handler) override {
+        for (auto it = m_timers.begin(); it != m_timers.end(); ++it) {
+            if (it->first == handler) {
+                it->second->stop();
+                it->second->deleteLater();
+                m_timers.erase(it);
+                return kResultTrue;
+            }
+        }
+        return kResultFalse;
+    }
+
+    DECLARE_FUNKNOWN_METHODS
+
+private:
+    QWidget* m_window = nullptr;
+    std::unordered_map<int, QSocketNotifier*> m_fdNotifiers;
+    std::vector<std::pair<Linux::ITimerHandler*, QTimer*>> m_timers;
+};
+
+tresult PLUGIN_API PluginFrame::queryInterface(const TUID _iid, void** obj) {
+    if (FUnknownPrivate::iidEqual(_iid, FUnknown::iid) ||
+        FUnknownPrivate::iidEqual(_iid, IPlugFrame::iid)) {
+        *obj = static_cast<IPlugFrame*>(this);
+        addRef();
+        return kResultTrue;
+    }
+    if (FUnknownPrivate::iidEqual(_iid, Linux::IRunLoop::iid)) {
+        *obj = static_cast<Linux::IRunLoop*>(this);
+        addRef();
+        return kResultTrue;
+    }
+    *obj = nullptr;
+    return kResultFalse;
+}
+
+uint32 PLUGIN_API PluginFrame::addRef() { return 1; }
+uint32 PLUGIN_API PluginFrame::release() { return 0; }
+
+} // anonymous namespace
 
 StateStream::StateStream() = default;
 StateStream::~StateStream() = default;
@@ -31,6 +119,7 @@ VST3Instance::~VST3Instance() {
     m_audioProcessor = nullptr;
     m_controller = nullptr;
     m_component = nullptr;
+    if (m_frameImpl) { delete static_cast<PluginFrame*>(m_frameImpl); m_frameImpl = nullptr; m_frame = nullptr; }
 }
 
 static bool findAudioProcessorUID(IPluginFactory* factory, const std::string& soPath, TUID outUID) {
@@ -294,12 +383,24 @@ void* VST3Instance::createEditor(void* parentWindow) {
     if (!m_controller) return nullptr;
     if (m_editorView) return parentWindow;
 
+    auto* parentWidget = reinterpret_cast<QWidget*>(parentWindow);
+    auto x11WindowId = reinterpret_cast<void*>(parentWidget->winId());
+
     auto* view = m_controller->createView(ViewType::kEditor);
     if (!view) return nullptr;
 
     if (view->isPlatformTypeSupported(kPlatformTypeX11EmbedWindowID) == kResultTrue) {
+        if (!m_frame) {
+            auto* frame = new PluginFrame();
+            frame->setHostWindow(parentWidget);
+            m_frameImpl = frame;
+            m_frame = frame;
+        }
+        m_frame->addRef();
+        view->setFrame(m_frame);
+        m_frame->release();
         m_editorView = view;
-        m_editorView->attached(parentWindow, kPlatformTypeX11EmbedWindowID);
+        m_editorView->attached(x11WindowId, kPlatformTypeX11EmbedWindowID);
         ViewRect rect;
         m_editorView->getSize(&rect);
         return parentWindow;

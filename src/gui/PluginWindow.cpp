@@ -4,6 +4,7 @@
 #include <QResizeEvent>
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QTimer>
 
 PluginWindow::PluginWindow(PluginInstance* plugin, QWidget* parent)
     : QWidget(parent)
@@ -31,17 +32,20 @@ void PluginWindow::open() {
         return;
     }
 
-    m_editorHandle = m_plugin->createEditor(reinterpret_cast<void*>(winId()));
-    if (!m_editorHandle) {
-        auto* label = findChild<QLabel*>();
-        if (label) label->setText("GUI not yet supported");
-        show();
-        return;
-    }
-
     auto* label = findChild<QLabel*>();
     if (label) label->hide();
     show();
+
+    QTimer::singleShot(0, this, [this]() {
+        m_editorHandle = m_plugin->createEditor(static_cast<void*>(this));
+        if (!m_editorHandle) {
+            auto* lbl = findChild<QLabel*>();
+            if (lbl) {
+                lbl->setText("GUI not yet supported");
+                lbl->show();
+            }
+        }
+    });
 }
 
 void PluginWindow::close() {

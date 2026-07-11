@@ -1,11 +1,19 @@
 #include <QApplication>
 #include <portaudio.h>
+#include <cstdlib>
 #include "core/Settings.h"
 #include "audio/AudioEngine.h"
 #include "gui/MainWindow.h"
 #include "model/Project.h"
 
 int main(int argc, char* argv[]) {
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+        QByteArray sessionType = qgetenv("XDG_SESSION_TYPE");
+        if (sessionType.contains("wayland")) {
+            qputenv("QT_QPA_PLATFORM", "xcb");
+        }
+    }
+
     QApplication app(argc, argv);
     app.setApplicationName("vvvdaw");
     app.setOrganizationName("vvvdaw");

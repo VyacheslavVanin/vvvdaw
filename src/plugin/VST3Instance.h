@@ -59,4 +59,6 @@ private:
     Steinberg::Vst::HostApplication m_hostApp;
     bool m_separateController = false;
     Steinberg::IPlugView* m_editorView = nullptr;
+    Steinberg::IPlugFrame* m_frame = nullptr;
+    void* m_frameImpl = nullptr;
 };
