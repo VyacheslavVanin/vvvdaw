@@ -738,6 +738,27 @@ void AudioEngine::activateAllPlugins() {
         activatePluginChain(bus.pluginChain);
 }
 
+void AudioEngine::deactivateAllPlugins() {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+
+    for (auto& track : proj->tracks()) {
+        auto& chain = const_cast<PluginChain&>(track.pluginChain());
+        for (int i = 0; i < chain.count(); ++i) {
+            auto* plugin = chain.plugin(i);
+            if (plugin && plugin->isActive())
+                plugin->deactivate();
+        }
+    }
+    for (auto& bus : proj->buses()) {
+        for (int i = 0; i < bus.pluginChain.count(); ++i) {
+            auto* plugin = bus.pluginChain.plugin(i);
+            if (plugin && plugin->isActive())
+                plugin->deactivate();
+        }
+    }
+}
+
 void AudioEngine::activatePluginChain(PluginChain& chain) {
     for (int i = 0; i < chain.count(); ++i) {
         auto* plugin = chain.plugin(i);

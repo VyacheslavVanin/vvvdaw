@@ -35,7 +35,10 @@ int main(int argc, char* argv[]) {
         window.show();
 
         result = app.exec();
-    } // audioEngine destroyed first → shutdown() while project & PortAudio still alive
+
+        audioEngine.deactivateAllPlugins();
+        audioEngine.shutdown();
+    }
 
     settings.save();
     Pa_Terminate();

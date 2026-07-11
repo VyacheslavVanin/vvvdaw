@@ -52,6 +52,7 @@ public:
     void stopRecording();
 
     void activateAllPlugins();
+    void deactivateAllPlugins();
     void activatePluginChain(PluginChain& chain);
 
 private:
