@@ -5,6 +5,8 @@
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 #include <dlfcn.h>
 #include <filesystem>
+#include <fstream>
+#include <vector>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -30,6 +32,38 @@ VST3Instance::~VST3Instance() {
     m_component = nullptr;
     m_audioProcessor = nullptr;
     if (m_dlHandle) dlclose(m_dlHandle);
+}
+
+static bool findAudioProcessorUID(IPluginFactory* factory, const std::string& soPath, TUID outUID) {
+    memset(outUID, 0, 16);
+    std::ifstream file(soPath, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return false;
+    auto sz = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<unsigned char> buf(sz);
+    file.read(reinterpret_cast<char*>(buf.data()), sz);
+
+    const char compIID[] = "\xE8\x31\xFF\x31\xF2\xD5\x43\x01\x92\x8E\xBB\xEE\x25\x69\x78\x02";
+
+    for (size_t i = 0; i + 16 <= buf.size(); i += 4) {
+        bool allZero = true;
+        for (int j = 0; j < 16; ++j) if (buf[i+j] != 0) { allZero = false; break; }
+        if (allZero) continue;
+
+        TUID tuid;
+        memcpy(tuid, buf.data() + i, 16);
+
+        void* obj = nullptr;
+        factory->createInstance(tuid, compIID, &obj);
+        if (obj) {
+            memcpy(outUID, tuid, 16);
+            IPluginBase* base = nullptr;
+            ((FUnknown*)obj)->queryInterface(IPluginBase::iid, (void**)&base);
+            if (base) base->release();
+            return true;
+        }
+    }
+    return false;
 }
 
 bool VST3Instance::load(const QString& path) {
@@ -62,76 +96,73 @@ bool VST3Instance::load(const QString& path) {
     Steinberg::IPtr<IPluginFactory> factory;
     factory = Steinberg::owned(rawFactory);
 
-    for (int32 i = 0; i < factory->countClasses(); ++i) {
-        PClassInfo ci;
-        factory->getClassInfo(i, &ci);
-        if (std::string(ci.category) == kVstAudioEffectClass) {
-            IComponent* comp = nullptr;
-            factory->createInstance(ci.cid, IComponent::iid, (void**)&comp);
-            if (!comp) continue;
-            m_component = Steinberg::owned(comp);
+    TUID compUID = {0};
+    if (!findAudioProcessorUID(factory.get(), soPath, compUID)) return false;
 
-            m_component->initialize(&m_hostApp);
+    IComponent* comp = nullptr;
+    factory->createInstance(compUID, IComponent::iid, (void**)&comp);
+    if (!comp) return false;
+    m_component = Steinberg::owned(comp);
 
-            IAudioProcessor* ap = nullptr;
-            m_component->queryInterface(IAudioProcessor::iid, (void**)&ap);
-            if (!ap) {
-                m_component->terminate();
-                m_component = nullptr;
-                continue;
-            }
-            m_audioProcessor = Steinberg::owned(ap);
+    m_component->initialize(&m_hostApp);
 
-            m_name = QString::fromUtf8(ci.name);
-            m_pluginId = QString::fromUtf8(ci.name);
+    IAudioProcessor* ap = nullptr;
+    m_component->queryInterface(IAudioProcessor::iid, (void**)&ap);
+    if (!ap) {
+        m_component->terminate();
+        m_component = nullptr;
+        return false;
+    }
+    m_audioProcessor = Steinberg::owned(ap);
 
-            Steinberg::TUID controllerTUID = {0};
-            if (m_component->getControllerClassId(controllerTUID) == kResultTrue &&
-                Steinberg::FUID(controllerTUID).isValid()) {
-                IEditController* ctrl = nullptr;
-                factory->createInstance(controllerTUID, IEditController::iid, (void**)&ctrl);
-                if (ctrl) m_controller = Steinberg::owned(ctrl);
-                if (m_controller) {
-                    m_controller->initialize(&m_hostApp);
-                    m_separateController = true;
-                }
-            }
+    std::string stem = fs::path(soPath).parent_path().parent_path().stem().string();
+    m_name = QString::fromStdString(stem);
+    m_pluginId = QString::fromStdString(stem);
 
-            if (!m_controller) {
-                IEditController* ctrl = nullptr;
-                m_component->queryInterface(IEditController::iid, (void**)&ctrl);
-                if (ctrl) m_controller = Steinberg::owned(ctrl);
-            }
-
-            if (m_component) {
-                IConnectionPoint* cp = nullptr;
-                m_component->queryInterface(IConnectionPoint::iid, (void**)&cp);
-                if (cp) m_componentCP = Steinberg::owned(cp);
-            }
-            if (m_controller) {
-                IConnectionPoint* cp = nullptr;
-                m_controller->queryInterface(IConnectionPoint::iid, (void**)&cp);
-                if (cp) m_controllerCP = Steinberg::owned(cp);
-            }
-
-            if (m_componentCP && m_controllerCP) {
-                m_componentCP->connect(m_controllerCP);
-                m_controllerCP->connect(m_componentCP);
-            }
-
-            if (m_controller) {
-                StateStream stream;
-                if (m_component->getState(&stream) == kResultTrue) {
-                    stream.reset();
-                    m_controller->setComponentState(&stream);
-                }
-            }
-
-            m_filePath = path;
-            return true;
+    Steinberg::TUID controllerTUID = {0};
+    if (m_component->getControllerClassId(controllerTUID) == kResultTrue &&
+        Steinberg::FUID(controllerTUID).isValid()) {
+        IEditController* ctrl = nullptr;
+        factory->createInstance(controllerTUID, IEditController::iid, (void**)&ctrl);
+        if (ctrl) m_controller = Steinberg::owned(ctrl);
+        if (m_controller) {
+            m_controller->initialize(&m_hostApp);
+            m_separateController = true;
         }
     }
-    return false;
+
+    if (!m_controller) {
+        IEditController* ctrl = nullptr;
+        m_component->queryInterface(IEditController::iid, (void**)&ctrl);
+        if (ctrl) m_controller = Steinberg::owned(ctrl);
+    }
+
+    if (m_component) {
+        IConnectionPoint* cp = nullptr;
+        m_component->queryInterface(IConnectionPoint::iid, (void**)&cp);
+        if (cp) m_componentCP = Steinberg::owned(cp);
+    }
+    if (m_controller) {
+        IConnectionPoint* cp = nullptr;
+        m_controller->queryInterface(IConnectionPoint::iid, (void**)&cp);
+        if (cp) m_controllerCP = Steinberg::owned(cp);
+    }
+
+    if (m_componentCP && m_controllerCP) {
+        m_componentCP->connect(m_controllerCP);
+        m_controllerCP->connect(m_componentCP);
+    }
+
+    if (m_controller) {
+        StateStream stream;
+        if (m_component->getState(&stream) == kResultTrue) {
+            stream.reset();
+            m_controller->setComponentState(&stream);
+        }
+    }
+
+    m_filePath = path;
+    return true;
 }
 
 bool VST3Instance::activate(double sampleRate, int maxBlockSize) {
