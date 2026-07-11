@@ -23,6 +23,9 @@ add_executable(vvvdaw
     src/model/AudioEvent.cpp
     src/model/Track.cpp
     src/model/Project.cpp
+    src/plugin/VST3Instance.cpp
+    src/plugin/PluginChain.cpp
+    src/plugin/PluginManager.cpp
     src/gui/MainWindow.cpp
     src/gui/TransportPanel.cpp
     src/gui/TrackPanelWidget.cpp
@@ -37,10 +40,22 @@ add_executable(vvvdaw
 
 target_include_directories(vvvdaw PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    /usr/include/vst3sdk
+)
+
+target_link_directories(vvvdaw PRIVATE
+    /usr/lib/x86_64-linux-gnu/vst3sdk
 )
 
 target_link_libraries(vvvdaw PRIVATE
     Qt6::Widgets
     PkgConfig::PORTAUDIO
     PkgConfig::SNDFILE
+    -Wl,--start-group
+    sdk_hosting
+    sdk_common
+    pluginterfaces
+    base
+    -Wl,--end-group
+    dl
 )
