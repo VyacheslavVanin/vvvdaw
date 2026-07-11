@@ -426,7 +426,6 @@ void* VST3Instance::createEditor(void* parentWindow) {
 
 void VST3Instance::destroyEditor() {
     if (!m_editorView) return;
-    m_editorView->removed();
     m_editorView->release();
     m_editorView = nullptr;
 }

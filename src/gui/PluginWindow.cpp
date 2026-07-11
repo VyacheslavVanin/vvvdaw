@@ -57,14 +57,20 @@ void PluginWindow::open() {
 }
 
 void PluginWindow::close() {
-    if (m_plugin) m_plugin->destroyEditor();
-    m_editorHandle = nullptr;
+    if (m_editorHandle) {
+        if (m_plugin) m_plugin->destroyEditor();
+        m_editorHandle = nullptr;
+    }
+    m_plugin = nullptr;
     QWidget::close();
 }
 
 void PluginWindow::closeEvent(QCloseEvent* event) {
-    if (m_plugin) m_plugin->destroyEditor();
-    m_editorHandle = nullptr;
+    if (m_editorHandle) {
+        if (m_plugin) m_plugin->destroyEditor();
+        m_editorHandle = nullptr;
+    }
+    m_plugin = nullptr;
     emit windowClosed();
     event->accept();
 }

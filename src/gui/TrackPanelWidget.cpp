@@ -149,6 +149,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     m_pluginList->setTrack(m_track);
     m_pluginList->rebuild();
     connect(m_pluginList, &PluginListWidget::openEditorRequested, this, &TrackPanelWidget::openPluginEditorRequested);
+    connect(m_pluginList, &PluginListWidget::pluginWillBeRemoved, this, &TrackPanelWidget::pluginWillBeRemoved);
     layout->addWidget(m_pluginList);
 
     connect(m_armButton, &QPushButton::toggled, this, [this](bool checked) {

@@ -43,6 +43,7 @@ signals:
     void addTrackRequested();
     void beforeModify();
     void openPluginEditorRequested(PluginInstance* plugin);
+    void pluginWillBeRemoved(PluginInstance* plugin);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;

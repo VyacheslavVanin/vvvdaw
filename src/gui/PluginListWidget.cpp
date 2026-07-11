@@ -191,6 +191,8 @@ void PluginListWidget::onAddClicked() {
 void PluginListWidget::onRemoveClicked(int index) {
     auto* chain = targetChain();
     if (!chain) return;
+    auto* plugin = chain->plugin(index);
+    if (plugin) emit pluginWillBeRemoved(plugin);
     chain->removePlugin(index);
     rebuild();
     emit pluginRemoved(index);

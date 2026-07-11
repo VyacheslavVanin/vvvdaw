@@ -674,6 +674,17 @@ void MainWindow::rebuildTracks() {
         connect(row.panel, &TrackPanelWidget::openPluginEditorRequested, this,
                 &MainWindow::openPluginEditor);
 
+        connect(row.panel, &TrackPanelWidget::pluginWillBeRemoved, this,
+                [this](PluginInstance* plugin) {
+            std::vector<PluginWindow*> toClose;
+            for (auto* w : m_pluginWindows) {
+                if (w->plugin() == plugin)
+                    toClose.push_back(w);
+            }
+            for (auto* w : toClose)
+                w->close();
+        });
+
         connect(row.view, &TrackViewWidget::eventDragStarted, this, [this] {
             pushUndoState();
         });
