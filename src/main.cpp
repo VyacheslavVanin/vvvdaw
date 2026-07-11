@@ -29,6 +29,7 @@ int main(int argc, char* argv[]) {
         } else {
             audioEngine.startStream();
         }
+        project.setSampleRate(audioEngine.sampleRate());
 
         MainWindow window(project, audioEngine, settings);
         window.show();

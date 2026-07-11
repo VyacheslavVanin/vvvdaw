@@ -48,6 +48,7 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
     loadStyleSheet();
 
     m_engine.setProject(&m_project);
+    m_project.setSampleRate(m_engine.sampleRate());
     rebuildTracks();
 }
 
@@ -437,6 +438,7 @@ void MainWindow::setupMenus() {
         m_project = Project();
         m_project.addTrack("Track 1");
         m_engine.setProject(&m_project);
+        m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
         setWindowTitle("vvvdaw - Untitled");
@@ -457,6 +459,7 @@ void MainWindow::setupMenus() {
         }
         m_project = std::move(newProject);
         m_engine.setProject(&m_project);
+        m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
         setWindowTitle("vvvdaw - " + QFileInfo(path).absolutePath());
@@ -515,6 +518,7 @@ void MainWindow::setupMenus() {
             m_engine.shutdown();
             m_engine.init(m_settings);
             m_engine.startStream();
+            m_project.setSampleRate(m_engine.sampleRate());
         }
     });
 
@@ -759,6 +763,7 @@ void MainWindow::rebuildTracks() {
 
     m_measureRuler->setTempo(m_project.tempo());
     m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
+    m_measureRuler->setSampleRate(m_engine.sampleRate());
     m_measureRuler->setScrollOffset(m_scrollOffset);
 
     m_tempoWidget->setTempo(m_project.tempo());

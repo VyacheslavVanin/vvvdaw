@@ -177,7 +177,6 @@ QJsonObject Project::toJson() const {
     QJsonObject obj;
     obj["formatVersion"] = 2;
     obj["name"] = m_name;
-    obj["sampleRate"] = m_sampleRate;
     obj["snapToGrid"] = m_snapToGrid;
     obj["metronomeEnabled"] = m_metronomeEnabled;
     obj["precountEnabled"] = m_precountEnabled;
@@ -258,7 +257,6 @@ QJsonObject Project::toJson() const {
 
 void Project::fromJson(const QJsonObject& obj) {
     m_name = obj["name"].toString("Untitled");
-    m_sampleRate = obj["sampleRate"].toInt(48000);
     m_snapToGrid = obj["snapToGrid"].toBool(true);
     m_metronomeEnabled = obj["metronomeEnabled"].toBool(false);
     m_precountEnabled = obj["precountEnabled"].toBool(false);
