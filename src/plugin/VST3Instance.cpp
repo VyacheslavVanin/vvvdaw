@@ -119,7 +119,6 @@ VST3Instance::~VST3Instance() {
     m_audioProcessor = nullptr;
     m_controller = nullptr;
     m_component = nullptr;
-    if (m_frameImpl) { delete static_cast<PluginFrame*>(m_frameImpl); m_frameImpl = nullptr; m_frame = nullptr; }
 }
 
 static bool findAudioProcessorUID(IPluginFactory* factory, const std::string& soPath, TUID outUID) {
@@ -426,8 +425,14 @@ void* VST3Instance::createEditor(void* parentWindow) {
 
 void VST3Instance::destroyEditor() {
     if (!m_editorView) return;
+    m_editorView->removed();
     m_editorView->release();
     m_editorView = nullptr;
+    if (m_frameImpl) {
+        delete static_cast<PluginFrame*>(m_frameImpl);
+        m_frameImpl = nullptr;
+        m_frame = nullptr;
+    }
 }
 
 void VST3Instance::resizeEditor(int width, int height) {
