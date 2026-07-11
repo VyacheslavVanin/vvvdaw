@@ -423,6 +423,17 @@ void VST3Instance::resizeEditor(int width, int height) {
     m_editorView->onSize(&rect);
 }
 
+bool VST3Instance::getEditorSize(int& width, int& height) const {
+    if (!m_editorView) return false;
+    ViewRect rect;
+    if (m_editorView->getSize(&rect) == kResultTrue) {
+        width = rect.right - rect.left;
+        height = rect.bottom - rect.top;
+        return width > 0 && height > 0;
+    }
+    return false;
+}
+
 QJsonObject VST3Instance::stateToJson() const {
     QJsonObject json;
     json["type"] = "vst3";

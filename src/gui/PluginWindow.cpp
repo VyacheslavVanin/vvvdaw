@@ -10,8 +10,9 @@ PluginWindow::PluginWindow(PluginInstance* plugin, QWidget* parent)
     : QWidget(parent)
     , m_plugin(plugin) {
     setWindowTitle(m_plugin ? m_plugin->name() : "Plugin");
-    setMinimumSize(300, 200);
+    setMinimumSize(100, 100);
     setAttribute(Qt::WA_DeleteOnClose);
+    setWindowFlags(windowFlags() | Qt::Window);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -44,6 +45,11 @@ void PluginWindow::open() {
                 lbl->setText("GUI not yet supported");
                 lbl->show();
             }
+            return;
+        }
+        int w = 0, h = 0;
+        if (m_plugin->getEditorSize(w, h)) {
+            resize(w, h);
         }
     });
 }

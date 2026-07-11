@@ -38,6 +38,7 @@ public:
     void* createEditor(void* parentWindow) override;
     void destroyEditor() override;
     void resizeEditor(int width, int height) override;
+    bool getEditorSize(int& width, int& height) const override;
 
     QJsonObject stateToJson() const override;
     void stateFromJson(const QJsonObject& json) override;

@@ -340,6 +340,12 @@ void LV2Instance::resizeEditor(int width, int height) {
     Q_UNUSED(height);
 }
 
+bool LV2Instance::getEditorSize(int& width, int& height) const {
+    Q_UNUSED(width);
+    Q_UNUSED(height);
+    return false;
+}
+
 QJsonObject LV2Instance::stateToJson() const {
     QJsonObject json;
     json["type"] = "lv2";

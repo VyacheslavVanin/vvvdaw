@@ -44,6 +44,7 @@ public:
     virtual void* createEditor(void* parentWindow) = 0;
     virtual void destroyEditor() = 0;
     virtual void resizeEditor(int width, int height) = 0;
+    virtual bool getEditorSize(int& width, int& height) const = 0;
 
     virtual QJsonObject stateToJson() const = 0;
     virtual void stateFromJson(const QJsonObject& json) = 0;
