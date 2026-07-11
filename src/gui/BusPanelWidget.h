@@ -10,6 +10,7 @@
 
 class Project;
 struct AudioBus;
+class PluginInstance;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -22,6 +23,7 @@ signals:
     void busChanged();
     void addBusRequested();
     void removeBusRequested(int index);
+    void openBusPluginEditorRequested(int busIndex, PluginInstance* plugin);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -33,6 +35,7 @@ private:
         QComboBox* outCombo = nullptr;
         QSlider* panSlider = nullptr;
         QSlider* volumeSlider = nullptr;
+        QPushButton* fxButton = nullptr;
     };
 
     Project& m_project;

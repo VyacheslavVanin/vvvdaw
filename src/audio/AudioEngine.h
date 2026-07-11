@@ -86,6 +86,9 @@ private:
     std::atomic<int64_t> m_playPosition{0};
 
     std::vector<float> m_stereoScratch;
+    std::vector<float> m_trackScratch;
+    std::vector<float> m_busDeinterleaveL;
+    std::vector<float> m_busDeinterleaveR;
     std::vector<std::vector<float>> m_busBuffers;
     std::vector<int> m_busProcessOrder;
     int m_busCount = 0;

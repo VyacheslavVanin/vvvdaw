@@ -1,13 +1,18 @@
 #include "BusPanelWidget.h"
 #include "model/Project.h"
 #include "model/AudioBus.h"
+#include "plugin/PluginChain.h"
+#include "plugin/PluginInstance.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QFrame>
 #include <QEvent>
 #include <QMenu>
+#include <QDialog>
+#include <QListWidget>
 #include <QContextMenuEvent>
+#include <QPushButton>
 
 static bool wouldCreateCycle(const std::vector<AudioBus>& buses, int fromIndex, int toIndex) {
     if (toIndex < 0) return false;
@@ -29,7 +34,7 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     setWidgetResizable(true);
-    setFixedHeight(180);
+    setFixedHeight(200);
 
     m_container = new QWidget(this);
     m_container->setAutoFillBackground(true);
@@ -157,6 +162,36 @@ void BusPanelWidget::rebuild() {
         );
         volRow->addWidget(row.volumeSlider, 1);
         layout->addLayout(volRow);
+
+        auto* fxRow = new QHBoxLayout;
+        row.fxButton = new QPushButton("FX", row.widget);
+        row.fxButton->setFixedHeight(18);
+        row.fxButton->setStyleSheet(
+            "QPushButton { background: #333; color: #88aacc; border: 1px solid #556; font-size: 9px; font-weight: bold; }"
+            "QPushButton:hover { background: #444; }"
+        );
+        int fxBusIndex = i;
+        connect(row.fxButton, &QPushButton::clicked, this, [this, fxBusIndex]() {
+            auto& bus = m_project.buses()[fxBusIndex];
+            QDialog dialog(m_container->window());
+            dialog.setWindowTitle(bus.name + " - Plugins");
+            dialog.setMinimumSize(350, 250);
+            auto* dlgLayout = new QVBoxLayout(&dialog);
+
+            auto* listWidget = new QListWidget(&dialog);
+            for (int p = 0; p < bus.pluginChain.count(); ++p) {
+                auto* plugin = bus.pluginChain.plugin(p);
+                listWidget->addItem(QString("[%1] %2").arg(plugin->isEnabled() ? "ON" : "OFF", plugin->name()));
+            }
+            dlgLayout->addWidget(listWidget);
+
+            auto* closeBtn = new QPushButton("Close", &dialog);
+            connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+            dlgLayout->addWidget(closeBtn);
+            dialog.exec();
+        });
+        fxRow->addWidget(row.fxButton);
+        layout->addLayout(fxRow);
 
         int busIndex = i;
 

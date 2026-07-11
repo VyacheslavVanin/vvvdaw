@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include "plugin/PluginChain.h"
 
 struct AudioBus {
     QString name;
@@ -7,4 +8,5 @@ struct AudioBus {
     float volume = 1.0f;
     int outputBusIndex = 0;
     bool removable = true;
+    PluginChain pluginChain;
 };

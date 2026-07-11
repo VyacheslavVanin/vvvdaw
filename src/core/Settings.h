@@ -1,6 +1,7 @@
 #pragma once
 #include <QString>
 #include <QJsonObject>
+#include <vector>
 
 class Settings {
 public:
@@ -19,6 +20,7 @@ public:
     bool mouseWheelScroll;
 
     QString lastProjectPath;
+    std::vector<QString> pluginScanPaths;
 
 private:
     QString configFilePath() const;

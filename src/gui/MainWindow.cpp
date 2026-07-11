@@ -7,6 +7,7 @@
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
 #include "BusPanelWidget.h"
+#include "PluginWindow.h"
 #include "core/UndoStack.h"
 #include "core/TimeUtils.h"
 #include "model/Project.h"
@@ -17,6 +18,7 @@
 #include "audio/AudioEngine.h"
 #include "audio/DeviceInfo.h"
 #include "core/Settings.h"
+#include "plugin/PluginInstance.h"
 
 using vvvdaw::TransportState;
 #include <QApplication>
@@ -43,6 +45,15 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
 {
     setWindowTitle("vvvdaw — " + m_project.name());
     resize(1400, 800);
+
+    m_pluginManager.scanDirectories(
+        m_settings.pluginScanPaths.empty()
+            ? PluginManager::defaultScanPaths()
+            : m_settings.pluginScanPaths);
+    m_pluginManager.scanLV2();
+    m_pluginManager.loadCache();
+    m_project.setPluginManager(&m_pluginManager);
+
     setupUi();
     setupMenus();
     loadStyleSheet();
@@ -205,7 +216,7 @@ void MainWindow::setupUi() {
         newBus.volume = 1.0f;
         newBus.pan = 0.0f;
         newBus.outputBusIndex = 0;
-        m_project.addBus(newBus);
+        m_project.addBus(std::move(newBus));
         m_busPanel->rebuild();
         refreshBusCombos();
     });
@@ -625,6 +636,7 @@ void MainWindow::rebuildTracks() {
         row.panel->setAlternateRow(odd);
         row.panel->updateBusList(m_project.buses());
         row.panel->updateInputDeviceList(devices);
+        row.panel->setPluginManager(&m_pluginManager);
         row.panel->updateFromTrack();
         row.view = new TrackViewWidget(&track, m_trackContainer);
         row.view->setAlternateRow(odd);
@@ -655,6 +667,9 @@ void MainWindow::rebuildTracks() {
         connect(row.panel, &TrackPanelWidget::beforeModify, this, [this] {
             pushUndoState();
         });
+
+        connect(row.panel, &TrackPanelWidget::openPluginEditorRequested, this,
+                &MainWindow::openPluginEditor);
 
         connect(row.view, &TrackViewWidget::eventDragStarted, this, [this] {
             pushUndoState();
@@ -808,4 +823,19 @@ void MainWindow::syncScrollPositions(int value) {
     m_measureRuler->setScrollOffset(m_scrollOffset);
     for (auto& row : m_trackRows)
         row.view->setScrollOffset(m_scrollOffset);
+}
+
+void MainWindow::openPluginEditor(PluginInstance* plugin) {
+    if (!plugin || !plugin->hasEditor()) return;
+    for (auto* w : m_pluginWindows) {
+        if (w->isVisible()) continue;
+    }
+    auto* window = new PluginWindow(plugin, this);
+    m_pluginWindows.push_back(window);
+    connect(window, &PluginWindow::windowClosed, this, [this, window]() {
+        m_pluginWindows.erase(
+            std::remove(m_pluginWindows.begin(), m_pluginWindows.end(), window),
+            m_pluginWindows.end());
+    });
+    window->open();
 }

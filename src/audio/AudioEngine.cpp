@@ -3,6 +3,7 @@
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include "model/AudioClip.h"
+#include "plugin/PluginChain.h"
 #include "AudioUtils.h"
 #include <algorithm>
 #include <cstring>
@@ -21,6 +22,9 @@ bool AudioEngine::init(const Settings& settings) {
     m_sampleRate = settings.sampleRate;
     m_bufferSize = settings.bufferSize;
     m_stereoScratch.resize(static_cast<size_t>(m_bufferSize) * 4);
+    m_trackScratch.resize(static_cast<size_t>(m_bufferSize) * 2, 0.0f);
+    m_busDeinterleaveL.resize(static_cast<size_t>(m_bufferSize), 0.0f);
+    m_busDeinterleaveR.resize(static_cast<size_t>(m_bufferSize), 0.0f);
     m_recordingManager.setScratchSize(static_cast<size_t>(m_bufferSize) * 2);
     AudioClip::setStreamingThresholdFrames(
         static_cast<size_t>(settings.streamingThresholdSec) * settings.sampleRate);
@@ -374,7 +378,13 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         float pan = track.pan();
         auto [leftGain, rightGain] = panGains(pan);
 
-        float* busBuf = m_busBuffers[busIdx].data();
+        bool hasPlugins = track.pluginChain().count() > 0;
+        bool hasAnyEvent = false;
+
+        float* trackL = m_trackScratch.data();
+        float* trackR = m_trackScratch.data() + frameCount;
+        if (hasPlugins)
+            std::fill(m_trackScratch.begin(), m_trackScratch.begin() + frameCount * 2, 0.0f);
 
         for (const auto& event : track.events()) {
             auto activeClip = event.activeClip();
@@ -384,6 +394,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             if (pos >= eventEnd || pos + frameCount <= event.startSample())
                 continue;
 
+            hasAnyEvent = true;
             int64_t localPos = pos - event.startSample() + event.offsetSample();
             if (localPos < event.offsetSample()) localPos = event.offsetSample();
 
@@ -394,11 +405,21 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                                                   event.durationSample(),
                                                   m_stereoScratch.data(), frameCount, ch,
                                                   framesAvail)) {
-                    for (unsigned long f = 0; f < framesAvail; ++f) {
-                        float sL = m_stereoScratch[f * ch];
-                        float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                        busBuf[f * 2]     += sL * trackVol * leftGain;
-                        busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                    if (hasPlugins) {
+                        for (unsigned long f = 0; f < framesAvail; ++f) {
+                            float sL = m_stereoScratch[f * ch];
+                            float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                            trackL[f] += sL;
+                            trackR[f] += sR;
+                        }
+                    } else {
+                        float* busBuf = m_busBuffers[busIdx].data();
+                        for (unsigned long f = 0; f < framesAvail; ++f) {
+                            float sL = m_stereoScratch[f * ch];
+                            float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                            busBuf[f * 2]     += sL * trackVol * leftGain;
+                            busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                        }
                     }
                 }
             } else {
@@ -406,18 +427,45 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                 int ch = activeClip->channels();
                 size_t clipFrames = activeClip->frameCount();
 
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    int64_t clipFrame = localPos + f;
-                    if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                        clipFrame >= event.offsetSample() + event.durationSample())
-                        continue;
+                if (hasPlugins) {
+                    for (unsigned long f = 0; f < frameCount; ++f) {
+                        int64_t clipFrame = localPos + f;
+                        if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                            clipFrame >= event.offsetSample() + event.durationSample())
+                            continue;
 
-                    float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                    float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+                        float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
+                        float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+                        trackL[f] += sL;
+                        trackR[f] += sR;
+                    }
+                } else {
+                    float* busBuf = m_busBuffers[busIdx].data();
+                    for (unsigned long f = 0; f < frameCount; ++f) {
+                        int64_t clipFrame = localPos + f;
+                        if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                            clipFrame >= event.offsetSample() + event.durationSample())
+                            continue;
 
-                    busBuf[f * 2]     += sL * trackVol * leftGain;
-                    busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                        float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
+                        float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+
+                        busBuf[f * 2]     += sL * trackVol * leftGain;
+                        busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                    }
                 }
+            }
+        }
+
+        if (hasPlugins && hasAnyEvent) {
+            float* inBufs[2] = { trackL, trackR };
+            float* outBufs[2] = { trackL, trackR };
+            track.pluginChain().process(inBufs, outBufs, frameCount, 2);
+
+            float* busBuf = m_busBuffers[busIdx].data();
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                busBuf[f * 2]     += trackL[f] * trackVol * leftGain;
+                busBuf[f * 2 + 1] += trackR[f] * trackVol * rightGain;
             }
         }
     }
@@ -431,6 +479,21 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
 
     for (int idx : m_busProcessOrder) {
         const auto& bus = proj->buses()[idx];
+
+        if (bus.pluginChain.count() > 0) {
+            float* buf = m_busBuffers[idx].data();
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                m_busDeinterleaveL[f] = buf[f * 2];
+                m_busDeinterleaveR[f] = buf[f * 2 + 1];
+            }
+            float* inBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
+            float* outBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
+            bus.pluginChain.process(inBufs, outBufs, frameCount, 2);
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                buf[f * 2]     = m_busDeinterleaveL[f];
+                buf[f * 2 + 1] = m_busDeinterleaveR[f];
+            }
+        }
 
         auto [bLeftGain, bRightGain] = panGains(bus.pan);
         float bVol = bus.volume;

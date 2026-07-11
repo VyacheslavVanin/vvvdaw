@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QStandardPaths>
 
 Settings::Settings()
@@ -52,6 +53,12 @@ QJsonObject Settings::toJson() const {
     obj["lastProjectPath"] = lastProjectPath;
     obj["streamingThresholdSec"] = streamingThresholdSec;
     obj["mouseWheelScroll"] = mouseWheelScroll;
+
+    QJsonArray pathsArr;
+    for (const auto& path : pluginScanPaths)
+        pathsArr.append(path);
+    obj["pluginScanPaths"] = pathsArr;
+
     return obj;
 }
 
@@ -65,4 +72,10 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("lastProjectPath")) lastProjectPath = obj["lastProjectPath"].toString();
     if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
     if (obj.contains("mouseWheelScroll")) mouseWheelScroll = obj["mouseWheelScroll"].toBool(false);
+    if (obj.contains("pluginScanPaths")) {
+        pluginScanPaths.clear();
+        QJsonArray arr = obj["pluginScanPaths"].toArray();
+        for (const auto& v : arr)
+            pluginScanPaths.push_back(v.toString());
+    }
 }

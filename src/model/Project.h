@@ -8,11 +8,15 @@
 #include "Track.h"
 #include "AudioBus.h"
 
+class PluginManager;
+
 class Project {
 public:
     Project();
 
     static constexpr int MetronomeBusIndex = 1;
+
+    void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
 
     bool load(const QString& filePath);
     bool save(const QString& filePath);
@@ -38,7 +42,7 @@ public:
     Track* addTrack(const QString& name = {});
     bool removeTrack(int index);
 
-    int addBus(const AudioBus& bus);
+    int addBus(AudioBus bus);
     bool removeBus(int index);
 
     QString audioDirectory() const;
@@ -102,4 +106,5 @@ private:
 
     std::vector<Track> m_tracks;
     std::vector<AudioBus> m_buses;
+    PluginManager* m_pluginManager = nullptr;
 };

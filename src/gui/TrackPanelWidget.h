@@ -10,6 +10,9 @@
 class Track;
 struct AudioBus;
 struct DeviceInfo;
+class PluginListWidget;
+class PluginInstance;
+class PluginManager;
 
 class TrackPanelWidget : public QWidget {
     Q_OBJECT
@@ -20,9 +23,12 @@ public:
     Track* track() const { return m_track; }
     void updateFromTrack();
     void setAlternateRow(bool alternate);
+    void setPluginManager(PluginManager* pm);
 
     void updateBusList(const std::vector<AudioBus>& buses);
     void updateInputDeviceList(const std::vector<DeviceInfo>& devices);
+
+    PluginListWidget* pluginList() const { return m_pluginList; }
 
 signals:
     void armToggled(bool armed);
@@ -36,6 +42,7 @@ signals:
     void deleteRequested();
     void addTrackRequested();
     void beforeModify();
+    void openPluginEditorRequested(PluginInstance* plugin);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -52,4 +59,5 @@ private:
     QSlider* m_volumeSlider = nullptr;
     QComboBox* m_outputBusCombo = nullptr;
     QComboBox* m_inputDeviceCombo = nullptr;
+    PluginListWidget* m_pluginList = nullptr;
 };

@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include "AudioEvent.h"
+#include "plugin/PluginChain.h"
 
 class Track {
 public:
@@ -42,6 +43,9 @@ public:
     std::vector<AudioEvent>& events() { return m_events; }
     const std::vector<AudioEvent>& events() const { return m_events; }
 
+    PluginChain& pluginChain() { return m_pluginChain; }
+    const PluginChain& pluginChain() const { return m_pluginChain; }
+
     void addEvent(AudioEvent event);
     void importEvent(AudioEvent event);
     void removeEvent(int64_t eventId);
@@ -63,4 +67,6 @@ private:
 
     std::vector<AudioEvent> m_events;
     int64_t m_nextEventId = 1;
+
+    PluginChain m_pluginChain;
 };

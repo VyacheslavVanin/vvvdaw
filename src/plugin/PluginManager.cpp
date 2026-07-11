@@ -13,8 +13,13 @@
 
 using namespace Steinberg;
 
-PluginManager::PluginManager() {
+PluginManager::PluginManager()
+    : m_lilvWorld(lilv_world_new()) {
     loadCache();
+}
+
+PluginManager::~PluginManager() {
+    if (m_lilvWorld) lilv_world_free(m_lilvWorld);
 }
 
 void PluginManager::scanDirectories(const std::vector<QString>& directories) {
@@ -48,10 +53,11 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
                 if (std::string(ci.category) == kVstAudioEffectClass) {
                     PluginInfo pi;
                     pi.name = QString::fromUtf8(ci.name);
-                    pi.vendor = QString::fromUtf8(ci.name);
+                    pi.vendor = QString();
                     pi.path = QString::fromStdString(entry.path().string());
                     pi.pluginId = QString::fromUtf8(ci.name);
                     pi.category = QString::fromUtf8(ci.category);
+                    pi.type = "vst3";
                     m_plugins.push_back(pi);
                 }
             }
@@ -60,6 +66,41 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
         }
     }
     saveCache();
+}
+
+void PluginManager::scanLV2() {
+    if (!m_lilvWorld) return;
+    lilv_world_load_all(m_lilvWorld);
+
+    const LilvPlugins* plugins = lilv_world_get_all_plugins(m_lilvWorld);
+    LILV_FOREACH (plugins, i, plugins) {
+        const LilvPlugin* p = lilv_plugins_get(plugins, i);
+
+        LilvNode* nameNode = lilv_plugin_get_name(p);
+        if (!nameNode) continue;
+
+        PluginInfo pi;
+        pi.name = QString::fromUtf8(lilv_node_as_string(nameNode));
+        pi.vendor = QString();
+        pi.path = QString();
+        pi.pluginId = QString::fromUtf8(lilv_node_as_uri(lilv_plugin_get_uri(p)));
+        pi.category = QString("LV2 Plugin");
+        pi.type = "lv2";
+
+        lilv_node_free(nameNode);
+        m_plugins.push_back(pi);
+    }
+    saveCache();
+}
+
+const LilvPlugin* PluginManager::findLV2Plugin(const QString& uri) const {
+    if (!m_lilvWorld) return nullptr;
+    const LilvPlugins* plugins = lilv_world_get_all_plugins(m_lilvWorld);
+
+    LilvNode* pluginUri = lilv_new_uri(m_lilvWorld, uri.toUtf8().constData());
+    const LilvPlugin* plugin = lilv_plugins_get_by_uri(plugins, pluginUri);
+    lilv_node_free(pluginUri);
+    return plugin;
 }
 
 void PluginManager::loadCache() {
@@ -79,6 +120,7 @@ void PluginManager::loadCache() {
         pi.path = obj["path"].toString();
         pi.pluginId = obj["pluginId"].toString();
         pi.category = obj["category"].toString();
+        pi.type = obj["type"].toString();
         m_plugins.push_back(pi);
     }
 }
@@ -97,6 +139,7 @@ void PluginManager::saveCache() {
         obj["path"] = pi.path;
         obj["pluginId"] = pi.pluginId;
         obj["category"] = pi.category;
+        obj["type"] = pi.type;
         arr.append(obj);
     }
     root["plugins"] = arr;

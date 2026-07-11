@@ -8,6 +8,7 @@
 
 #include "core/Constants.h"
 #include "core/UndoStack.h"
+#include "plugin/PluginManager.h"
 
 class Project;
 class AudioEngine;
@@ -19,6 +20,8 @@ class TempoWidget;
 class TrackPanelWidget;
 class TrackViewWidget;
 class BusPanelWidget;
+class PluginWindow;
+class PluginInstance;
 class QVBoxLayout;
 
 class MainWindow : public QMainWindow {
@@ -42,11 +45,13 @@ private:
     void performUndo();
     void performRedo();
     void applyState(const std::optional<QJsonObject>& state);
+    void openPluginEditor(PluginInstance* plugin);
 
     Project& m_project;
     AudioEngine& m_engine;
     Settings& m_settings;
     UndoStack m_undoStack;
+    PluginManager m_pluginManager;
 
     TransportPanel* m_transportPanel = nullptr;
     TempoWidget* m_tempoWidget = nullptr;
@@ -62,6 +67,8 @@ private:
         TrackViewWidget* view = nullptr;
     };
     std::vector<TrackRow> m_trackRows;
+
+    std::vector<PluginWindow*> m_pluginWindows;
 
     double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;

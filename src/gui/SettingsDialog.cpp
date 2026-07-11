@@ -5,6 +5,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QCheckBox>
+#include <QFileDialog>
+#include <QLabel>
 
 SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget* parent)
     : QDialog(parent)
@@ -53,6 +55,38 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
     form->addRow("Mouse Wheel Scroll:", m_mouseWheelCheck);
 
     layout->addLayout(form);
+
+    auto* pluginPathsGroup = new QWidget(this);
+    auto* pluginPathsLayout = new QVBoxLayout(pluginPathsGroup);
+    pluginPathsLayout->setContentsMargins(0, 0, 0, 0);
+    pluginPathsLayout->setSpacing(4);
+
+    auto* pathsLabel = new QLabel("Plugin Scan Paths:", pluginPathsGroup);
+    pathsLabel->setStyleSheet("font-weight: bold; font-size: 11px; color: #ccc;");
+    pluginPathsLayout->addWidget(pathsLabel);
+
+    m_pluginPathList = new QListWidget(pluginPathsGroup);
+    m_pluginPathList->setFixedHeight(120);
+    m_pluginPathList->setStyleSheet(
+        "QListWidget { background: #2a2a2a; color: #ccc; border: 1px solid #555; font-size: 11px; }"
+        "QListWidget::item:selected { background: #094771; }"
+    );
+    for (const auto& path : m_settings.pluginScanPaths)
+        m_pluginPathList->addItem(path);
+    pluginPathsLayout->addWidget(m_pluginPathList);
+
+    auto* pathsBtnRow = new QHBoxLayout;
+    auto* addPathBtn = new QPushButton("Add...", pluginPathsGroup);
+    auto* removePathBtn = new QPushButton("Remove", pluginPathsGroup);
+    auto* defaultPathsBtn = new QPushButton("Reset Defaults", pluginPathsGroup);
+    pathsBtnRow->addWidget(addPathBtn);
+    pathsBtnRow->addWidget(removePathBtn);
+    pathsBtnRow->addWidget(defaultPathsBtn);
+    pathsBtnRow->addStretch();
+    pluginPathsLayout->addLayout(pathsBtnRow);
+
+    layout->addWidget(pluginPathsGroup);
+
     layout->addStretch();
 
     auto* btnRow = new QHBoxLayout;
@@ -66,6 +100,30 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
 
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
     connect(okBtn, &QPushButton::clicked, this, &QDialog::accept);
+
+    connect(addPathBtn, &QPushButton::clicked, this, [this] {
+        QString dir = QFileDialog::getExistingDirectory(this, "Select Plugin Directory");
+        if (!dir.isEmpty()) {
+            m_pluginPathList->addItem(dir);
+        }
+    });
+
+    connect(removePathBtn, &QPushButton::clicked, this, [this] {
+        auto* item = m_pluginPathList->currentItem();
+        if (item) {
+            delete m_pluginPathList->takeItem(m_pluginPathList->row(item));
+        }
+    });
+
+    connect(defaultPathsBtn, &QPushButton::clicked, this, [this] {
+        m_pluginPathList->clear();
+        m_pluginPathList->addItem(QDir::homePath() + "/.vst3");
+        m_pluginPathList->addItem("/usr/lib/vst3");
+        m_pluginPathList->addItem("/usr/local/lib/vst3");
+        m_pluginPathList->addItem(QDir::homePath() + "/.lv2");
+        m_pluginPathList->addItem("/usr/lib/lv2");
+        m_pluginPathList->addItem("/usr/local/lib/lv2");
+    });
 }
 
 void SettingsDialog::populateSampleRates() {
@@ -122,6 +180,11 @@ void SettingsDialog::accept() {
     m_settings.outputChannel = m_outputChannelSpin->value();
     m_settings.streamingThresholdSec = m_streamingThresholdSpin->value();
     m_settings.mouseWheelScroll = m_mouseWheelCheck->isChecked();
+
+    m_settings.pluginScanPaths.clear();
+    for (int i = 0; i < m_pluginPathList->count(); ++i)
+        m_settings.pluginScanPaths.push_back(m_pluginPathList->item(i)->text());
+
     m_settings.save();
 
     QDialog::accept();

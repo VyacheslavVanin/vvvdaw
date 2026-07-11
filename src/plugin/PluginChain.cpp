@@ -1,5 +1,7 @@
 #include "PluginChain.h"
 #include "VST3Instance.h"
+#include "LV2Instance.h"
+#include "PluginManager.h"
 #include <algorithm>
 #include <QJsonArray>
 
@@ -43,7 +45,7 @@ PluginInstance* PluginChain::pluginById(const QString& id) const {
 }
 
 bool PluginChain::process(float** inputBuffers, float** outputBuffers,
-                          int numSamples, int numChannels) {
+                          int numSamples, int numChannels) const {
     if (m_plugins.empty()) {
         for (int ch = 0; ch < numChannels; ++ch)
             std::memcpy(outputBuffers[ch], inputBuffers[ch], numSamples * sizeof(float));
@@ -104,7 +106,7 @@ QJsonObject PluginChain::toJson() const {
     return json;
 }
 
-void PluginChain::fromJson(const QJsonObject& json) {
+void PluginChain::fromJson(const QJsonObject& json, PluginManager* manager) {
     m_plugins.clear();
     QJsonArray arr = json["plugins"].toArray();
     for (auto v : arr) {
@@ -115,6 +117,15 @@ void PluginChain::fromJson(const QJsonObject& json) {
             if (instance->load(obj["path"].toString())) {
                 instance->stateFromJson(obj);
                 m_plugins.push_back(std::move(instance));
+            }
+        } else if (type == "lv2") {
+            if (manager) {
+                const LilvPlugin* lilvPlugin = manager->findLV2Plugin(obj["uri"].toString());
+                if (lilvPlugin) {
+                    auto instance = std::make_unique<LV2Instance>(manager->lilvWorld(), lilvPlugin);
+                    instance->stateFromJson(obj);
+                    m_plugins.push_back(std::move(instance));
+                }
             }
         }
     }

@@ -1,4 +1,6 @@
 #include "TrackPanelWidget.h"
+#include "PluginListWidget.h"
+#include "plugin/PluginInstance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include "audio/DeviceInfo.h"
@@ -143,6 +145,12 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     volRow->addWidget(m_volumeSlider, 1);
     layout->addLayout(volRow);
 
+    m_pluginList = new PluginListWidget(this);
+    m_pluginList->setTrack(m_track);
+    m_pluginList->rebuild();
+    connect(m_pluginList, &PluginListWidget::openEditorRequested, this, &TrackPanelWidget::openPluginEditorRequested);
+    layout->addWidget(m_pluginList);
+
     connect(m_armButton, &QPushButton::toggled, this, [this](bool checked) {
         if (m_track) m_track->setRecordArmed(checked);
         emit armToggled(checked);
@@ -237,6 +245,10 @@ void TrackPanelWidget::updateInputDeviceList(const std::vector<DeviceInfo>& devi
         ++comboIdx;
     }
     m_inputDeviceCombo->setCurrentIndex(selectIdx);
+}
+
+void TrackPanelWidget::setPluginManager(PluginManager* pm) {
+    if (m_pluginList) m_pluginList->setPluginManager(pm);
 }
 
 void TrackPanelWidget::setAlternateRow(bool alternate) {

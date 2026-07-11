@@ -3,6 +3,7 @@
 #include <QComboBox>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <QListWidget>
 #include <vector>
 #include "core/Settings.h"
 
@@ -30,4 +31,5 @@ private:
     QSpinBox* m_outputChannelSpin;
     QSpinBox* m_streamingThresholdSpin;
     QCheckBox* m_mouseWheelCheck;
+    QListWidget* m_pluginPathList;
 };
