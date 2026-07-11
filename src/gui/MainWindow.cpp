@@ -48,15 +48,11 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
     resize(1400, 800);
 
     m_pluginManager.loadCache();
-    if (m_pluginManager.plugins().empty()) {
-        m_pluginManager.scanDirectories(
-            Settings().pluginScanPaths.empty()
-                ? PluginManager::defaultScanPaths()
-                : Settings().pluginScanPaths);
-        m_pluginManager.scanLV2();
-    } else {
-        m_pluginManager.ensureLV2Loaded();
-    }
+    m_pluginManager.scanDirectories(
+        Settings().pluginScanPaths.empty()
+            ? PluginManager::defaultScanPaths()
+            : Settings().pluginScanPaths);
+    m_pluginManager.scanLV2();
     m_project.setPluginManager(&m_pluginManager);
 
     setupUi();

@@ -23,7 +23,11 @@ PluginManager::~PluginManager() {
 }
 
 void PluginManager::scanDirectories(const std::vector<QString>& directories) {
-    m_plugins.clear();
+    std::set<QString> knownPaths;
+    for (auto& pi : m_plugins)
+        if (pi.type == "vst3")
+            knownPaths.insert(pi.path);
+
     for (auto& dir : directories) {
         namespace fs = std::filesystem;
         fs::path fsDir(dir.toStdString());
@@ -32,6 +36,9 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
         for (auto& entry : fs::directory_iterator(fsDir)) {
             if (!entry.is_directory()) continue;
             if (entry.path().extension() != ".vst3") continue;
+
+            QString bundlePath = QString::fromStdString(entry.path().string());
+            if (knownPaths.contains(bundlePath)) continue;
 
             fs::path soPath;
             for (auto& sub : fs::recursive_directory_iterator(entry.path())) {
@@ -48,32 +55,19 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
             using GetFactoryFunc = Steinberg::IPluginFactory* (*)();
             auto getFactory = reinterpret_cast<GetFactoryFunc>(
                 dlsym(handle, "GetPluginFactory"));
-            if (!getFactory) { dlclose(handle); continue; }
-
-            Steinberg::IPluginFactory* rawFactory = getFactory();
-            if (!rawFactory) { dlclose(handle); continue; }
-
-            {
-                Steinberg::IPtr<Steinberg::IPluginFactory> factory;
-                factory = Steinberg::owned(rawFactory);
-
-                for (int32 i = 0; i < factory->countClasses(); ++i) {
-                    PClassInfo ci;
-                    factory->getClassInfo(i, &ci);
-                    if (std::string(ci.category) == kVstAudioEffectClass) {
-                        PluginInfo pi;
-                        pi.name = QString::fromUtf8(ci.name);
-                        pi.vendor = QString();
-                        pi.path = QString::fromStdString(entry.path().string());
-                        pi.pluginId = QString::fromUtf8(ci.name);
-                        pi.category = QString::fromUtf8(ci.category);
-                        pi.type = "vst3";
-                        m_plugins.push_back(pi);
-                    }
-                }
-            }
-
+            bool hasFactory = (getFactory && getFactory());
             dlclose(handle);
+            if (!hasFactory) continue;
+
+            std::string stem = entry.path().stem().string();
+            PluginInfo pi;
+            pi.name = QString::fromStdString(stem);
+            pi.vendor = QString();
+            pi.path = bundlePath;
+            pi.pluginId = QString::fromStdString(stem);
+            pi.category = QString::fromUtf8(kVstAudioEffectClass);
+            pi.type = "vst3";
+            m_plugins.push_back(pi);
         }
     }
     saveCache();
@@ -90,11 +84,17 @@ void PluginManager::scanLV2() {
         LilvNode* nameNode = lilv_plugin_get_name(p);
         if (!nameNode) continue;
 
+        QString uri = QString::fromUtf8(lilv_node_as_uri(lilv_plugin_get_uri(p)));
+        bool alreadyKnown = false;
+        for (auto& pi : m_plugins)
+            if (pi.type == "lv2" && pi.pluginId == uri) { alreadyKnown = true; break; }
+        if (alreadyKnown) { lilv_node_free(nameNode); continue; }
+
         PluginInfo pi;
         pi.name = QString::fromUtf8(lilv_node_as_string(nameNode));
         pi.vendor = QString();
         pi.path = QString();
-        pi.pluginId = QString::fromUtf8(lilv_node_as_uri(lilv_plugin_get_uri(p)));
+        pi.pluginId = uri;
         pi.category = QString("LV2 Plugin");
         pi.type = "lv2";
 

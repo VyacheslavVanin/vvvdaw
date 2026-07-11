@@ -1,6 +1,7 @@
 #pragma once
 #include <QString>
 #include <vector>
+#include <set>
 #include <QJsonObject>
 #include <lilv/lilv.h>
 
