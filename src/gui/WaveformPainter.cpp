@@ -85,3 +85,48 @@ QImage WaveformPainter::renderFromPeaks(const AudioClip::Peak* peaks, size_t pea
 
     return img;
 }
+
+QImage WaveformPainter::renderFromPeaks(const AudioClip::Peak* peaks, size_t peakCount,
+                                         size_t framesPerPeak, size_t totalFrames,
+                                         size_t offsetFrame, size_t visibleFrames,
+                                         int width, int height,
+                                         const QColor& color, const QColor& bg) {
+    QImage img(width, height, QImage::Format_ARGB32_Premultiplied);
+    img.fill(bg);
+
+    if (!peaks || peakCount == 0 || width <= 0 || height <= 0 || visibleFrames == 0)
+        return img;
+
+    QPainter painter(&img);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+
+    int h2 = height / 2;
+    int yCenter = h2;
+
+    for (int x = 0; x < width; ++x) {
+        int64_t startSample = static_cast<int64_t>(offsetFrame) + static_cast<int64_t>(visibleFrames) * x / width;
+        int64_t endSample = static_cast<int64_t>(offsetFrame) + static_cast<int64_t>(visibleFrames) * (x + 1) / width;
+        if (startSample >= static_cast<int64_t>(totalFrames)) break;
+        if (endSample > static_cast<int64_t>(totalFrames)) endSample = totalFrames;
+
+        size_t startPeak = static_cast<size_t>(startSample) / framesPerPeak;
+        size_t endPeak = (static_cast<size_t>(endSample) + framesPerPeak - 1) / framesPerPeak;
+        if (startPeak >= peakCount) break;
+        if (endPeak > peakCount) endPeak = peakCount;
+
+        float maxVal = 0.0f;
+        for (size_t i = startPeak; i < endPeak; ++i)
+            if (peaks[i].maxAbs > maxVal) maxVal = peaks[i].maxAbs;
+
+        maxVal = std::min(maxVal, 1.0f);
+        int barHeight = static_cast<int>(maxVal * h2);
+        if (barHeight < 1) barHeight = 1;
+
+        painter.drawRect(x, yCenter - barHeight, 1, barHeight * 2);
+    }
+    painter.end();
+
+    return img;
+}

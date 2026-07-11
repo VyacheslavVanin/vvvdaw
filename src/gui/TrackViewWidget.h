@@ -44,6 +44,7 @@ signals:
     void eventDragFinished(int64_t eventId, int64_t newStartSample, QPoint globalPos);
     void dragInProgress(int64_t eventId, int64_t currentStartSample, QPoint globalPos);
     void eventDragStarted();
+    void eventEdgeTrimStarted();
     void zoomChanged(double zoom);
     void takeSwitchStarted();
 
@@ -57,9 +58,13 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
+    enum class EdgeDrag { None, Left, Right };
+
     int64_t sampleAtX(int x) const;
     AudioEvent* eventAtX(int x, int& eventIndex);
+    EdgeDrag edgeAtX(int x, int eventIndex) const;
     void renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
+                        size_t offsetFrame, size_t visibleFrames,
                         int x, int y, int w, int h);
 
     Track* m_track = nullptr;
@@ -88,6 +93,16 @@ private:
     // Row appearance
     bool m_alternateRow = false;
     bool m_dragSourceVisible = true;
+
+    // Edge trim state
+    EdgeDrag m_edgeDrag = EdgeDrag::None;
+    int m_edgeDragEventIndex = -1;
+    int64_t m_edgeDragStartOffset = 0;
+    int64_t m_edgeDragStartDuration = 0;
+    int64_t m_edgeDragStartSample = 0;
+    int64_t m_edgeDragStartMouseSample = 0;
+
+    static constexpr int EdgeHandleWidth = 6;
 
     struct DragPreview {
         const AudioEvent* event = nullptr;

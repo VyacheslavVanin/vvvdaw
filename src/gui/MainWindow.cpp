@@ -657,6 +657,10 @@ void MainWindow::rebuildTracks() {
             pushUndoState();
         });
 
+        connect(row.view, &TrackViewWidget::eventEdgeTrimStarted, this, [this] {
+            pushUndoState();
+        });
+
         connect(row.view, &TrackViewWidget::takeSwitchStarted, this, [this] {
             pushUndoState();
         });

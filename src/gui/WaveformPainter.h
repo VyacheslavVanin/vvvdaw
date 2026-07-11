@@ -21,6 +21,13 @@ public:
                                    const QColor& color = QColor("#88ccff"),
                                    const QColor& bg = Qt::transparent);
 
+    static QImage renderFromPeaks(const AudioClip::Peak* peaks, size_t peakCount,
+                                   size_t framesPerPeak, size_t totalFrames,
+                                   size_t offsetFrame, size_t visibleFrames,
+                                   int width, int height,
+                                   const QColor& color = QColor("#88ccff"),
+                                   const QColor& bg = Qt::transparent);
+
     static QColor defaultColor() { return QColor("#88ccff"); }
     static QColor mutedColor() { return QColor("#555555"); }
     static QColor recordingColor() { return QColor("#ff4444"); }

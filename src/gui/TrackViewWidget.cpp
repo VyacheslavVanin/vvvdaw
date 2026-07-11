@@ -70,6 +70,27 @@ AudioEvent* TrackViewWidget::eventAtX(int x, int& eventIndex) {
     return nullptr;
 }
 
+TrackViewWidget::EdgeDrag TrackViewWidget::edgeAtX(int x, int eventIndex) const {
+    if (!m_track || eventIndex < 0 || eventIndex >= static_cast<int>(m_track->events().size()))
+        return EdgeDrag::None;
+
+    const auto& ev = m_track->events()[eventIndex];
+    int ex = static_cast<int>((ev.startSample() - m_scrollOffset) * m_pixelsPerSample);
+    int ew = static_cast<int>(ev.durationSample() * m_pixelsPerSample);
+
+    if (ew < EdgeHandleWidth * 2) {
+        if (x >= ex && x < ex + ew)
+            return EdgeDrag::Left;
+        return EdgeDrag::None;
+    }
+
+    if (x >= ex && x < ex + EdgeHandleWidth)
+        return EdgeDrag::Left;
+    if (x >= ex + ew - EdgeHandleWidth && x < ex + ew)
+        return EdgeDrag::Right;
+    return EdgeDrag::None;
+}
+
 void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -123,7 +144,19 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         {
             int th = eventRect.height() - 2;
             renderThumbnail(painter, event.clip(),
+                            event.offsetSample(), event.durationSample(),
                             eventRect.x() + 1, eventRect.y() + 1, w, th);
+        }
+
+        // Edge handles
+        {
+            QColor handleColor = borderColor.lighter(130);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(handleColor);
+            int handleH = trackHeight / 3;
+            int handleY = (trackHeight - handleH) / 2;
+            painter.drawRect(eventRect.x(), handleY, EdgeHandleWidth, handleH);
+            painter.drawRect(eventRect.x() + w - EdgeHandleWidth, handleY, EdgeHandleWidth, handleH);
         }
 
         // Border
@@ -159,6 +192,7 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                 auto clip = m_dragPreview.event->clip();
                 int th = eventRect.height() - 2;
                 renderThumbnail(painter, clip,
+                                m_dragPreview.event->offsetSample(), m_dragPreview.event->durationSample(),
                                 eventRect.x() + 1, eventRect.y() + 1, w, th);
             }
 
@@ -216,6 +250,21 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
         int idx = -1;
         AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), idx);
         if (ev) {
+            EdgeDrag edge = edgeAtX(static_cast<int>(event->position().x()), idx);
+            if (edge != EdgeDrag::None) {
+                m_selectedEventIndex = idx;
+                m_edgeDrag = edge;
+                m_edgeDragEventIndex = idx;
+                m_edgeDragStartOffset = ev->offsetSample();
+                m_edgeDragStartDuration = ev->durationSample();
+                m_edgeDragStartSample = ev->startSample();
+                m_edgeDragStartMouseSample = sampleAtX(static_cast<int>(event->position().x()));
+                setCursor(Qt::SizeHorCursor);
+                emit eventEdgeTrimStarted();
+                update();
+                return;
+            }
+
             m_selectedEventIndex = idx;
 
             bool ctrlDrag = (event->modifiers() & Qt::ControlModifier);
@@ -245,6 +294,74 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
 }
 
 void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
+    int mouseX = static_cast<int>(event->position().x());
+
+    if (m_edgeDrag != EdgeDrag::None && m_edgeDragEventIndex >= 0 && m_track) {
+        int64_t currentMouseSample = sampleAtX(mouseX);
+        int64_t delta = currentMouseSample - m_edgeDragStartMouseSample;
+
+        auto& ev = m_track->events()[m_edgeDragEventIndex];
+        auto clip = ev.activeClip();
+        int64_t clipFrames = clip ? static_cast<int64_t>(clip->frameCount()) : 0;
+
+        if (m_edgeDrag == EdgeDrag::Left) {
+            int64_t maxLeftDelta = m_edgeDragStartOffset;
+            int64_t maxRightDelta = m_edgeDragStartDuration - 1;
+            if (delta < -maxLeftDelta) delta = -maxLeftDelta;
+            if (delta > maxRightDelta) delta = maxRightDelta;
+
+            int64_t newStart = m_edgeDragStartSample + delta;
+            int64_t newOffset = m_edgeDragStartOffset + delta;
+            int64_t newDuration = m_edgeDragStartDuration - delta;
+
+            if (m_snapToGrid) {
+                newStart = TimeUtils::snapSample(newStart, m_snapUnit);
+                int64_t actualDelta = newStart - m_edgeDragStartSample;
+                newOffset = m_edgeDragStartOffset + actualDelta;
+                newDuration = m_edgeDragStartDuration - actualDelta;
+            }
+            if (newOffset < 0) {
+                newDuration += newOffset;
+                newStart -= newOffset;
+                newOffset = 0;
+            }
+            if (newDuration < 1) {
+                newOffset += newDuration - 1;
+                newStart -= newDuration - 1;
+                newDuration = 1;
+            }
+            if (newStart < 0) {
+                newOffset += newStart;
+                newDuration -= newStart;
+                newStart = 0;
+            }
+
+            ev.setOffsetSample(newOffset);
+            ev.setDurationSample(newDuration);
+            ev.setStartSample(newStart);
+        } else {
+            int64_t maxDelta = clipFrames - m_edgeDragStartOffset - m_edgeDragStartDuration;
+            int64_t minDelta = -(m_edgeDragStartDuration - 1);
+            if (delta > maxDelta) delta = maxDelta;
+            if (delta < minDelta) delta = minDelta;
+
+            int64_t newDuration = m_edgeDragStartDuration + delta;
+
+            if (m_snapToGrid) {
+                int64_t endSample = m_edgeDragStartSample + m_edgeDragStartDuration + delta;
+                endSample = TimeUtils::snapSample(endSample, m_snapUnit);
+                newDuration = endSample - m_edgeDragStartSample;
+                if (newDuration < 1) newDuration = 1;
+                if (m_edgeDragStartOffset + newDuration > clipFrames)
+                    newDuration = clipFrames - m_edgeDragStartOffset;
+            }
+
+            ev.setDurationSample(newDuration);
+        }
+        update();
+        return;
+    }
+
     if (m_dragging && m_dragEventIndex >= 0 && m_track) {
         int dx = static_cast<int>(event->position().x()) - m_dragStartMouseX;
         int64_t newStart = m_dragStartSample + static_cast<int64_t>(dx / m_pixelsPerSample);
@@ -259,26 +376,49 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
     } else {
         // Hover state
         int idx = -1;
-        AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), idx);
+        AudioEvent* ev = eventAtX(mouseX, idx);
         if (idx != m_hoverEventIndex) {
             m_hoverEventIndex = idx;
-            setCursor(ev ? Qt::OpenHandCursor : Qt::ArrowCursor);
-            update();
         }
+        if (ev) {
+            EdgeDrag edge = edgeAtX(mouseX, idx);
+            if (edge != EdgeDrag::None)
+                setCursor(Qt::SizeHorCursor);
+            else
+                setCursor(Qt::OpenHandCursor);
+        } else {
+            setCursor(Qt::ArrowCursor);
+        }
+        update();
     }
 }
 
 void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton && m_dragging) {
-        m_dragging = false;
-        unsetCursor();
-        if (m_track && m_dragEventIndex >= 0) {
-            auto& ev = m_track->events()[m_dragEventIndex];
-            emit eventMoved(ev.id(), ev.startSample());
-            emit eventDragFinished(ev.id(), ev.startSample(), event->globalPosition().toPoint());
+    if (event->button() == Qt::LeftButton) {
+        if (m_edgeDrag != EdgeDrag::None) {
+            m_edgeDrag = EdgeDrag::None;
+            m_edgeDragEventIndex = -1;
+            unsetCursor();
+            if (m_track && m_selectedEventIndex >= 0 &&
+                m_selectedEventIndex < static_cast<int>(m_track->events().size())) {
+                auto& ev = m_track->events()[m_selectedEventIndex];
+                emit eventsChanged();
+            }
+            update();
+            return;
         }
-        m_dragEventIndex = -1;
-        update();
+
+        if (m_dragging) {
+            m_dragging = false;
+            unsetCursor();
+            if (m_track && m_dragEventIndex >= 0) {
+                auto& ev = m_track->events()[m_dragEventIndex];
+                emit eventMoved(ev.id(), ev.startSample());
+                emit eventDragFinished(ev.id(), ev.startSample(), event->globalPosition().toPoint());
+            }
+            m_dragEventIndex = -1;
+            update();
+        }
     }
 }
 
@@ -305,25 +445,37 @@ void TrackViewWidget::deleteSelectedEvent() {
 }
 
 void TrackViewWidget::renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
+                                       size_t offsetFrame, size_t visibleFrames,
                                        int x, int y, int w, int h) {
-    auto& cache = m_thumbnailCache[clip];
-    if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
-        cache.frameCount != clip->frameCount()) {
+    bool isFullClip = (offsetFrame == 0 && visibleFrames == clip->frameCount());
+
+    if (isFullClip) {
+        auto& cache = m_thumbnailCache[clip];
+        if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
+            cache.frameCount != clip->frameCount()) {
+            if (!clip->peaks().empty()) {
+                cache.thumbnail = WaveformPainter::renderFromPeaks(
+                    clip->peaks().data(), clip->peaks().size(),
+                    clip->peaksPerFrame(), clip->frameCount(),
+                    w, h);
+            } else {
+                cache.thumbnail = QImage();
+            }
+            cache.frameCount = clip->frameCount();
+        }
+        if (!cache.thumbnail.isNull())
+            painter.drawImage(x, y, cache.thumbnail);
+    } else {
         if (!clip->peaks().empty()) {
-            cache.thumbnail = WaveformPainter::renderFromPeaks(
+            QImage thumb = WaveformPainter::renderFromPeaks(
                 clip->peaks().data(), clip->peaks().size(),
                 clip->peaksPerFrame(), clip->frameCount(),
+                offsetFrame, visibleFrames,
                 w, h);
-        } else {
-            cache.thumbnail = WaveformPainter::render(
-                clip->data(), clip->frameCount(), clip->channels(),
-                w, h);
+            if (!thumb.isNull())
+                painter.drawImage(x, y, thumb);
         }
-        cache.frameCount = clip->frameCount();
     }
-
-    if (!cache.thumbnail.isNull())
-        painter.drawImage(x, y, cache.thumbnail);
 }
 
 void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
