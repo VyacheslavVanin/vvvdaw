@@ -88,8 +88,9 @@ void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     enableBtn->setFixedWidth(32);
     enableBtn->setCheckable(true);
     enableBtn->setChecked(plugin->isEnabled());
-    connect(enableBtn, &QPushButton::toggled, [plugin](bool checked) {
+    connect(enableBtn, &QPushButton::toggled, [plugin, enableBtn](bool checked) {
         plugin->setEnabled(checked);
+        enableBtn->setText(checked ? "ON" : "OFF");
     });
     layout->addWidget(enableBtn);
 
@@ -178,6 +179,7 @@ void PluginListWidget::onAddClicked() {
         }
 
         if (instance) {
+            instance->activate(m_sampleRate, m_bufferSize);
             int idx = chain->count();
             chain->addPlugin(std::move(instance));
             rebuild();

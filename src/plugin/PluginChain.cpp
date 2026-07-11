@@ -65,6 +65,9 @@ bool PluginChain::process(float** inputBuffers, float** outputBuffers,
         bufB[ch] = tempB[ch].data();
     }
 
+    for (int ch = 0; ch < numChannels; ++ch)
+        std::memcpy(bufA[ch], inputBuffers[ch], numSamples * sizeof(float));
+
     bool useA = true;
     for (auto& plugin : m_plugins) {
         float** inBuf = useA ? bufA : bufB;

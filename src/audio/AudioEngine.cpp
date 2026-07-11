@@ -4,6 +4,7 @@
 #include "model/AudioBus.h"
 #include "model/AudioClip.h"
 #include "plugin/PluginChain.h"
+#include "plugin/PluginInstance.h"
 #include "AudioUtils.h"
 #include <algorithm>
 #include <cstring>
@@ -627,6 +628,7 @@ int64_t AudioEngine::advancePlayhead(Project* proj, int64_t pos, unsigned long f
 void AudioEngine::startPlayback() {
     auto* proj = m_project.load(std::memory_order_acquire);
     if (!proj) return;
+    activateAllPlugins();
     m_streamingManager.start(proj, m_playPosition.load(std::memory_order_acquire));
 }
 
@@ -724,4 +726,22 @@ void AudioEngine::startPrecount() {
     m_precountTotalSamples = static_cast<int64_t>(proj->samplesPerBar());
     m_precountPosition = 0;
     m_clickPlayhead = -1;
+}
+
+void AudioEngine::activateAllPlugins() {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+
+    for (auto& track : proj->tracks())
+        activatePluginChain(const_cast<PluginChain&>(track.pluginChain()));
+    for (auto& bus : proj->buses())
+        activatePluginChain(bus.pluginChain);
+}
+
+void AudioEngine::activatePluginChain(PluginChain& chain) {
+    for (int i = 0; i < chain.count(); ++i) {
+        auto* plugin = chain.plugin(i);
+        if (plugin && !plugin->isActive())
+            plugin->activate(m_sampleRate, m_bufferSize);
+    }
 }

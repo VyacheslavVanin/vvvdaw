@@ -7,6 +7,7 @@
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
 #include "BusPanelWidget.h"
+#include "PluginListWidget.h"
 #include "PluginWindow.h"
 #include "core/UndoStack.h"
 #include "core/TimeUtils.h"
@@ -46,12 +47,16 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
     setWindowTitle("vvvdaw — " + m_project.name());
     resize(1400, 800);
 
-    m_pluginManager.scanDirectories(
-        m_settings.pluginScanPaths.empty()
-            ? PluginManager::defaultScanPaths()
-            : m_settings.pluginScanPaths);
-    m_pluginManager.scanLV2();
     m_pluginManager.loadCache();
+    if (m_pluginManager.plugins().empty()) {
+        m_pluginManager.scanDirectories(
+            Settings().pluginScanPaths.empty()
+                ? PluginManager::defaultScanPaths()
+                : Settings().pluginScanPaths);
+        m_pluginManager.scanLV2();
+    } else {
+        m_pluginManager.ensureLV2Loaded();
+    }
     m_project.setPluginManager(&m_pluginManager);
 
     setupUi();
@@ -60,6 +65,7 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
 
     m_engine.setProject(&m_project);
     m_project.setSampleRate(m_engine.sampleRate());
+    m_engine.activateAllPlugins();
     rebuildTracks();
 }
 
@@ -637,6 +643,7 @@ void MainWindow::rebuildTracks() {
         row.panel->updateBusList(m_project.buses());
         row.panel->updateInputDeviceList(devices);
         row.panel->setPluginManager(&m_pluginManager);
+        row.panel->pluginList()->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
         row.panel->updateFromTrack();
         row.view = new TrackViewWidget(&track, m_trackContainer);
         row.view->setAlternateRow(odd);
@@ -828,7 +835,11 @@ void MainWindow::syncScrollPositions(int value) {
 void MainWindow::openPluginEditor(PluginInstance* plugin) {
     if (!plugin || !plugin->hasEditor()) return;
     for (auto* w : m_pluginWindows) {
-        if (w->isVisible()) continue;
+        if (w->plugin() == plugin && w->isVisible()) {
+            w->raise();
+            w->activateWindow();
+            return;
+        }
     }
     auto* window = new PluginWindow(plugin, this);
     m_pluginWindows.push_back(window);

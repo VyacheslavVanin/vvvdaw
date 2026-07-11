@@ -20,6 +20,7 @@ public:
 
     void scanDirectories(const std::vector<QString>& directories);
     void scanLV2();
+    void ensureLV2Loaded();
     void loadCache();
     void saveCache();
 

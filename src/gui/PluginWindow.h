@@ -15,6 +15,7 @@ public:
 
     void open();
     void close();
+    PluginInstance* plugin() const { return m_plugin; }
 
 signals:
     void windowClosed();

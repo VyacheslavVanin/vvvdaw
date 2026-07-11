@@ -21,6 +21,7 @@ public:
     void setTrack(Track* track);
     void setBus(AudioBus* bus);
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
+    void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
     void rebuild();
 
 signals:
@@ -44,6 +45,8 @@ private:
     Track* m_track = nullptr;
     AudioBus* m_bus = nullptr;
     PluginManager* m_pluginManager = nullptr;
+    double m_sampleRate = 48000;
+    int m_bufferSize = 512;
 
     QVBoxLayout* m_mainLayout = nullptr;
     QScrollArea* m_scrollArea = nullptr;

@@ -4,6 +4,7 @@
 #include <pluginterfaces/gui/iplugview.h>
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 #include <dlfcn.h>
+#include <filesystem>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -19,6 +20,7 @@ StateStream::~StateStream() = default;
 VST3Instance::VST3Instance() = default;
 
 VST3Instance::~VST3Instance() {
+    destroyEditor();
     deactivate();
     if (m_controllerCP && m_componentCP) {
         m_controllerCP->disconnect(m_componentCP);
@@ -31,7 +33,23 @@ VST3Instance::~VST3Instance() {
 }
 
 bool VST3Instance::load(const QString& path) {
-    m_dlHandle = dlopen(path.toUtf8().constData(), RTLD_NOW | RTLD_LOCAL);
+    std::string soPath;
+    namespace fs = std::filesystem;
+    fs::path bundlePath(path.toStdString());
+
+    if (fs::is_directory(bundlePath)) {
+        for (auto& sub : fs::recursive_directory_iterator(bundlePath)) {
+            if (sub.path().extension() == ".so") {
+                soPath = sub.path().string();
+                break;
+            }
+        }
+        if (soPath.empty()) return false;
+    } else {
+        soPath = path.toStdString();
+    }
+
+    m_dlHandle = dlopen(soPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!m_dlHandle) return false;
 
     using GetFactoryFunc = IPluginFactory* (*)();
@@ -239,15 +257,12 @@ std::vector<PluginPortInfo> VST3Instance::ports() const {
 }
 
 bool VST3Instance::hasEditor() const {
-    if (!m_controller) return false;
-    auto* view = m_controller->createView(ViewType::kEditor);
-    if (!view) return false;
-    view->release();
-    return true;
+    return m_controller != nullptr;
 }
 
 void* VST3Instance::createEditor(void* parentWindow) {
     if (!m_controller) return nullptr;
+    if (m_editorView) return parentWindow;
 
     auto* view = m_controller->createView(ViewType::kEditor);
     if (!view) return nullptr;
@@ -255,9 +270,10 @@ void* VST3Instance::createEditor(void* parentWindow) {
     view->setFrame(nullptr);
 
     if (view->isPlatformTypeSupported(kPlatformTypeX11EmbedWindowID) == kResultTrue) {
-        view->attached(parentWindow, kPlatformTypeX11EmbedWindowID);
+        m_editorView = view;
+        m_editorView->attached(parentWindow, kPlatformTypeX11EmbedWindowID);
         ViewRect rect;
-        view->getSize(&rect);
+        m_editorView->getSize(&rect);
         return parentWindow;
     }
 
@@ -266,22 +282,16 @@ void* VST3Instance::createEditor(void* parentWindow) {
 }
 
 void VST3Instance::destroyEditor() {
-    if (!m_controller) return;
-    auto* view = m_controller->createView(ViewType::kEditor);
-    if (view) {
-        view->removed();
-        view->release();
-    }
+    if (!m_editorView) return;
+    m_editorView->removed();
+    m_editorView->release();
+    m_editorView = nullptr;
 }
 
 void VST3Instance::resizeEditor(int width, int height) {
-    if (!m_controller) return;
-    auto* view = m_controller->createView(ViewType::kEditor);
-    if (view) {
-        ViewRect rect(0, 0, width, height);
-        view->onSize(&rect);
-        view->release();
-    }
+    if (!m_editorView) return;
+    ViewRect rect(0, 0, width, height);
+    m_editorView->onSize(&rect);
 }
 
 QJsonObject VST3Instance::stateToJson() const {

@@ -13,6 +13,7 @@
 
 class Project;
 class Track;
+class PluginChain;
 
 class AudioEngine {
 public:
@@ -49,6 +50,9 @@ public:
 
     void startRecording();
     void stopRecording();
+
+    void activateAllPlugins();
+    void activatePluginChain(PluginChain& chain);
 
 private:
     static int audioCallback(const void* input, void* output,

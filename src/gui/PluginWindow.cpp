@@ -26,12 +26,17 @@ PluginWindow::~PluginWindow() {
 }
 
 void PluginWindow::open() {
-    if (!m_plugin || !m_plugin->hasEditor()) return;
+    if (!m_plugin || !m_plugin->hasEditor()) {
+        deleteLater();
+        return;
+    }
 
     m_editorHandle = m_plugin->createEditor(reinterpret_cast<void*>(winId()));
     if (!m_editorHandle) {
         auto* label = findChild<QLabel*>();
-        if (label) label->setText("Plugin GUI not available");
+        if (label) label->setText("GUI not yet supported");
+        show();
+        return;
     }
     show();
 }

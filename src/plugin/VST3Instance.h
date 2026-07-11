@@ -4,6 +4,7 @@
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
+#include <pluginterfaces/gui/iplugview.h>
 #include "MemoryStream.h"
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 
@@ -57,4 +58,5 @@ private:
 
     Steinberg::Vst::HostApplication m_hostApp;
     bool m_separateController = false;
+    Steinberg::IPlugView* m_editorView = nullptr;
 };
