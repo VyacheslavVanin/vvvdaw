@@ -38,6 +38,9 @@ void PluginWindow::open() {
         show();
         return;
     }
+
+    auto* label = findChild<QLabel*>();
+    if (label) label->hide();
     show();
 }
 

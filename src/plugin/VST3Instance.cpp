@@ -28,10 +28,9 @@ VST3Instance::~VST3Instance() {
         m_controllerCP->disconnect(m_componentCP);
         m_componentCP->disconnect(m_controllerCP);
     }
+    m_audioProcessor = nullptr;
     m_controller = nullptr;
     m_component = nullptr;
-    m_audioProcessor = nullptr;
-    if (m_dlHandle) dlclose(m_dlHandle);
 }
 
 static bool findAudioProcessorUID(IPluginFactory* factory, const std::string& soPath, TUID outUID) {
@@ -297,8 +296,6 @@ void* VST3Instance::createEditor(void* parentWindow) {
 
     auto* view = m_controller->createView(ViewType::kEditor);
     if (!view) return nullptr;
-
-    view->setFrame(nullptr);
 
     if (view->isPlatformTypeSupported(kPlatformTypeX11EmbedWindowID) == kResultTrue) {
         m_editorView = view;
