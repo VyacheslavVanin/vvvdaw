@@ -36,6 +36,7 @@ public:
 
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
     void setSnapUnit(double samples) { m_snapUnit = samples; }
+    void setMouseWheelScroll(bool enabled) { m_mouseWheelScroll = enabled; }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
@@ -112,4 +113,5 @@ private:
 
     bool m_snapToGrid = true;
     double m_snapUnit = vvvdaw::DefaultSnapUnitSamples;
+    bool m_mouseWheelScroll = false;
 };

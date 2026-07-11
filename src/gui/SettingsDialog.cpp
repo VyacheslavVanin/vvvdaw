@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QCheckBox>
 
 SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget* parent)
     : QDialog(parent)
@@ -46,6 +47,10 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
     m_streamingThresholdSpin->setSuffix(" sec");
     m_streamingThresholdSpin->setValue(m_settings.streamingThresholdSec);
     form->addRow("Stream Threshold:", m_streamingThresholdSpin);
+
+    m_mouseWheelCheck = new QCheckBox(this);
+    m_mouseWheelCheck->setChecked(m_settings.mouseWheelScroll);
+    form->addRow("Mouse Wheel Scroll:", m_mouseWheelCheck);
 
     layout->addLayout(form);
     layout->addStretch();
@@ -116,6 +121,7 @@ void SettingsDialog::accept() {
     m_settings.inputChannel = m_inputChannelSpin->value();
     m_settings.outputChannel = m_outputChannelSpin->value();
     m_settings.streamingThresholdSec = m_streamingThresholdSpin->value();
+    m_settings.mouseWheelScroll = m_mouseWheelCheck->isChecked();
     m_settings.save();
 
     QDialog::accept();

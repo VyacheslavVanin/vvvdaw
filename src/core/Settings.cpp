@@ -14,6 +14,7 @@ Settings::Settings()
     , inputChannel(0)
     , outputChannel(0)
     , streamingThresholdSec(30)
+    , mouseWheelScroll(false)
 {
 }
 
@@ -50,6 +51,7 @@ QJsonObject Settings::toJson() const {
     obj["outputChannel"] = outputChannel;
     obj["lastProjectPath"] = lastProjectPath;
     obj["streamingThresholdSec"] = streamingThresholdSec;
+    obj["mouseWheelScroll"] = mouseWheelScroll;
     return obj;
 }
 
@@ -62,4 +64,5 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("outputChannel")) outputChannel = obj["outputChannel"].toInt();
     if (obj.contains("lastProjectPath")) lastProjectPath = obj["lastProjectPath"].toString();
     if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
+    if (obj.contains("mouseWheelScroll")) mouseWheelScroll = obj["mouseWheelScroll"].toBool(false);
 }

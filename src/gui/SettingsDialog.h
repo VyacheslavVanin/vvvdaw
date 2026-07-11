@@ -2,6 +2,7 @@
 #include <QDialog>
 #include <QComboBox>
 #include <QSpinBox>
+#include <QCheckBox>
 #include <vector>
 #include "core/Settings.h"
 
@@ -28,4 +29,5 @@ private:
     QSpinBox* m_inputChannelSpin;
     QSpinBox* m_outputChannelSpin;
     QSpinBox* m_streamingThresholdSpin;
+    QCheckBox* m_mouseWheelCheck;
 };

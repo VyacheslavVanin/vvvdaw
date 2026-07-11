@@ -519,6 +519,8 @@ void MainWindow::setupMenus() {
             m_engine.init(m_settings);
             m_engine.startStream();
             m_project.setSampleRate(m_engine.sampleRate());
+            for (auto& row : m_trackRows)
+                row.view->setMouseWheelScroll(m_settings.mouseWheelScroll);
         }
     });
 
@@ -629,6 +631,7 @@ void MainWindow::rebuildTracks() {
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
         row.view->setSnapToGrid(m_project.snapToGrid());
+        row.view->setMouseWheelScroll(m_settings.mouseWheelScroll);
 
         connect(row.view, &TrackViewWidget::zoomChanged, this, [this](double zoom) {
             m_zoom = zoom;

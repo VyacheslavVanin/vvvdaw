@@ -231,7 +231,6 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 }
 
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
-    int deltaX = static_cast<int>(event->angleDelta().x());
     int deltaY = static_cast<int>(event->angleDelta().y());
     if (event->modifiers() & Qt::ControlModifier && deltaY != 0) {
         double factor = 1.0 + (std::abs(deltaY) / 120.0) * (vvvdaw::ZoomFactor - 1.0);
@@ -239,8 +238,13 @@ void TrackViewWidget::wheelEvent(QWheelEvent* event) {
             setZoom(m_pixelsPerSample * factor);
         else
             setZoom(m_pixelsPerSample / factor);
-    } else if (deltaX != 0) {
-        setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * vvvdaw::ScrollStepSamples));
+    } else if (!m_mouseWheelScroll) {
+        int deltaX = static_cast<int>(event->angleDelta().x());
+        if (deltaX != 0)
+            setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * vvvdaw::ScrollStepSamples));
+    } else {
+        if (deltaY != 0)
+            setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaY * vvvdaw::ScrollStepSamples));
     }
     event->accept();
 }

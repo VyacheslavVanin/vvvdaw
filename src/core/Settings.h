@@ -16,6 +16,7 @@ public:
     int inputChannel;
     int outputChannel;
     int streamingThresholdSec;
+    bool mouseWheelScroll;
 
     QString lastProjectPath;
 
