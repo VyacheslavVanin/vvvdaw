@@ -1,6 +1,7 @@
 #include "VST3Instance.h"
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
+#include <pluginterfaces/vst/ivstparameterchanges.h>
 #include <pluginterfaces/gui/iplugview.h>
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 #include <dlfcn.h>
@@ -103,6 +104,48 @@ uint32 PLUGIN_API PluginFrame::addRef() { return 1; }
 uint32 PLUGIN_API PluginFrame::release() { return 0; }
 
 } // anonymous namespace
+
+// HostComponentHandler method implementations
+tresult PLUGIN_API HostComponentHandler::queryInterface(const TUID _iid, void** obj) {
+    if (FUnknownPrivate::iidEqual(_iid, FUnknown::iid) ||
+        FUnknownPrivate::iidEqual(_iid, IComponentHandler::iid)) {
+        *obj = static_cast<IComponentHandler*>(this);
+        addRef();
+        return kResultTrue;
+    }
+    *obj = nullptr;
+    return kResultFalse;
+}
+uint32 PLUGIN_API HostComponentHandler::addRef() { return 1; }
+uint32 PLUGIN_API HostComponentHandler::release() { return 0; }
+
+// HostParamValueQueue method implementations
+tresult PLUGIN_API HostParamValueQueue::queryInterface(const TUID _iid, void** obj) {
+    if (FUnknownPrivate::iidEqual(_iid, FUnknown::iid) ||
+        FUnknownPrivate::iidEqual(_iid, IParamValueQueue::iid)) {
+        *obj = static_cast<IParamValueQueue*>(this);
+        addRef();
+        return kResultTrue;
+    }
+    *obj = nullptr;
+    return kResultFalse;
+}
+uint32 PLUGIN_API HostParamValueQueue::addRef() { return 1; }
+uint32 PLUGIN_API HostParamValueQueue::release() { return 0; }
+
+// HostParameterChanges method implementations
+tresult PLUGIN_API HostParameterChanges::queryInterface(const TUID _iid, void** obj) {
+    if (FUnknownPrivate::iidEqual(_iid, FUnknown::iid) ||
+        FUnknownPrivate::iidEqual(_iid, IParameterChanges::iid)) {
+        *obj = static_cast<IParameterChanges*>(this);
+        addRef();
+        return kResultTrue;
+    }
+    *obj = nullptr;
+    return kResultFalse;
+}
+uint32 PLUGIN_API HostParameterChanges::addRef() { return 1; }
+uint32 PLUGIN_API HostParameterChanges::release() { return 0; }
 
 StateStream::StateStream() = default;
 StateStream::~StateStream() = default;
@@ -248,6 +291,37 @@ bool VST3Instance::load(const QString& path) {
         }
     }
 
+    if (m_controller) {
+        m_componentHandler.setController(m_controller.get());
+        m_controller->setComponentHandler(&m_componentHandler);
+    }
+
+    if (m_component) {
+        int32 nIn = m_component->getBusCount(kAudio, kInput);
+        for (int32 i = 0; i < nIn; ++i)
+            m_component->activateBus(kAudio, kInput, i, true);
+        int32 nOut = m_component->getBusCount(kAudio, kOutput);
+        for (int32 i = 0; i < nOut; ++i)
+            m_component->activateBus(kAudio, kOutput, i, true);
+
+        m_inputBusChannels.clear();
+        for (int32 i = 0; i < nIn; ++i) {
+            BusInfo bi{};
+            if (m_component->getBusInfo(kAudio, kInput, i, bi) == kResultTrue)
+                m_inputBusChannels.push_back(bi.channelCount);
+            else
+                m_inputBusChannels.push_back(2);
+        }
+        m_outputBusChannels.clear();
+        for (int32 i = 0; i < nOut; ++i) {
+            BusInfo bi{};
+            if (m_component->getBusInfo(kAudio, kOutput, i, bi) == kResultTrue)
+                m_outputBusChannels.push_back(bi.channelCount);
+            else
+                m_outputBusChannels.push_back(2);
+        }
+    }
+
     m_filePath = path;
     return true;
 }
@@ -299,21 +373,46 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     outBus.silenceFlags = 0;
     outBus.channelBuffers32 = outputBuffers;
 
+    int32 numInBuses = m_component ? m_component->getBusCount(kAudio, kInput) : 1;
+    int32 numOutBuses = m_component ? m_component->getBusCount(kAudio, kOutput) : 1;
+    if (numInBuses < 1) numInBuses = 1;
+    if (numOutBuses < 1) numOutBuses = 1;
+
+    if (!m_outputBusChannels.empty())
+        outBus.numChannels = m_outputBusChannels[0];
+    if (!m_inputBusChannels.empty())
+        inBus.numChannels = m_inputBusChannels[0];
+
     ProcessData data;
     data.processMode = kRealtime;
     data.symbolicSampleSize = kSample32;
     data.numSamples = numSamples;
-    data.numInputs = 1;
-    data.numOutputs = 1;
+    data.numInputs = numInBuses;
+    data.numOutputs = numOutBuses;
     data.inputs = &inBus;
     data.outputs = &outBus;
     data.inputParameterChanges = nullptr;
-    data.outputParameterChanges = nullptr;
+    data.outputParameterChanges = &m_outputParamChanges;
+    m_outputParamChanges.clear();
     data.inputEvents = nullptr;
     data.outputEvents = nullptr;
     data.processContext = nullptr;
 
-    return m_audioProcessor->process(data) == kResultTrue;
+    tresult result = m_audioProcessor->process(data);
+
+    if (result == kResultTrue && m_controller) {
+        for (int32 i = 0; i < m_outputParamChanges.getParameterCount(); ++i) {
+            auto* queue = m_outputParamChanges.getParameterData(i);
+            if (queue && queue->getPointCount() > 0) {
+                int32 offset;
+                ParamValue value;
+                queue->getPoint(queue->getPointCount() - 1, offset, value);
+                m_controller->setParamNormalized(queue->getParameterId(), value);
+            }
+        }
+    }
+
+    return result == kResultTrue;
 }
 
 QString VST3Instance::name() const { return m_name; }
