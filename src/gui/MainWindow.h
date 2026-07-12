@@ -51,6 +51,8 @@ private:
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);
 
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
     Project& m_project;
     AudioEngine& m_engine;
     Settings& m_settings;
@@ -68,6 +70,10 @@ private:
     QWidget* m_rulerSpacer1 = nullptr;
     QWidget* m_rulerSpacer2 = nullptr;
     QWidget* m_scrollSpacer = nullptr;
+    QWidget* m_busPanelGrip = nullptr;
+    bool m_gripDragging = false;
+    int m_gripStartY = 0;
+    int m_gripStartHeight = 0;
 
     struct TrackRow {
         TrackPanelWidget* panel = nullptr;

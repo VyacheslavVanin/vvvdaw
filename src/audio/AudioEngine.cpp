@@ -478,6 +478,11 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         }
     }
 
+    bool anyBusSolo = false;
+    for (const auto& bus : proj->buses()) {
+        if (bus.solo) { anyBusSolo = true; break; }
+    }
+
     for (int idx : m_busProcessOrder) {
         const auto& bus = proj->buses()[idx];
 
@@ -495,6 +500,9 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                 buf[f * 2 + 1] = m_busDeinterleaveR[f];
             }
         }
+
+        if (bus.muted) continue;
+        if (anyBusSolo && !bus.solo) continue;
 
         auto [bLeftGain, bRightGain] = panGains(bus.pan);
         float bVol = bus.volume;

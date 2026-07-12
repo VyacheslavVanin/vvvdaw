@@ -4,6 +4,7 @@
 #include "model/AudioBus.h"
 #include "plugin/PluginChain.h"
 #include "plugin/PluginInstance.h"
+#include "plugin/PluginManager.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -35,7 +36,6 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setWidgetResizable(true);
-    setFixedHeight(300);
 
     m_container = new QWidget(this);
     m_container->setAutoFillBackground(true);
@@ -200,6 +200,9 @@ void BusPanelWidget::rebuild() {
 
         row.pluginList = new PluginListWidget(row.widget);
         row.pluginList->setBus(const_cast<AudioBus*>(&bus));
+        row.pluginList->setPluginManager(m_pluginManager);
+        row.pluginList->setAudioParams(m_sampleRate, m_bufferSize);
+        row.pluginList->rebuild();
         connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
                 [this, busIndex](PluginInstance* plugin) {
             emit openBusPluginEditorRequested(busIndex, plugin);

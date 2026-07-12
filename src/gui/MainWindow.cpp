@@ -23,6 +23,7 @@
 
 using vvvdaw::TransportState;
 #include <QApplication>
+#include <QMouseEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -206,44 +207,6 @@ void MainWindow::setupUi() {
         m_engine.setPrecountEnabled(on);
     });
 
-    // Bus panel
-    m_busPanel = new BusPanelWidget(m_project, this);
-    m_busPanel->hide();
-    layout->addWidget(m_busPanel);
-
-    connect(m_busPanel, &BusPanelWidget::addBusRequested, this, [this] {
-        pushUndoState();
-        AudioBus newBus;
-        newBus.name = QString("Bus %1").arg(m_project.buses().size());
-        newBus.volume = 1.0f;
-        newBus.pan = 0.0f;
-        newBus.outputBusIndex = 0;
-        m_project.addBus(std::move(newBus));
-        m_busPanel->rebuild();
-        refreshBusCombos();
-    });
-
-    connect(m_busPanel, &BusPanelWidget::removeBusRequested, this, [this](int index) {
-        if (index <= 0 || index >= static_cast<int>(m_project.buses().size()))
-            return;
-        if (!m_project.buses()[index].removable)
-            return;
-        pushUndoState();
-        m_project.removeBus(index);
-        m_busPanel->rebuild();
-        refreshBusCombos();
-    });
-
-    connect(m_busPanel, &BusPanelWidget::busChanged, this, [this] {
-        pushUndoState();
-    });
-
-    connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
-            [this](int busIndex, PluginInstance* plugin) {
-        Q_UNUSED(busIndex);
-        openPluginEditor(plugin);
-    });
-
     // Track scroll area
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -279,6 +242,57 @@ void MainWindow::setupUi() {
     scrollRow->addWidget(m_scrollSpacer);
     scrollRow->addWidget(m_horizontalScroll);
     layout->addLayout(scrollRow);
+
+    // Bus panel grip (draggable resize handle)
+    m_busPanelGrip = new QWidget(this);
+    m_busPanelGrip->setFixedHeight(6);
+    m_busPanelGrip->setCursor(Qt::SizeVerCursor);
+    m_busPanelGrip->setStyleSheet("background-color: #555;:hover { background-color: #777; }");
+    layout->addWidget(m_busPanelGrip);
+
+    // Bus panel
+    m_busPanel = new BusPanelWidget(m_project, this);
+    m_busPanel->setPluginManager(&m_pluginManager);
+    m_busPanel->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
+    m_busPanel->setFixedHeight(200);
+    m_busPanel->hide();
+    m_busPanelGrip->hide();
+    layout->addWidget(m_busPanel);
+
+    connect(m_busPanel, &BusPanelWidget::addBusRequested, this, [this] {
+        pushUndoState();
+        AudioBus newBus;
+        newBus.name = QString("Bus %1").arg(m_project.buses().size());
+        newBus.volume = 1.0f;
+        newBus.pan = 0.0f;
+        newBus.outputBusIndex = 0;
+        m_project.addBus(std::move(newBus));
+        m_busPanel->rebuild();
+        refreshBusCombos();
+    });
+
+    connect(m_busPanel, &BusPanelWidget::removeBusRequested, this, [this](int index) {
+        if (index <= 0 || index >= static_cast<int>(m_project.buses().size()))
+            return;
+        if (!m_project.buses()[index].removable)
+            return;
+        pushUndoState();
+        m_project.removeBus(index);
+        m_busPanel->rebuild();
+        refreshBusCombos();
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busChanged, this, [this] {
+        pushUndoState();
+    });
+
+    connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
+            [this](int busIndex, PluginInstance* plugin) {
+        Q_UNUSED(busIndex);
+        openPluginEditor(plugin);
+    });
+
+    m_busPanelGrip->installEventFilter(this);
 
     setCentralWidget(central);
 
@@ -527,6 +541,7 @@ void MainWindow::setupMenus() {
     toggleBusPanelAction->setChecked(false);
     connect(toggleBusPanelAction, &QAction::triggered, this, [this](bool checked) {
         m_busPanel->setVisible(checked);
+        m_busPanelGrip->setVisible(checked);
         if (checked)
             m_busPanel->rebuild();
     });
@@ -905,6 +920,29 @@ void MainWindow::syncScrollPositions(int value) {
     m_measureRuler->setScrollOffset(m_scrollOffset);
     for (auto& row : m_trackRows)
         row.view->setScrollOffset(m_scrollOffset);
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_busPanelGrip) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+            m_gripDragging = true;
+            m_gripStartY = me->globalPosition().toPoint().y();
+            m_gripStartHeight = m_busPanel->height();
+            return true;
+        }
+        if (event->type() == QEvent::MouseMove && m_gripDragging) {
+            int delta = m_gripStartY - me->globalPosition().toPoint().y();
+            int newH = qBound(80, m_gripStartHeight + delta, 600);
+            m_busPanel->setFixedHeight(newH);
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonRelease) {
+            m_gripDragging = false;
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
 }
 
 void MainWindow::openPluginEditor(PluginInstance* plugin) {

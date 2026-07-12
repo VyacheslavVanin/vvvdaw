@@ -12,6 +12,7 @@ class Project;
 struct AudioBus;
 class PluginInstance;
 class PluginListWidget;
+class PluginManager;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -19,6 +20,8 @@ public:
     explicit BusPanelWidget(Project& project, QWidget* parent = nullptr);
 
     void rebuild();
+    void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
+    void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
 
 signals:
     void busChanged();
@@ -42,6 +45,9 @@ private:
     };
 
     Project& m_project;
+    PluginManager* m_pluginManager = nullptr;
+    double m_sampleRate = 48000;
+    int m_bufferSize = 512;
     QWidget* m_container = nullptr;
     QHBoxLayout* m_containerLayout = nullptr;
     std::vector<BusRow> m_busRows;
