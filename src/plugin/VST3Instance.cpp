@@ -119,6 +119,14 @@ tresult PLUGIN_API HostComponentHandler::queryInterface(const TUID _iid, void** 
 uint32 PLUGIN_API HostComponentHandler::addRef() { return 1; }
 uint32 PLUGIN_API HostComponentHandler::release() { return 0; }
 
+tresult PLUGIN_API HostComponentHandler::performEdit(ParamID id, ParamValue value) {
+    if (m_controller)
+        m_controller->setParamNormalized(id, value);
+    if (m_instance)
+        m_instance->queueInputParamChange(id, value);
+    return kResultTrue;
+}
+
 // HostParamValueQueue method implementations
 tresult PLUGIN_API HostParamValueQueue::queryInterface(const TUID _iid, void** obj) {
     if (FUnknownPrivate::iidEqual(_iid, FUnknown::iid) ||
@@ -146,6 +154,16 @@ tresult PLUGIN_API HostParameterChanges::queryInterface(const TUID _iid, void** 
 }
 uint32 PLUGIN_API HostParameterChanges::addRef() { return 1; }
 uint32 PLUGIN_API HostParameterChanges::release() { return 0; }
+
+// VST3Instance
+
+void VST3Instance::queueInputParamChange(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) {
+    std::lock_guard<std::mutex> lock(m_paramMutex);
+    Steinberg::int32 idx;
+    auto* q = m_inputParamChanges.addParameterData(id, idx);
+    Steinberg::int32 pointIdx;
+    q->addPoint(0, value, pointIdx);
+}
 
 StateStream::StateStream() = default;
 StateStream::~StateStream() = default;
@@ -293,6 +311,7 @@ bool VST3Instance::load(const QString& path) {
 
     if (m_controller) {
         m_componentHandler.setController(m_controller.get());
+        m_componentHandler.setInstance(this);
         m_controller->setComponentHandler(&m_componentHandler);
     }
 
@@ -392,6 +411,11 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     data.inputs = &inBus;
     data.outputs = &outBus;
     data.inputParameterChanges = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        if (m_inputParamChanges.getParameterCount() > 0)
+            data.inputParameterChanges = &m_inputParamChanges;
+    }
     data.outputParameterChanges = &m_outputParamChanges;
     m_outputParamChanges.clear();
     data.inputEvents = nullptr;
@@ -399,6 +423,11 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     data.processContext = nullptr;
 
     tresult result = m_audioProcessor->process(data);
+
+    {
+        std::lock_guard<std::mutex> lock(m_paramMutex);
+        m_inputParamChanges.clear();
+    }
 
     if (result == kResultTrue && m_controller) {
         for (int32 i = 0; i < m_outputParamChanges.getParameterCount(); ++i) {

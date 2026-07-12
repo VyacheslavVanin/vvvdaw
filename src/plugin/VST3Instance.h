@@ -1,6 +1,7 @@
 #pragma once
 #include "PluginInstance.h"
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
@@ -10,16 +11,15 @@
 #include "MemoryStream.h"
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 
+class VST3Instance;
+
 class HostComponentHandler : public Steinberg::Vst::IComponentHandler {
 public:
     void setController(Steinberg::Vst::IEditController* ctrl) { m_controller = ctrl; }
+    void setInstance(VST3Instance* inst) { m_instance = inst; }
 
     Steinberg::tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID) override { return Steinberg::kResultTrue; }
-    Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) override {
-        if (m_controller)
-            m_controller->setParamNormalized(id, value);
-        return Steinberg::kResultTrue;
-    }
+    Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) override;
     Steinberg::tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID) override { return Steinberg::kResultTrue; }
     Steinberg::tresult PLUGIN_API restartComponent(Steinberg::int32) override { return Steinberg::kResultTrue; }
 
@@ -27,6 +27,7 @@ public:
 
 private:
     Steinberg::Vst::IEditController* m_controller = nullptr;
+    VST3Instance* m_instance = nullptr;
 };
 
 class HostParamValueQueue : public Steinberg::Vst::IParamValueQueue {
@@ -136,6 +137,8 @@ public:
     QJsonObject stateToJson() const override;
     void stateFromJson(const QJsonObject& json) override;
 
+    void queueInputParamChange(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value);
+
 private:
     bool m_enabled = true;
     bool m_active = false;
@@ -161,6 +164,8 @@ private:
 
     HostComponentHandler m_componentHandler;
     HostParameterChanges m_outputParamChanges;
+    HostParameterChanges m_inputParamChanges;
+    std::mutex m_paramMutex;
 
     std::vector<Steinberg::int32> m_inputBusChannels;
     std::vector<Steinberg::int32> m_outputBusChannels;
