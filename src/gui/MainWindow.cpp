@@ -620,12 +620,21 @@ void MainWindow::rebuildTracks() {
             row.panel->hide();
             row.panel->deleteLater();
         }
+        if (row.pluginList) {
+            row.pluginList->hide();
+            row.pluginList->deleteLater();
+        }
         if (row.view) {
             row.view->hide();
             row.view->deleteLater();
         }
+        if (row.innerSplitter) {
+            row.innerSplitter->hide();
+            row.innerSplitter->deleteLater();
+        }
     }
     m_trackRows.clear();
+    m_trackSplitters.clear();
 
     while (auto* item = m_trackLayout->takeAt(0)) {
         if (auto* w = item->widget()) {
@@ -644,9 +653,14 @@ void MainWindow::rebuildTracks() {
         row.panel->setAlternateRow(odd);
         row.panel->updateBusList(m_project.buses());
         row.panel->updateInputDeviceList(devices);
-        row.panel->setPluginManager(&m_pluginManager);
-        row.panel->pluginList()->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
         row.panel->updateFromTrack();
+
+        row.pluginList = new PluginListWidget(m_trackContainer);
+        row.pluginList->setTrack(&track);
+        row.pluginList->setPluginManager(&m_pluginManager);
+        row.pluginList->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
+        row.pluginList->rebuild();
+
         row.view = new TrackViewWidget(&track, m_trackContainer);
         row.view->setAlternateRow(odd);
         row.view->setZoom(m_zoom);
@@ -677,10 +691,10 @@ void MainWindow::rebuildTracks() {
             pushUndoState();
         });
 
-        connect(row.panel, &TrackPanelWidget::openPluginEditorRequested, this,
+        connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
                 &MainWindow::openPluginEditor);
 
-        connect(row.panel, &TrackPanelWidget::pluginWillBeRemoved, this,
+        connect(row.pluginList, &PluginListWidget::pluginWillBeRemoved, this,
                 [this](PluginInstance* plugin) {
             std::vector<PluginWindow*> toClose;
             for (auto* w : m_pluginWindows) {
@@ -760,18 +774,29 @@ void MainWindow::rebuildTracks() {
             m_horizontalScroll->blockSignals(false);
         });
 
-        auto* splitter = new QSplitter(Qt::Horizontal, m_trackContainer);
-        splitter->setContentsMargins(0, 0, 0, 0);
-        splitter->addWidget(row.panel);
-        splitter->addWidget(row.view);
-        splitter->setStretchFactor(0, 0);
-        splitter->setStretchFactor(1, 1);
-        splitter->setSizes({400, 600});
-        m_trackLayout->addWidget(splitter);
+        row.innerSplitter = new QSplitter(Qt::Horizontal, m_trackContainer);
+        row.innerSplitter->setContentsMargins(0, 0, 0, 0);
+        row.innerSplitter->addWidget(row.pluginList);
+        row.innerSplitter->addWidget(row.view);
+        row.innerSplitter->setStretchFactor(0, 0);
+        row.innerSplitter->setStretchFactor(1, 1);
+        row.innerSplitter->setSizes({200, 800});
 
-        connect(splitter, &QSplitter::splitterMoved, this, [this](int pos, int index) {
+        int splitterIndex = static_cast<int>(m_trackSplitters.size());
+        m_trackSplitters.push_back(row.innerSplitter);
+
+        auto* hbox = new QHBoxLayout;
+        hbox->setContentsMargins(0, 0, 0, 0);
+        hbox->setSpacing(0);
+        hbox->addWidget(row.panel);
+        hbox->addWidget(row.innerSplitter, 1);
+        m_trackLayout->addLayout(hbox);
+
+        connect(row.innerSplitter, &QSplitter::splitterMoved, this,
+                [this, splitterIndex](int pos, int index) {
             Q_UNUSED(index);
-            updateRulerSpacers(pos);
+            Q_UNUSED(pos);
+            syncPluginListSplitters(splitterIndex);
         });
 
         m_trackRows.push_back(row);
@@ -849,6 +874,26 @@ void MainWindow::updateRulerSpacers(int panelWidth) {
     m_rulerSpacer1->setFixedWidth(panelWidth);
     m_rulerSpacer2->setFixedWidth(panelWidth);
     m_scrollSpacer->setFixedWidth(panelWidth);
+}
+
+void MainWindow::syncPluginListSplitters(int senderIndex) {
+    if (m_syncingSplitters) return;
+    m_syncingSplitters = true;
+
+    if (senderIndex >= 0 && senderIndex < static_cast<int>(m_trackSplitters.size())) {
+        auto* sender = m_trackSplitters[senderIndex];
+        QList<int> sizes = sender->sizes();
+        int pluginWidth = sizes.value(0, 200);
+
+        for (auto* spl : m_trackSplitters) {
+            if (spl != sender) {
+                spl->setSizes({pluginWidth, 1000});
+            }
+        }
+        updateRulerSpacers(200 + pluginWidth);
+    }
+
+    m_syncingSplitters = false;
 }
 
 void MainWindow::syncScrollPositions(int value) {

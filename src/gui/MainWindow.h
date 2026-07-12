@@ -22,6 +22,8 @@ class TrackViewWidget;
 class BusPanelWidget;
 class PluginWindow;
 class PluginInstance;
+class PluginListWidget;
+class QSplitter;
 class QVBoxLayout;
 
 class MainWindow : public QMainWindow {
@@ -47,6 +49,7 @@ private:
     void applyState(const std::optional<QJsonObject>& state);
     void openPluginEditor(PluginInstance* plugin);
     void updateRulerSpacers(int panelWidth);
+    void syncPluginListSplitters(int senderIndex);
 
     Project& m_project;
     AudioEngine& m_engine;
@@ -68,11 +71,15 @@ private:
 
     struct TrackRow {
         TrackPanelWidget* panel = nullptr;
+        PluginListWidget* pluginList = nullptr;
         TrackViewWidget* view = nullptr;
+        QSplitter* innerSplitter = nullptr;
     };
     std::vector<TrackRow> m_trackRows;
 
     std::vector<PluginWindow*> m_pluginWindows;
+    std::vector<QSplitter*> m_trackSplitters;
+    bool m_syncingSplitters = false;
 
     double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;

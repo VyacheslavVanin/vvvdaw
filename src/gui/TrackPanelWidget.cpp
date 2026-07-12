@@ -1,5 +1,4 @@
 #include "TrackPanelWidget.h"
-#include "PluginListWidget.h"
 #include "plugin/PluginInstance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
@@ -14,17 +13,11 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     : QWidget(parent)
     , m_track(track)
 {
-    setMinimumHeight(60);
+    setFixedWidth(200);
 
-    auto* rootLayout = new QHBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
-    rootLayout->setSpacing(0);
-
-    auto* controlsWidget = new QWidget(this);
-    controlsWidget->setFixedWidth(200);
-    auto* layout = new QVBoxLayout(controlsWidget);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->setSpacing(2);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(3, 2, 3, 2);
+    layout->setSpacing(1);
 
     auto* topRow = new QHBoxLayout;
     m_nameEdit = new QLineEdit(track ? track->name() : "Track", this);
@@ -50,7 +43,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     auto makeBtn = [&](const QString& text, const QString& style) {
         auto* btn = new QPushButton(text, this);
-        btn->setFixedSize(22, 22);
+        btn->setFixedSize(20, 16);
         btn->setCheckable(true);
         btn->setStyleSheet(style);
         topRow->addWidget(btn);
@@ -99,7 +92,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     m_panSlider = new QSlider(Qt::Horizontal, this);
     m_panSlider->setRange(-100, 100);
     m_panSlider->setValue(0);
-    m_panSlider->setFixedHeight(14);
+    m_panSlider->setFixedHeight(10);
     m_panSlider->setStyleSheet(
         "QSlider::groove:horizontal { background: #444; height: 4px; border-radius: 2px; }"
         "QSlider::handle:horizontal { background: #aaa; width: 10px; margin: -4px 0; border-radius: 5px; }"
@@ -115,7 +108,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     m_volumeSlider = new QSlider(Qt::Horizontal, this);
     m_volumeSlider->setRange(0, 100);
     m_volumeSlider->setValue(80);
-    m_volumeSlider->setFixedHeight(14);
+    m_volumeSlider->setFixedHeight(10);
     m_volumeSlider->setStyleSheet(
         "QSlider::groove:horizontal { background: #444; height: 4px; border-radius: 2px; }"
         "QSlider::handle:horizontal { background: #aaa; width: 10px; margin: -4px 0; border-radius: 5px; }"
@@ -149,17 +142,6 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     );
     outRow->addWidget(m_outputBusCombo, 1);
     layout->addLayout(outRow);
-
-    layout->addStretch();
-
-    rootLayout->addWidget(controlsWidget);
-
-    m_pluginList = new PluginListWidget(this);
-    m_pluginList->setTrack(m_track);
-    m_pluginList->rebuild();
-    connect(m_pluginList, &PluginListWidget::openEditorRequested, this, &TrackPanelWidget::openPluginEditorRequested);
-    connect(m_pluginList, &PluginListWidget::pluginWillBeRemoved, this, &TrackPanelWidget::pluginWillBeRemoved);
-    rootLayout->addWidget(m_pluginList, 1);
 
     connect(m_armButton, &QPushButton::toggled, this, [this](bool checked) {
         if (m_track) m_track->setRecordArmed(checked);
@@ -255,10 +237,6 @@ void TrackPanelWidget::updateInputDeviceList(const std::vector<DeviceInfo>& devi
         ++comboIdx;
     }
     m_inputDeviceCombo->setCurrentIndex(selectIdx);
-}
-
-void TrackPanelWidget::setPluginManager(PluginManager* pm) {
-    if (m_pluginList) m_pluginList->setPluginManager(pm);
 }
 
 void TrackPanelWidget::setAlternateRow(bool alternate) {

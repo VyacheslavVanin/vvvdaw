@@ -33,13 +33,14 @@ PluginListWidget::PluginListWidget(QWidget* parent)
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(true);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
+    m_scrollArea->setMinimumHeight(0);
+    m_scrollArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     m_container = new QWidget();
     m_container->setAcceptDrops(true);
     m_containerLayout = new QVBoxLayout(m_container);
     m_containerLayout->setContentsMargins(2, 2, 2, 2);
     m_containerLayout->setSpacing(1);
-    m_containerLayout->addStretch();
 
     m_scrollArea->setWidget(m_container);
     m_mainLayout->addWidget(m_scrollArea, 1);
