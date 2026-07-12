@@ -11,6 +11,7 @@
 class Project;
 struct AudioBus;
 class PluginInstance;
+class PluginListWidget;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -32,10 +33,12 @@ private:
     struct BusRow {
         QWidget* widget = nullptr;
         QLineEdit* nameEdit = nullptr;
+        QPushButton* soloButton = nullptr;
+        QPushButton* muteButton = nullptr;
         QComboBox* outCombo = nullptr;
         QSlider* panSlider = nullptr;
         QSlider* volumeSlider = nullptr;
-        QPushButton* fxButton = nullptr;
+        PluginListWidget* pluginList = nullptr;
     };
 
     Project& m_project;

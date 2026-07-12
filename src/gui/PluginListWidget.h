@@ -5,6 +5,8 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QMenu>
+#include <QPoint>
+#include <QPointF>
 #include <vector>
 
 class PluginChain;
@@ -32,16 +34,20 @@ signals:
     void openEditorRequested(PluginInstance* plugin);
     void scanRequested();
 
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
 private slots:
     void onAddClicked();
     void onRemoveClicked(int index);
-    void onEditorClicked(int index);
-    void onMoveUpClicked(int index);
-    void onMoveDownClicked(int index);
 
 private:
     void buildRow(PluginInstance* plugin, int index);
     PluginChain* targetChain() const;
+    int rowAtPos(const QPoint& pos) const;
 
     Track* m_track = nullptr;
     AudioBus* m_bus = nullptr;
@@ -56,4 +62,6 @@ private:
     QPushButton* m_addButton = nullptr;
 
     std::vector<QWidget*> m_rows;
+    int m_dragFromIndex = -1;
+    QPointF m_dragStartPos;
 };

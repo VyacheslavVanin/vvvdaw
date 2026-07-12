@@ -249,6 +249,8 @@ QJsonObject Project::toJson() const {
         bObj["pan"] = bus.pan;
         bObj["volume"] = bus.volume;
         bObj["outputBusIndex"] = bus.outputBusIndex;
+        bObj["solo"] = bus.solo;
+        bObj["muted"] = bus.muted;
         bObj["removable"] = bus.removable;
         if (bus.pluginChain.count() > 0)
             bObj["plugins"] = bus.pluginChain.toJson();
@@ -353,6 +355,8 @@ void Project::fromJson(const QJsonObject& obj) {
             bus.pan = static_cast<float>(bObj["pan"].toDouble(0.0));
             bus.volume = static_cast<float>(bObj["volume"].toDouble(1.0));
             bus.outputBusIndex = bObj["outputBusIndex"].toInt(0);
+            bus.solo = bObj["solo"].toBool(false);
+            bus.muted = bObj["muted"].toBool(false);
             bus.removable = bObj["removable"].toBool(true);
             if (bObj.contains("plugins"))
                 bus.pluginChain.fromJson(bObj["plugins"].toObject(), m_pluginManager);

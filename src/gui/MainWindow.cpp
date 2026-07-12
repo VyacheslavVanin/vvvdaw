@@ -88,11 +88,11 @@ void MainWindow::setupUi() {
     auto* rulerRow1 = new QHBoxLayout;
     rulerRow1->setContentsMargins(0, 0, 0, 0);
     rulerRow1->setSpacing(0);
-    auto* rulerSpacer1 = new QWidget(this);
-    rulerSpacer1->setFixedWidth(200);
-    rulerSpacer1->setStyleSheet("background-color: #2a2a2a;");
+    m_rulerSpacer1 = new QWidget(this);
+    m_rulerSpacer1->setFixedWidth(400);
+    m_rulerSpacer1->setStyleSheet("background-color: #2a2a2a;");
     m_timelineRuler = new TimelineRuler(this);
-    rulerRow1->addWidget(rulerSpacer1);
+    rulerRow1->addWidget(m_rulerSpacer1);
     rulerRow1->addWidget(m_timelineRuler, 1);
     layout->addLayout(rulerRow1);
 
@@ -100,11 +100,11 @@ void MainWindow::setupUi() {
     auto* rulerRow2 = new QHBoxLayout;
     rulerRow2->setContentsMargins(0, 0, 0, 0);
     rulerRow2->setSpacing(0);
-    auto* rulerSpacer2 = new QWidget(this);
-    rulerSpacer2->setFixedWidth(200);
-    rulerSpacer2->setStyleSheet("background-color: #252525;");
+    m_rulerSpacer2 = new QWidget(this);
+    m_rulerSpacer2->setFixedWidth(400);
+    m_rulerSpacer2->setStyleSheet("background-color: #252525;");
     m_measureRuler = new MeasureRuler(this);
-    rulerRow2->addWidget(rulerSpacer2);
+    rulerRow2->addWidget(m_rulerSpacer2);
     rulerRow2->addWidget(m_measureRuler, 1);
     layout->addLayout(rulerRow2);
 
@@ -238,6 +238,12 @@ void MainWindow::setupUi() {
         pushUndoState();
     });
 
+    connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
+            [this](int busIndex, PluginInstance* plugin) {
+        Q_UNUSED(busIndex);
+        openPluginEditor(plugin);
+    });
+
     // Track scroll area
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -267,10 +273,10 @@ void MainWindow::setupUi() {
     auto* scrollRow = new QHBoxLayout;
     scrollRow->setContentsMargins(0, 0, 0, 0);
     scrollRow->setSpacing(0);
-    auto* scrollSpacer = new QWidget(this);
-    scrollSpacer->setFixedWidth(200);
-    scrollSpacer->setStyleSheet("background-color: #2a2a2a;");
-    scrollRow->addWidget(scrollSpacer);
+    m_scrollSpacer = new QWidget(this);
+    m_scrollSpacer->setFixedWidth(400);
+    m_scrollSpacer->setStyleSheet("background-color: #2a2a2a;");
+    scrollRow->addWidget(m_scrollSpacer);
     scrollRow->addWidget(m_horizontalScroll);
     layout->addLayout(scrollRow);
 
@@ -754,12 +760,19 @@ void MainWindow::rebuildTracks() {
             m_horizontalScroll->blockSignals(false);
         });
 
-        auto* hbox = new QHBoxLayout;
-        hbox->setContentsMargins(0, 0, 0, 0);
-        hbox->setSpacing(0);
-        hbox->addWidget(row.panel);
-        hbox->addWidget(row.view, 1);
-        m_trackLayout->addLayout(hbox);
+        auto* splitter = new QSplitter(Qt::Horizontal, m_trackContainer);
+        splitter->setContentsMargins(0, 0, 0, 0);
+        splitter->addWidget(row.panel);
+        splitter->addWidget(row.view);
+        splitter->setStretchFactor(0, 0);
+        splitter->setStretchFactor(1, 1);
+        splitter->setSizes({400, 600});
+        m_trackLayout->addWidget(splitter);
+
+        connect(splitter, &QSplitter::splitterMoved, this, [this](int pos, int index) {
+            Q_UNUSED(index);
+            updateRulerSpacers(pos);
+        });
 
         m_trackRows.push_back(row);
     }
@@ -829,6 +842,13 @@ void MainWindow::syncZoom() {
     m_measureRuler->setZoom(m_zoom);
     for (auto& row : m_trackRows)
         row.view->setZoom(m_zoom);
+}
+
+void MainWindow::updateRulerSpacers(int panelWidth) {
+    if (panelWidth < 100) panelWidth = 100;
+    m_rulerSpacer1->setFixedWidth(panelWidth);
+    m_rulerSpacer2->setFixedWidth(panelWidth);
+    m_scrollSpacer->setFixedWidth(panelWidth);
 }
 
 void MainWindow::syncScrollPositions(int value) {

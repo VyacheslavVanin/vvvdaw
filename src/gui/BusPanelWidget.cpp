@@ -1,4 +1,5 @@
 #include "BusPanelWidget.h"
+#include "PluginListWidget.h"
 #include "model/Project.h"
 #include "model/AudioBus.h"
 #include "plugin/PluginChain.h"
@@ -31,10 +32,10 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     : QScrollArea(parent)
     , m_project(project)
 {
-    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setWidgetResizable(true);
-    setFixedHeight(200);
+    setFixedHeight(300);
 
     m_container = new QWidget(this);
     m_container->setAutoFillBackground(true);
@@ -79,7 +80,7 @@ void BusPanelWidget::rebuild() {
         BusRow row;
 
         row.widget = new QWidget(m_container);
-        row.widget->setFixedWidth(140);
+        row.widget->setFixedWidth(200);
         row.widget->setAutoFillBackground(true);
         QPalette wp = row.widget->palette();
         wp.setColor(QPalette::Window, (i % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333"));
@@ -90,46 +91,47 @@ void BusPanelWidget::rebuild() {
         layout->setContentsMargins(4, 4, 4, 4);
         layout->setSpacing(2);
 
-        auto* nameRow = new QHBoxLayout;
+        auto* topRow = new QHBoxLayout;
         row.nameEdit = new QLineEdit(bus.name, row.widget);
         row.nameEdit->setReadOnly(true);
         row.nameEdit->setStyleSheet(
             "QLineEdit { background: transparent; border: none; font-weight: bold; font-size: 11px; color: #ccc; }"
             "QLineEdit:focus { background: #333; border: 1px solid #6688cc; }"
         );
-        nameRow->addWidget(row.nameEdit, 1);
-        layout->addLayout(nameRow);
+        topRow->addWidget(row.nameEdit, 1);
 
-        auto* outRow = new QHBoxLayout;
-        auto* outLabel = new QLabel("out:", row.widget);
-        outLabel->setStyleSheet("font-size: 9px; color: #999;");
-        outRow->addWidget(outLabel);
-        row.outCombo = new QComboBox(row.widget);
-        row.outCombo->setStyleSheet(
-            "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 9px; padding: 1px 3px; }"
-            "QComboBox::drop-down { border: none; width: 12px; }"
-            "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
+        auto btnStyle = [](const QString& normal, const QString& checked) {
+            return normal + "; padding: 0px; }"
+                 + checked + "; padding: 0px; }";
+        };
+
+        row.soloButton = new QPushButton("S", row.widget);
+        row.soloButton->setFixedSize(22, 22);
+        row.soloButton->setCheckable(true);
+        row.soloButton->setChecked(bus.solo);
+        row.soloButton->setStyleSheet(
+            btnStyle(
+                "QPushButton { background: #443322; color: #ccaa66; border: 1px solid #665544; font-weight: bold; font-size: 10px",
+                "QPushButton:checked { background: #cc8800; color: white; border: 2px solid #ffaa00; font-weight: bold; font-size: 10px"
+            )
         );
-        row.outCombo->addItem("Output Device", -1);
-        for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
-            if (j == i) continue;
-            bool cycle = wouldCreateCycle(buses, i, j);
-            row.outCombo->addItem(buses[j].name, j);
-            int lastIdx = row.outCombo->count() - 1;
-            if (cycle) {
-                row.outCombo->setItemData(lastIdx, QVariant(), Qt::UserRole - 1);
-                row.outCombo->setItemText(lastIdx, buses[j].name + " (x)");
-            }
-        }
-        int outTarget = bus.outputBusIndex;
-        for (int c = 0; c < row.outCombo->count(); ++c) {
-            if (row.outCombo->itemData(c).toInt() == outTarget) {
-                row.outCombo->setCurrentIndex(c);
-                break;
-            }
-        }
-        outRow->addWidget(row.outCombo, 1);
-        layout->addLayout(outRow);
+        row.soloButton->setToolTip("Solo");
+        topRow->addWidget(row.soloButton);
+
+        row.muteButton = new QPushButton("M", row.widget);
+        row.muteButton->setFixedSize(22, 22);
+        row.muteButton->setCheckable(true);
+        row.muteButton->setChecked(bus.muted);
+        row.muteButton->setStyleSheet(
+            btnStyle(
+                "QPushButton { background: #334433; color: #66cc66; border: 1px solid #446644; font-weight: bold; font-size: 10px",
+                "QPushButton:checked { background: #33aa33; color: white; border: 2px solid #44ff44; font-weight: bold; font-size: 10px"
+            )
+        );
+        row.muteButton->setToolTip("Mute");
+        topRow->addWidget(row.muteButton);
+
+        layout->addLayout(topRow);
 
         auto* panRow = new QHBoxLayout;
         auto* panLabel = new QLabel("pan:", row.widget);
@@ -163,37 +165,55 @@ void BusPanelWidget::rebuild() {
         volRow->addWidget(row.volumeSlider, 1);
         layout->addLayout(volRow);
 
-        auto* fxRow = new QHBoxLayout;
-        row.fxButton = new QPushButton("FX", row.widget);
-        row.fxButton->setFixedHeight(18);
-        row.fxButton->setStyleSheet(
-            "QPushButton { background: #333; color: #88aacc; border: 1px solid #556; font-size: 9px; font-weight: bold; }"
-            "QPushButton:hover { background: #444; }"
+        auto* outRow = new QHBoxLayout;
+        auto* outLabel = new QLabel("out:", row.widget);
+        outLabel->setStyleSheet("font-size: 9px; color: #999;");
+        outRow->addWidget(outLabel);
+        row.outCombo = new QComboBox(row.widget);
+        row.outCombo->setStyleSheet(
+            "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 9px; padding: 1px 3px; }"
+            "QComboBox::drop-down { border: none; width: 12px; }"
+            "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
         );
-        int fxBusIndex = i;
-        connect(row.fxButton, &QPushButton::clicked, this, [this, fxBusIndex]() {
-            auto& bus = m_project.buses()[fxBusIndex];
-            QDialog dialog(m_container->window());
-            dialog.setWindowTitle(bus.name + " - Plugins");
-            dialog.setMinimumSize(350, 250);
-            auto* dlgLayout = new QVBoxLayout(&dialog);
-
-            auto* listWidget = new QListWidget(&dialog);
-            for (int p = 0; p < bus.pluginChain.count(); ++p) {
-                auto* plugin = bus.pluginChain.plugin(p);
-                listWidget->addItem(QString("[%1] %2").arg(plugin->isEnabled() ? "ON" : "OFF", plugin->name()));
+        row.outCombo->addItem("Output Device", -1);
+        for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
+            if (j == i) continue;
+            bool cycle = wouldCreateCycle(buses, i, j);
+            row.outCombo->addItem(buses[j].name, j);
+            int lastIdx = row.outCombo->count() - 1;
+            if (cycle) {
+                row.outCombo->setItemData(lastIdx, QVariant(), Qt::UserRole - 1);
+                row.outCombo->setItemText(lastIdx, buses[j].name + " (x)");
             }
-            dlgLayout->addWidget(listWidget);
-
-            auto* closeBtn = new QPushButton("Close", &dialog);
-            connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
-            dlgLayout->addWidget(closeBtn);
-            dialog.exec();
-        });
-        fxRow->addWidget(row.fxButton);
-        layout->addLayout(fxRow);
+        }
+        int outTarget = bus.outputBusIndex;
+        for (int c = 0; c < row.outCombo->count(); ++c) {
+            if (row.outCombo->itemData(c).toInt() == outTarget) {
+                row.outCombo->setCurrentIndex(c);
+                break;
+            }
+        }
+        outRow->addWidget(row.outCombo, 1);
+        layout->addLayout(outRow);
 
         int busIndex = i;
+
+        row.pluginList = new PluginListWidget(row.widget);
+        row.pluginList->setBus(const_cast<AudioBus*>(&bus));
+        connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
+                [this, busIndex](PluginInstance* plugin) {
+            emit openBusPluginEditorRequested(busIndex, plugin);
+        });
+        layout->addWidget(row.pluginList, 1);
+
+        connect(row.soloButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
+            m_project.buses()[busIndex].solo = checked;
+            emit busChanged();
+        });
+        connect(row.muteButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
+            m_project.buses()[busIndex].muted = checked;
+            emit busChanged();
+        });
 
         connect(row.nameEdit, &QLineEdit::editingFinished, this, [this, row, busIndex] {
             QString text = row.nameEdit->text().trimmed();

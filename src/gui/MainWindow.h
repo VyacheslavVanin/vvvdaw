@@ -46,6 +46,7 @@ private:
     void performRedo();
     void applyState(const std::optional<QJsonObject>& state);
     void openPluginEditor(PluginInstance* plugin);
+    void updateRulerSpacers(int panelWidth);
 
     Project& m_project;
     AudioEngine& m_engine;
@@ -61,6 +62,9 @@ private:
     QWidget* m_trackContainer = nullptr;
     QVBoxLayout* m_trackLayout = nullptr;
     BusPanelWidget* m_busPanel = nullptr;
+    QWidget* m_rulerSpacer1 = nullptr;
+    QWidget* m_rulerSpacer2 = nullptr;
+    QWidget* m_scrollSpacer = nullptr;
 
     struct TrackRow {
         TrackPanelWidget* panel = nullptr;

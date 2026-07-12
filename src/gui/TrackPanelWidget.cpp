@@ -14,10 +14,15 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     : QWidget(parent)
     , m_track(track)
 {
-    setFixedWidth(200);
     setMinimumHeight(60);
 
-    auto* layout = new QVBoxLayout(this);
+    auto* rootLayout = new QHBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
+
+    auto* controlsWidget = new QWidget(this);
+    controlsWidget->setFixedWidth(200);
+    auto* layout = new QVBoxLayout(controlsWidget);
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(2);
 
@@ -87,32 +92,6 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     layout->addLayout(topRow);
 
-    auto* outRow = new QHBoxLayout;
-    auto* outLabel = new QLabel("out:", this);
-    outLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    outRow->addWidget(outLabel);
-    m_outputBusCombo = new QComboBox(this);
-    m_outputBusCombo->setStyleSheet(
-        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
-        "QComboBox::drop-down { border: none; width: 14px; }"
-        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
-    );
-    outRow->addWidget(m_outputBusCombo, 1);
-    layout->addLayout(outRow);
-
-    auto* inRow = new QHBoxLayout;
-    auto* inLabel = new QLabel("in: ", this);
-    inLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    inRow->addWidget(inLabel);
-    m_inputDeviceCombo = new QComboBox(this);
-    m_inputDeviceCombo->setStyleSheet(
-        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
-        "QComboBox::drop-down { border: none; width: 14px; }"
-        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
-    );
-    inRow->addWidget(m_inputDeviceCombo, 1);
-    layout->addLayout(inRow);
-
     auto* panRow = new QHBoxLayout;
     auto* panLabel = new QLabel("pan:", this);
     panLabel->setStyleSheet("font-size: 10px; color: #aaa;");
@@ -145,12 +124,42 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     volRow->addWidget(m_volumeSlider, 1);
     layout->addLayout(volRow);
 
+    auto* inRow = new QHBoxLayout;
+    auto* inLabel = new QLabel("in: ", this);
+    inLabel->setStyleSheet("font-size: 10px; color: #aaa;");
+    inRow->addWidget(inLabel);
+    m_inputDeviceCombo = new QComboBox(this);
+    m_inputDeviceCombo->setStyleSheet(
+        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
+        "QComboBox::drop-down { border: none; width: 14px; }"
+        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
+    );
+    inRow->addWidget(m_inputDeviceCombo, 1);
+    layout->addLayout(inRow);
+
+    auto* outRow = new QHBoxLayout;
+    auto* outLabel = new QLabel("out:", this);
+    outLabel->setStyleSheet("font-size: 10px; color: #aaa;");
+    outRow->addWidget(outLabel);
+    m_outputBusCombo = new QComboBox(this);
+    m_outputBusCombo->setStyleSheet(
+        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
+        "QComboBox::drop-down { border: none; width: 14px; }"
+        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
+    );
+    outRow->addWidget(m_outputBusCombo, 1);
+    layout->addLayout(outRow);
+
+    layout->addStretch();
+
+    rootLayout->addWidget(controlsWidget);
+
     m_pluginList = new PluginListWidget(this);
     m_pluginList->setTrack(m_track);
     m_pluginList->rebuild();
     connect(m_pluginList, &PluginListWidget::openEditorRequested, this, &TrackPanelWidget::openPluginEditorRequested);
     connect(m_pluginList, &PluginListWidget::pluginWillBeRemoved, this, &TrackPanelWidget::pluginWillBeRemoved);
-    layout->addWidget(m_pluginList);
+    rootLayout->addWidget(m_pluginList, 1);
 
     connect(m_armButton, &QPushButton::toggled, this, [this](bool checked) {
         if (m_track) m_track->setRecordArmed(checked);

@@ -15,30 +15,38 @@
 #include <QVBoxLayout>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QDrag>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QApplication>
+
+static const char* const kMimePluginIndex = "application/x-vvvdaw-plugin-index";
 
 PluginListWidget::PluginListWidget(QWidget* parent)
     : QWidget(parent) {
+    setAcceptDrops(true);
+
     m_mainLayout = new QVBoxLayout(this);
-    m_mainLayout->setContentsMargins(0, 4, 0, 4);
+    m_mainLayout->setContentsMargins(0, 0, 0, 0);
     m_mainLayout->setSpacing(2);
 
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(true);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
-    m_scrollArea->setFixedHeight(120);
 
     m_container = new QWidget();
+    m_container->setAcceptDrops(true);
     m_containerLayout = new QVBoxLayout(m_container);
-    m_containerLayout->setContentsMargins(4, 2, 4, 2);
-    m_containerLayout->setSpacing(2);
+    m_containerLayout->setContentsMargins(2, 2, 2, 2);
+    m_containerLayout->setSpacing(1);
     m_containerLayout->addStretch();
 
     m_scrollArea->setWidget(m_container);
-    m_mainLayout->addWidget(m_scrollArea);
+    m_mainLayout->addWidget(m_scrollArea, 1);
 
     m_addButton = new QPushButton("+", this);
     m_addButton->setFixedWidth(28);
-    m_addButton->setFixedHeight(22);
+    m_addButton->setFixedHeight(20);
     m_addButton->setToolTip("Add Plugin");
     connect(m_addButton, &QPushButton::clicked, this, &PluginListWidget::onAddClicked);
     m_mainLayout->addWidget(m_addButton);
@@ -76,13 +84,10 @@ void PluginListWidget::rebuild() {
 
 void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     auto* row = new QWidget();
+    row->setAcceptDrops(false);
     auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(2, 1, 2, 1);
     layout->setSpacing(4);
-
-    auto* nameLabel = new QLabel(plugin->name(), row);
-    nameLabel->setStyleSheet("color: #ddd; font-size: 11px;");
-    layout->addWidget(nameLabel, 1);
 
     auto* enableBtn = new QPushButton(plugin->isEnabled() ? "ON" : "OFF", row);
     enableBtn->setFixedWidth(32);
@@ -94,37 +99,27 @@ void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     });
     layout->addWidget(enableBtn);
 
-    if (plugin->hasEditor()) {
-        auto* editorBtn = new QPushButton("GUI", row);
-        editorBtn->setFixedWidth(32);
-        connect(editorBtn, &QPushButton::clicked, this, [this, index]() {
-            onEditorClicked(index);
-        });
-        layout->addWidget(editorBtn);
-    }
-
-    auto* upBtn = new QPushButton("^", row);
-    upBtn->setFixedWidth(22);
-    connect(upBtn, &QPushButton::clicked, this, [this, index]() {
-        onMoveUpClicked(index);
-    });
-    layout->addWidget(upBtn);
-
-    auto* downBtn = new QPushButton("v", row);
-    downBtn->setFixedWidth(22);
-    connect(downBtn, &QPushButton::clicked, this, [this, index]() {
-        onMoveDownClicked(index);
-    });
-    layout->addWidget(downBtn);
+    auto* nameLabel = new QLabel(plugin->name(), row);
+    nameLabel->setStyleSheet("color: #ddd; font-size: 10px;");
+    layout->addWidget(nameLabel, 1);
 
     auto* removeBtn = new QPushButton("x", row);
-    removeBtn->setFixedWidth(22);
+    removeBtn->setFixedWidth(20);
+    removeBtn->setFixedHeight(18);
+    removeBtn->setStyleSheet(
+        "QPushButton { background: #443333; color: #cc8888; border: 1px solid #554444; font-size: 10px; font-weight: bold; }"
+        "QPushButton:hover { background: #663333; color: #ff8888; }"
+    );
     connect(removeBtn, &QPushButton::clicked, this, [this, index]() {
         onRemoveClicked(index);
     });
     layout->addWidget(removeBtn);
 
     row->setStyleSheet("background: #333; border-radius: 3px; padding: 1px;");
+    row->setCursor(Qt::OpenHandCursor);
+
+    row->installEventFilter(this);
+
     m_containerLayout->insertWidget(m_containerLayout->count() - 1, row);
     m_rows.push_back(row);
 }
@@ -198,26 +193,108 @@ void PluginListWidget::onRemoveClicked(int index) {
     emit pluginRemoved(index);
 }
 
-void PluginListWidget::onEditorClicked(int index) {
-    auto* chain = targetChain();
-    if (!chain) return;
-    auto* plugin = chain->plugin(index);
-    if (plugin) emit openEditorRequested(plugin);
+bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
+    auto* w = qobject_cast<QWidget*>(obj);
+    if (!w) return QWidget::eventFilter(obj, event);
+
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            int idx = rowAtPos(w->pos());
+            if (idx >= 0) {
+                auto* chain = targetChain();
+                if (chain && idx < chain->count()) {
+                    auto* plugin = chain->plugin(idx);
+                    if (plugin) emit openEditorRequested(plugin);
+                }
+            }
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            m_dragFromIndex = rowAtPos(w->pos());
+            m_dragStartPos = me->pos();
+            w->setCursor(Qt::ClosedHandCursor);
+            return false;
+        }
+    }
+
+    if (event->type() == QEvent::MouseMove) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (m_dragFromIndex >= 0 && (me->pos() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()) {
+            auto* drag = new QDrag(this);
+            auto* mime = new QMimeData();
+            mime->setData(kMimePluginIndex, QByteArray::number(m_dragFromIndex));
+            drag->setMimeData(mime);
+
+            int idx = m_dragFromIndex;
+            if (idx >= 0 && idx < static_cast<int>(m_rows.size())) {
+                QPixmap pixmap(m_rows[idx]->size());
+                m_rows[idx]->render(&pixmap);
+                drag->setPixmap(pixmap);
+            }
+
+            w->setCursor(Qt::OpenHandCursor);
+            drag->exec(Qt::MoveAction);
+            m_dragFromIndex = -1;
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            m_dragFromIndex = -1;
+            w->setCursor(Qt::OpenHandCursor);
+            return false;
+        }
+    }
+
+    return QWidget::eventFilter(obj, event);
 }
 
-void PluginListWidget::onMoveUpClicked(int index) {
-    auto* chain = targetChain();
-    if (!chain || index <= 0) return;
-    chain->movePlugin(index, index - 1);
-    rebuild();
-    emit pluginMoved(index, index - 1);
+int PluginListWidget::rowAtPos(const QPoint& pos) const {
+    for (int i = 0; i < static_cast<int>(m_rows.size()); ++i) {
+        if (m_rows[i]->geometry().contains(pos) || m_rows[i]->pos() == pos) {
+            return i;
+        }
+    }
+    for (int i = 0; i < static_cast<int>(m_rows.size()); ++i) {
+        if (pos.y() >= m_rows[i]->pos().y() && pos.y() < m_rows[i]->pos().y() + m_rows[i]->height()) {
+            return i;
+        }
+    }
+    return -1;
 }
 
-void PluginListWidget::onMoveDownClicked(int index) {
+void PluginListWidget::dragEnterEvent(QDragEnterEvent* event) {
+    if (event->mimeData()->hasFormat(kMimePluginIndex))
+        event->acceptProposedAction();
+}
+
+void PluginListWidget::dragMoveEvent(QDragMoveEvent* event) {
+    if (event->mimeData()->hasFormat(kMimePluginIndex)) {
+        event->acceptProposedAction();
+    }
+}
+
+void PluginListWidget::dropEvent(QDropEvent* event) {
+    if (!event->mimeData()->hasFormat(kMimePluginIndex)) return;
+
+    int fromIndex = event->mimeData()->data(kMimePluginIndex).toInt();
+    int toIndex = rowAtPos(event->position().toPoint());
+
     auto* chain = targetChain();
-    if (!chain) return;
-    if (index >= chain->count() - 1) return;
-    chain->movePlugin(index, index + 1);
+    if (!chain || fromIndex < 0 || fromIndex >= chain->count()) return;
+    if (toIndex < 0) toIndex = chain->count() - 1;
+    if (toIndex >= chain->count()) toIndex = chain->count() - 1;
+    if (fromIndex == toIndex) return;
+
+    chain->movePlugin(fromIndex, toIndex);
     rebuild();
-    emit pluginMoved(index, index + 1);
+    emit pluginMoved(fromIndex, toIndex);
+    event->acceptProposedAction();
 }
