@@ -615,6 +615,9 @@ void MainWindow::refreshBusCombos() {
 }
 
 void MainWindow::rebuildTracks() {
+    if (!m_trackSplitters.empty())
+        m_savedPluginListWidth = m_trackSplitters.front()->sizes().value(0, 200);
+
     for (auto& row : m_trackRows) {
         if (row.panel) {
             row.panel->hide();
@@ -780,7 +783,7 @@ void MainWindow::rebuildTracks() {
         row.innerSplitter->addWidget(row.view);
         row.innerSplitter->setStretchFactor(0, 0);
         row.innerSplitter->setStretchFactor(1, 1);
-        row.innerSplitter->setSizes({200, 800});
+        row.innerSplitter->setSizes({m_savedPluginListWidth, 1000 - m_savedPluginListWidth});
 
         int splitterIndex = static_cast<int>(m_trackSplitters.size());
         m_trackSplitters.push_back(row.innerSplitter);

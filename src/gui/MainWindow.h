@@ -80,6 +80,7 @@ private:
     std::vector<PluginWindow*> m_pluginWindows;
     std::vector<QSplitter*> m_trackSplitters;
     bool m_syncingSplitters = false;
+    int m_savedPluginListWidth = 200;
 
     double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;
