@@ -292,6 +292,17 @@ void MainWindow::setupUi() {
         openPluginEditor(plugin);
     });
 
+    connect(m_busPanel, &BusPanelWidget::busPluginWillBeRemoved, this,
+            [this](PluginInstance* plugin) {
+        std::vector<PluginWindow*> toClose;
+        for (auto* w : m_pluginWindows) {
+            if (w->plugin() == plugin)
+                toClose.push_back(w);
+        }
+        for (auto* w : toClose)
+            w->close();
+    });
+
     connect(m_busPanel, &BusPanelWidget::busPluginAdded, this, [this](int, int) {
         pushUndoState();
     });

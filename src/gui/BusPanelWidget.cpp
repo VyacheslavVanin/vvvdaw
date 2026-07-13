@@ -207,6 +207,8 @@ void BusPanelWidget::rebuild() {
                 [this, busIndex](PluginInstance* plugin) {
             emit openBusPluginEditorRequested(busIndex, plugin);
         });
+        connect(row.pluginList, &PluginListWidget::pluginWillBeRemoved, this,
+                [this](PluginInstance* plugin) { emit busPluginWillBeRemoved(plugin); });
         connect(row.pluginList, &PluginListWidget::pluginAdded, this,
                 [this, busIndex](int idx) { emit busPluginAdded(busIndex, idx); });
         connect(row.pluginList, &PluginListWidget::pluginRemoved, this,
