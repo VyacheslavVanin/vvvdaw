@@ -43,7 +43,8 @@ private:
     void refreshBusCombos();
     void syncZoom();
     void syncScrollPositions(int value);
-    void pushUndoState();
+    void executeCommand(std::unique_ptr<class UndoCommand> cmd);
+    void pushCommand(std::unique_ptr<class UndoCommand> cmd);
     void performUndo();
     void performRedo();
     void applyState(const std::optional<QJsonObject>& state);

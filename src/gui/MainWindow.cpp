@@ -11,6 +11,12 @@
 #include "PluginWindow.h"
 #include "core/UndoStack.h"
 #include "core/TimeUtils.h"
+#include "commands/TrackCommands.h"
+#include "commands/BusCommands.h"
+#include "commands/ProjectCommands.h"
+#include "commands/EventCommands.h"
+#include "commands/PluginCommands.h"
+#include "commands/SnapshotCommand.h"
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
@@ -184,13 +190,11 @@ void MainWindow::setupUi() {
         }
     };
     connect(m_tempoWidget, &TempoWidget::tempoChanged, this, [this, updateSnapUnit](double bpm) {
-        pushUndoState();
-        m_project.setTempo(bpm);
+        executeCommand(std::make_unique<SetTempoCommand>(m_project, m_project.tempo(), bpm));
         updateSnapUnit();
     });
     connect(m_tempoWidget, &TempoWidget::timeSignatureChanged, this, [this, updateSnapUnit](int num, int den) {
-        pushUndoState();
-        m_project.setTimeSignature(num, den);
+        executeCommand(std::make_unique<SetTimeSigCommand>(m_project, m_project.timeSigNum(), m_project.timeSigDen(), num, den));
         updateSnapUnit();
     });
     connect(m_tempoWidget, &TempoWidget::snapResolutionChanged, this, [this, updateSnapUnit](double resolution) {
@@ -260,15 +264,7 @@ void MainWindow::setupUi() {
     layout->addWidget(m_busPanel);
 
     connect(m_busPanel, &BusPanelWidget::addBusRequested, this, [this] {
-        pushUndoState();
-        AudioBus newBus;
-        newBus.name = QString("Bus %1").arg(m_project.buses().size());
-        newBus.volume = 1.0f;
-        newBus.pan = 0.0f;
-        newBus.outputBusIndex = 0;
-        m_project.addBus(std::move(newBus));
-        m_busPanel->rebuild();
-        refreshBusCombos();
+        executeCommand(std::make_unique<AddBusCommand>(m_project));
     });
 
     connect(m_busPanel, &BusPanelWidget::removeBusRequested, this, [this](int index) {
@@ -276,14 +272,10 @@ void MainWindow::setupUi() {
             return;
         if (!m_project.buses()[index].removable)
             return;
-        pushUndoState();
-        m_project.removeBus(index);
-        m_busPanel->rebuild();
-        refreshBusCombos();
+        executeCommand(std::make_unique<RemoveBusCommand>(m_project, index));
     });
 
     connect(m_busPanel, &BusPanelWidget::busChanged, this, [this] {
-        pushUndoState();
     });
 
     connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
@@ -304,16 +296,12 @@ void MainWindow::setupUi() {
     });
 
     connect(m_busPanel, &BusPanelWidget::busPluginAdded, this, [this](int, int) {
-        pushUndoState();
     });
     connect(m_busPanel, &BusPanelWidget::busPluginRemoved, this, [this](int, int) {
-        pushUndoState();
     });
     connect(m_busPanel, &BusPanelWidget::busPluginWillBeMoved, this, [this](int, int, int) {
-        pushUndoState();
     });
     connect(m_busPanel, &BusPanelWidget::busPluginWillBeToggled, this, [this](int) {
-        pushUndoState();
     });
 
     m_busPanelGrip->installEventFilter(this);
@@ -455,16 +443,30 @@ void MainWindow::setupTimer() {
     timer->start(40);
 }
 
-void MainWindow::pushUndoState() {
-    m_undoStack.push(m_project.toJson());
+void MainWindow::executeCommand(std::unique_ptr<UndoCommand> cmd) {
+    m_undoStack.execute(std::move(cmd));
+    rebuildTracks();
+    refreshBusCombos();
+}
+
+void MainWindow::pushCommand(std::unique_ptr<UndoCommand> cmd) {
+    m_undoStack.push(std::move(cmd));
 }
 
 void MainWindow::performUndo() {
-    applyState(m_undoStack.undo(m_project.toJson()));
+    if (m_undoStack.undo()) {
+        closeAllPluginWindows();
+        rebuildTracks();
+        refreshBusCombos();
+    }
 }
 
 void MainWindow::performRedo() {
-    applyState(m_undoStack.redo(m_project.toJson()));
+    if (m_undoStack.redo()) {
+        closeAllPluginWindows();
+        rebuildTracks();
+        refreshBusCombos();
+    }
 }
 
 void MainWindow::closeAllPluginWindows() {
@@ -593,34 +595,22 @@ void MainWindow::setupMenus() {
     auto* trackMenu = menuBar()->addMenu("&Track");
     auto* addTrackAction = trackMenu->addAction("&Add Track", QKeySequence("Ctrl+T"));
     connect(addTrackAction, &QAction::triggered, this, [this] {
-        pushUndoState();
-        m_project.addTrack();
-        rebuildTracks();
+        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size())));
     });
 
     auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
     connect(deleteTrackAction, &QAction::triggered, this, [this] {
-        pushUndoState();
         for (size_t i = 0; i < m_project.tracks().size(); ++i) {
             if (m_trackRows[i].panel->hasFocus() || m_trackRows[i].view->hasFocus()) {
-                QMetaObject::invokeMethod(this, [this, i] {
-                    if (i < m_project.tracks().size()) {
-                        m_project.removeTrack(static_cast<int>(i));
-                        rebuildTracks();
-                    }
-                }, Qt::QueuedConnection);
+                int idx = static_cast<int>(i);
+                executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
                 return;
             }
         }
         for (size_t i = m_project.tracks().size(); i > 0; --i) {
             if (m_trackRows[i - 1].view->selectedEventIndex() >= 0) {
                 int idx = static_cast<int>(i - 1);
-                QMetaObject::invokeMethod(this, [this, idx] {
-                    if (idx < static_cast<int>(m_project.tracks().size())) {
-                        m_project.removeTrack(idx);
-                        rebuildTracks();
-                    }
-                }, Qt::QueuedConnection);
+                executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
                 return;
             }
         }
@@ -724,21 +714,17 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
-            pushUndoState();
-            m_project.addTrack();
-            rebuildTracks();
+            executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size())));
         });
 
         connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
             if (idx < static_cast<int>(m_project.tracks().size())) {
-                pushUndoState();
-                m_project.removeTrack(idx);
-                rebuildTracks();
+                executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
             }
         });
 
         connect(row.panel, &TrackPanelWidget::beforeModify, this, [this] {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
         connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
@@ -756,28 +742,28 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.pluginList, &PluginListWidget::pluginAdded, this, [this](int) {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
         connect(row.pluginList, &PluginListWidget::pluginRemoved, this, [this](int) {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
         connect(row.pluginList, &PluginListWidget::pluginWillBeMoved, this, [this](int, int) {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
         connect(row.pluginList, &PluginListWidget::pluginWillBeToggled, this, [this] {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
         connect(row.view, &TrackViewWidget::eventDragStarted, this, [this] {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
         connect(row.view, &TrackViewWidget::eventEdgeTrimStarted, this, [this] {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
         connect(row.view, &TrackViewWidget::takeSwitchStarted, this, [this] {
-            pushUndoState();
+            pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
         connect(row.view, &TrackViewWidget::dragInProgress, this,
