@@ -3,6 +3,7 @@
 #include "PluginManager.h"
 #include <algorithm>
 #include <QJsonArray>
+#include <unordered_map>
 
 void PluginChain::addPlugin(std::unique_ptr<PluginInstance> plugin) {
     m_plugins.push_back(std::move(plugin));
@@ -109,16 +110,28 @@ QJsonObject PluginChain::toJson() const {
 }
 
 void PluginChain::fromJson(const QJsonObject& json, PluginManager* manager) {
+    std::unordered_map<QString, std::unique_ptr<PluginInstance>> oldPlugins;
+    for (auto& p : m_plugins)
+        oldPlugins[p->pluginId()] = std::move(p);
     m_plugins.clear();
+
     QJsonArray arr = json["plugins"].toArray();
     for (auto v : arr) {
         QJsonObject obj = v.toObject();
         QString type = obj["type"].toString();
         if (type == "vst3") {
-            auto instance = std::make_unique<VST3Instance>();
-            if (instance->load(obj["path"].toString())) {
-                instance->stateFromJson(obj);
-                m_plugins.push_back(std::move(instance));
+            QString pluginId = obj["pluginId"].toString();
+            auto it = oldPlugins.find(pluginId);
+            if (it != oldPlugins.end()) {
+                it->second->stateFromJson(obj);
+                m_plugins.push_back(std::move(it->second));
+                oldPlugins.erase(it);
+            } else {
+                auto instance = std::make_unique<VST3Instance>();
+                if (instance->load(obj["path"].toString())) {
+                    instance->stateFromJson(obj);
+                    m_plugins.push_back(std::move(instance));
+                }
             }
         }
     }

@@ -37,6 +37,7 @@ using vvvdaw::TransportState;
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QJsonArray>
 
 MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings,
                        QWidget* parent)
@@ -466,9 +467,16 @@ void MainWindow::performRedo() {
     applyState(m_undoStack.redo(m_project.toJson()));
 }
 
+void MainWindow::closeAllPluginWindows() {
+    std::vector<PluginWindow*> toClose = m_pluginWindows;
+    for (auto* w : toClose)
+        w->close();
+}
+
 void MainWindow::applyState(const std::optional<QJsonObject>& state) {
     if (!state) return;
     m_engine.setTransportState(TransportState::Stopped);
+    closeAllPluginWindows();
     m_engine.setProject(nullptr);
     m_project.fromJson(*state);
     m_engine.setProject(&m_project);

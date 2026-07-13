@@ -48,6 +48,7 @@ private:
     void performRedo();
     void applyState(const std::optional<QJsonObject>& state);
     void openPluginEditor(PluginInstance* plugin);
+    void closeAllPluginWindows();
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);
 
