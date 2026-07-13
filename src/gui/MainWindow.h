@@ -47,7 +47,6 @@ private:
     void pushCommand(std::unique_ptr<class UndoCommand> cmd);
     void performUndo();
     void performRedo();
-    void applyState(const std::optional<QJsonObject>& state);
     void openPluginEditor(PluginInstance* plugin);
     void closeAllPluginWindows();
     void updateRulerSpacers(int panelWidth);

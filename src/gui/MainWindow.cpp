@@ -505,17 +505,6 @@ void MainWindow::closeAllPluginWindows() {
         w->close();
 }
 
-void MainWindow::applyState(const std::optional<QJsonObject>& state) {
-    if (!state) return;
-    m_engine.setTransportState(TransportState::Stopped);
-    closeAllPluginWindows();
-    m_engine.setProject(nullptr);
-    m_project.fromJson(*state);
-    m_engine.setProject(&m_project);
-    m_engine.activateAllPlugins();
-    rebuildTracks();
-}
-
 void MainWindow::setupMenus() {
     auto* fileMenu = menuBar()->addMenu("&File");
 
