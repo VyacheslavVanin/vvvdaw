@@ -30,8 +30,9 @@ signals:
     void pluginAdded(int index);
     void pluginRemoved(int index);
     void pluginWillBeRemoved(PluginInstance* plugin);
-    void pluginMoved(int from, int to);
+    void pluginWillBeMoved(int from, int to);
     void openEditorRequested(PluginInstance* plugin);
+    void pluginWillBeToggled();
     void scanRequested();
 
 protected:

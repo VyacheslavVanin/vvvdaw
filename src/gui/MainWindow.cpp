@@ -292,6 +292,19 @@ void MainWindow::setupUi() {
         openPluginEditor(plugin);
     });
 
+    connect(m_busPanel, &BusPanelWidget::busPluginAdded, this, [this](int, int) {
+        pushUndoState();
+    });
+    connect(m_busPanel, &BusPanelWidget::busPluginRemoved, this, [this](int, int) {
+        pushUndoState();
+    });
+    connect(m_busPanel, &BusPanelWidget::busPluginWillBeMoved, this, [this](int, int, int) {
+        pushUndoState();
+    });
+    connect(m_busPanel, &BusPanelWidget::busPluginWillBeToggled, this, [this](int) {
+        pushUndoState();
+    });
+
     m_busPanelGrip->installEventFilter(this);
 
     setCentralWidget(central);
@@ -449,6 +462,7 @@ void MainWindow::applyState(const std::optional<QJsonObject>& state) {
     m_engine.setProject(nullptr);
     m_project.fromJson(*state);
     m_engine.setProject(&m_project);
+    m_engine.activateAllPlugins();
     rebuildTracks();
 }
 
@@ -721,6 +735,19 @@ void MainWindow::rebuildTracks() {
             }
             for (auto* w : toClose)
                 w->close();
+        });
+
+        connect(row.pluginList, &PluginListWidget::pluginAdded, this, [this](int) {
+            pushUndoState();
+        });
+        connect(row.pluginList, &PluginListWidget::pluginRemoved, this, [this](int) {
+            pushUndoState();
+        });
+        connect(row.pluginList, &PluginListWidget::pluginWillBeMoved, this, [this](int, int) {
+            pushUndoState();
+        });
+        connect(row.pluginList, &PluginListWidget::pluginWillBeToggled, this, [this] {
+            pushUndoState();
         });
 
         connect(row.view, &TrackViewWidget::eventDragStarted, this, [this] {

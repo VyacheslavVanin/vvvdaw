@@ -94,7 +94,8 @@ void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     enableBtn->setFixedWidth(32);
     enableBtn->setCheckable(true);
     enableBtn->setChecked(plugin->isEnabled());
-    connect(enableBtn, &QPushButton::toggled, [plugin, enableBtn](bool checked) {
+    connect(enableBtn, &QPushButton::toggled, this, [this, plugin, enableBtn](bool checked) {
+        emit pluginWillBeToggled();
         plugin->setEnabled(checked);
         enableBtn->setText(checked ? "ON" : "OFF");
     });
@@ -177,9 +178,9 @@ void PluginListWidget::onAddClicked() {
         if (instance) {
             instance->activate(m_sampleRate, m_bufferSize);
             int idx = chain->count();
+            emit pluginAdded(idx);
             chain->addPlugin(std::move(instance));
             rebuild();
-            emit pluginAdded(idx);
         }
     }
 }
@@ -189,9 +190,9 @@ void PluginListWidget::onRemoveClicked(int index) {
     if (!chain) return;
     auto* plugin = chain->plugin(index);
     if (plugin) emit pluginWillBeRemoved(plugin);
+    emit pluginRemoved(index);
     chain->removePlugin(index);
     rebuild();
-    emit pluginRemoved(index);
 }
 
 bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
@@ -294,8 +295,8 @@ void PluginListWidget::dropEvent(QDropEvent* event) {
     if (toIndex >= chain->count()) toIndex = chain->count() - 1;
     if (fromIndex == toIndex) return;
 
+    emit pluginWillBeMoved(fromIndex, toIndex);
     chain->movePlugin(fromIndex, toIndex);
     rebuild();
-    emit pluginMoved(fromIndex, toIndex);
     event->acceptProposedAction();
 }

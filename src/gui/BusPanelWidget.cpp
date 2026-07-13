@@ -207,6 +207,14 @@ void BusPanelWidget::rebuild() {
                 [this, busIndex](PluginInstance* plugin) {
             emit openBusPluginEditorRequested(busIndex, plugin);
         });
+        connect(row.pluginList, &PluginListWidget::pluginAdded, this,
+                [this, busIndex](int idx) { emit busPluginAdded(busIndex, idx); });
+        connect(row.pluginList, &PluginListWidget::pluginRemoved, this,
+                [this, busIndex](int idx) { emit busPluginRemoved(busIndex, idx); });
+        connect(row.pluginList, &PluginListWidget::pluginWillBeMoved, this,
+                [this, busIndex](int from, int to) { emit busPluginWillBeMoved(busIndex, from, to); });
+        connect(row.pluginList, &PluginListWidget::pluginWillBeToggled, this,
+                [this, busIndex]() { emit busPluginWillBeToggled(busIndex); });
         layout->addWidget(row.pluginList, 1);
 
         connect(row.soloButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {

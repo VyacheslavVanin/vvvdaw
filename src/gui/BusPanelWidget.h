@@ -28,6 +28,10 @@ signals:
     void addBusRequested();
     void removeBusRequested(int index);
     void openBusPluginEditorRequested(int busIndex, PluginInstance* plugin);
+    void busPluginAdded(int busIndex, int pluginIndex);
+    void busPluginRemoved(int busIndex, int pluginIndex);
+    void busPluginWillBeMoved(int busIndex, int from, int to);
+    void busPluginWillBeToggled(int busIndex);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
