@@ -275,7 +275,29 @@ void MainWindow::setupUi() {
         executeCommand(std::make_unique<RemoveBusCommand>(m_project, index));
     });
 
-    connect(m_busPanel, &BusPanelWidget::busChanged, this, [this] {
+    connect(m_busPanel, &BusPanelWidget::busVolumeWillChange, this,
+            [this](int busIndex, float oldVal, float newVal) {
+        executeCommand(std::make_unique<SetBusVolumeCommand>(m_project, busIndex, oldVal, newVal));
+    });
+    connect(m_busPanel, &BusPanelWidget::busPanWillChange, this,
+            [this](int busIndex, float oldVal, float newVal) {
+        executeCommand(std::make_unique<SetBusPanCommand>(m_project, busIndex, oldVal, newVal));
+    });
+    connect(m_busPanel, &BusPanelWidget::busSoloWillChange, this,
+            [this](int busIndex, bool oldVal, bool newVal) {
+        executeCommand(std::make_unique<SetBusSoloCommand>(m_project, busIndex, oldVal, newVal));
+    });
+    connect(m_busPanel, &BusPanelWidget::busMuteWillChange, this,
+            [this](int busIndex, bool oldVal, bool newVal) {
+        executeCommand(std::make_unique<SetBusMuteCommand>(m_project, busIndex, oldVal, newVal));
+    });
+    connect(m_busPanel, &BusPanelWidget::busNameWillChange, this,
+            [this](int busIndex, const QString& oldName, const QString& newName) {
+        executeCommand(std::make_unique<SetBusNameCommand>(m_project, busIndex, oldName, newName));
+    });
+    connect(m_busPanel, &BusPanelWidget::busOutputWillChange, this,
+            [this](int busIndex, int oldVal, int newVal) {
+        executeCommand(std::make_unique<SetBusOutputCommand>(m_project, busIndex, oldVal, newVal));
     });
 
     connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
@@ -296,12 +318,20 @@ void MainWindow::setupUi() {
     });
 
     connect(m_busPanel, &BusPanelWidget::busPluginAdded, this, [this](int, int) {
+        pushCommand(std::make_unique<SnapshotCommand>(m_project));
     });
     connect(m_busPanel, &BusPanelWidget::busPluginRemoved, this, [this](int, int) {
+        pushCommand(std::make_unique<SnapshotCommand>(m_project));
     });
-    connect(m_busPanel, &BusPanelWidget::busPluginWillBeMoved, this, [this](int, int, int) {
+    connect(m_busPanel, &BusPanelWidget::busPluginWillBeMoved, this,
+            [this](int busIndex, int from, int to) {
+        if (busIndex >= 0 && busIndex < static_cast<int>(m_project.buses().size())) {
+            pushCommand(std::make_unique<MovePluginCommand>(
+                m_project.buses()[busIndex].pluginChain, from, to));
+        }
     });
     connect(m_busPanel, &BusPanelWidget::busPluginWillBeToggled, this, [this](int) {
+        pushCommand(std::make_unique<SnapshotCommand>(m_project));
     });
 
     m_busPanelGrip->installEventFilter(this);

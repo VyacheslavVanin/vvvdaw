@@ -33,6 +33,12 @@ signals:
     void busPluginRemoved(int busIndex, int pluginIndex);
     void busPluginWillBeMoved(int busIndex, int from, int to);
     void busPluginWillBeToggled(int busIndex);
+    void busVolumeWillChange(int busIndex, float oldVal, float newVal);
+    void busPanWillChange(int busIndex, float oldVal, float newVal);
+    void busSoloWillChange(int busIndex, bool oldVal, bool newVal);
+    void busMuteWillChange(int busIndex, bool oldVal, bool newVal);
+    void busNameWillChange(int busIndex, const QString& oldName, const QString& newName);
+    void busOutputWillChange(int busIndex, int oldVal, int newVal);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;

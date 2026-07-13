@@ -109,3 +109,63 @@ bool SetBusPanCommand::mergeWith(const UndoCommand* other) {
     m_newValue = cmd->m_newValue;
     return true;
 }
+
+// --- SetBusMuteCommand ---
+
+SetBusMuteCommand::SetBusMuteCommand(Project& project, int busIndex, bool oldValue, bool newValue)
+    : m_project(project), m_busIndex(busIndex), m_oldValue(oldValue), m_newValue(newValue) {}
+
+void SetBusMuteCommand::execute() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].muted = m_newValue;
+}
+
+void SetBusMuteCommand::undo() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].muted = m_oldValue;
+}
+
+// --- SetBusSoloCommand ---
+
+SetBusSoloCommand::SetBusSoloCommand(Project& project, int busIndex, bool oldValue, bool newValue)
+    : m_project(project), m_busIndex(busIndex), m_oldValue(oldValue), m_newValue(newValue) {}
+
+void SetBusSoloCommand::execute() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].solo = m_newValue;
+}
+
+void SetBusSoloCommand::undo() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].solo = m_oldValue;
+}
+
+// --- SetBusNameCommand ---
+
+SetBusNameCommand::SetBusNameCommand(Project& project, int busIndex, const QString& oldName, const QString& newName)
+    : m_project(project), m_busIndex(busIndex), m_oldName(oldName), m_newName(newName) {}
+
+void SetBusNameCommand::execute() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].name = m_newName;
+}
+
+void SetBusNameCommand::undo() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].name = m_oldName;
+}
+
+// --- SetBusOutputCommand ---
+
+SetBusOutputCommand::SetBusOutputCommand(Project& project, int busIndex, int oldValue, int newValue)
+    : m_project(project), m_busIndex(busIndex), m_oldValue(oldValue), m_newValue(newValue) {}
+
+void SetBusOutputCommand::execute() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].outputBusIndex = m_newValue;
+}
+
+void SetBusOutputCommand::undo() {
+    if (m_busIndex >= 0 && m_busIndex < static_cast<int>(m_project.buses().size()))
+        m_project.buses()[m_busIndex].outputBusIndex = m_oldValue;
+}

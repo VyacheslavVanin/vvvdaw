@@ -220,10 +220,14 @@ void BusPanelWidget::rebuild() {
         layout->addWidget(row.pluginList, 1);
 
         connect(row.soloButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
+            bool oldVal = m_project.buses()[busIndex].solo;
+            emit busSoloWillChange(busIndex, oldVal, checked);
             m_project.buses()[busIndex].solo = checked;
             emit busChanged();
         });
         connect(row.muteButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
+            bool oldVal = m_project.buses()[busIndex].muted;
+            emit busMuteWillChange(busIndex, oldVal, checked);
             m_project.buses()[busIndex].muted = checked;
             emit busChanged();
         });
@@ -231,6 +235,8 @@ void BusPanelWidget::rebuild() {
         connect(row.nameEdit, &QLineEdit::editingFinished, this, [this, row, busIndex] {
             QString text = row.nameEdit->text().trimmed();
             if (!text.isEmpty() && text != m_project.buses()[busIndex].name) {
+                QString oldName = m_project.buses()[busIndex].name;
+                emit busNameWillChange(busIndex, oldName, text);
                 m_project.buses()[busIndex].name = text;
                 emit busChanged();
             }
@@ -252,19 +258,27 @@ void BusPanelWidget::rebuild() {
                 }
                 return;
             }
+            int oldVal = m_project.buses()[busIndex].outputBusIndex;
+            emit busOutputWillChange(busIndex, oldVal, targetBusIdx);
             m_project.buses()[busIndex].outputBusIndex = targetBusIdx;
             emit busChanged();
         });
 
         connect(row.panSlider, &QSlider::valueChanged, this,
                 [this, busIndex](int val) {
-            m_project.buses()[busIndex].pan = val / 100.0f;
+            float oldVal = m_project.buses()[busIndex].pan;
+            float newVal = val / 100.0f;
+            emit busPanWillChange(busIndex, oldVal, newVal);
+            m_project.buses()[busIndex].pan = newVal;
             emit busChanged();
         });
 
         connect(row.volumeSlider, &QSlider::valueChanged, this,
                 [this, busIndex](int val) {
-            m_project.buses()[busIndex].volume = val / 100.0f;
+            float oldVal = m_project.buses()[busIndex].volume;
+            float newVal = val / 100.0f;
+            emit busVolumeWillChange(busIndex, oldVal, newVal);
+            m_project.buses()[busIndex].volume = newVal;
             emit busChanged();
         });
 
