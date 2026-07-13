@@ -53,7 +53,6 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
         Settings().pluginScanPaths.empty()
             ? PluginManager::defaultScanPaths()
             : Settings().pluginScanPaths);
-    m_pluginManager.scanLV2();
     m_project.setPluginManager(&m_pluginManager);
 
     setupUi();

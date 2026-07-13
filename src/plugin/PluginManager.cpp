@@ -13,13 +13,11 @@
 
 using namespace Steinberg;
 
-PluginManager::PluginManager()
-    : m_lilvWorld(lilv_world_new()) {
+PluginManager::PluginManager() {
     loadCache();
 }
 
 PluginManager::~PluginManager() {
-    if (m_lilvWorld) lilv_world_free(m_lilvWorld);
 }
 
 void PluginManager::scanDirectories(const std::vector<QString>& directories) {
@@ -71,52 +69,6 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
         }
     }
     saveCache();
-}
-
-void PluginManager::scanLV2() {
-    if (!m_lilvWorld) return;
-    lilv_world_load_all(m_lilvWorld);
-
-    const LilvPlugins* plugins = lilv_world_get_all_plugins(m_lilvWorld);
-    LILV_FOREACH (plugins, i, plugins) {
-        const LilvPlugin* p = lilv_plugins_get(plugins, i);
-
-        LilvNode* nameNode = lilv_plugin_get_name(p);
-        if (!nameNode) continue;
-
-        QString uri = QString::fromUtf8(lilv_node_as_uri(lilv_plugin_get_uri(p)));
-        bool alreadyKnown = false;
-        for (auto& pi : m_plugins)
-            if (pi.type == "lv2" && pi.pluginId == uri) { alreadyKnown = true; break; }
-        if (alreadyKnown) { lilv_node_free(nameNode); continue; }
-
-        PluginInfo pi;
-        pi.name = QString::fromUtf8(lilv_node_as_string(nameNode));
-        pi.vendor = QString();
-        pi.path = QString();
-        pi.pluginId = uri;
-        pi.category = QString("LV2 Plugin");
-        pi.type = "lv2";
-
-        lilv_node_free(nameNode);
-        m_plugins.push_back(pi);
-    }
-    saveCache();
-}
-
-void PluginManager::ensureLV2Loaded() {
-    if (!m_lilvWorld) return;
-    lilv_world_load_all(m_lilvWorld);
-}
-
-const LilvPlugin* PluginManager::findLV2Plugin(const QString& uri) const {
-    if (!m_lilvWorld) return nullptr;
-    const LilvPlugins* plugins = lilv_world_get_all_plugins(m_lilvWorld);
-
-    LilvNode* pluginUri = lilv_new_uri(m_lilvWorld, uri.toUtf8().constData());
-    const LilvPlugin* plugin = lilv_plugins_get_by_uri(plugins, pluginUri);
-    lilv_node_free(pluginUri);
-    return plugin;
 }
 
 void PluginManager::loadCache() {

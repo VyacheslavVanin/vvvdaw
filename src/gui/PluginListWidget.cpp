@@ -4,7 +4,6 @@
 #include "plugin/PluginInstance.h"
 #include "plugin/PluginManager.h"
 #include "plugin/VST3Instance.h"
-#include "plugin/LV2Instance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include <QHBoxLayout>
@@ -167,12 +166,6 @@ void PluginListWidget::onAddClicked() {
         if (type == "vst3") {
             auto vst3 = std::make_unique<VST3Instance>();
             if (vst3->load(path)) instance = std::move(vst3);
-        } else if (type == "lv2") {
-            const LilvPlugin* lilvPlugin = m_pluginManager->findLV2Plugin(id);
-            if (lilvPlugin) {
-                auto lv2 = std::make_unique<LV2Instance>(m_pluginManager->lilvWorld(), lilvPlugin);
-                instance = std::move(lv2);
-            }
         }
 
         if (instance) {

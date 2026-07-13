@@ -120,9 +120,6 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
         m_pluginPathList->addItem(QDir::homePath() + "/.vst3");
         m_pluginPathList->addItem("/usr/lib/vst3");
         m_pluginPathList->addItem("/usr/local/lib/vst3");
-        m_pluginPathList->addItem(QDir::homePath() + "/.lv2");
-        m_pluginPathList->addItem("/usr/lib/lv2");
-        m_pluginPathList->addItem("/usr/local/lib/lv2");
     });
 }
 

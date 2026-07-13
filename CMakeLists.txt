@@ -24,7 +24,6 @@ add_executable(vvvdaw
     src/model/Track.cpp
     src/model/Project.cpp
     src/plugin/VST3Instance.cpp
-    src/plugin/LV2Instance.cpp
     src/plugin/PluginChain.cpp
     src/plugin/PluginManager.cpp
     src/gui/MainWindow.cpp
@@ -45,7 +44,6 @@ add_executable(vvvdaw
 target_include_directories(vvvdaw PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     /usr/include/vst3sdk
-    /usr/include/lilv-0
 )
 
 target_link_directories(vvvdaw PRIVATE
@@ -62,6 +60,5 @@ target_link_libraries(vvvdaw PRIVATE
     pluginterfaces
     base
     -Wl,--end-group
-    lilv-0
     dl
 )
