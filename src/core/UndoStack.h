@@ -15,6 +15,7 @@ public:
 
     bool canUndo() const { return !m_undoStack.empty(); }
     bool canRedo() const { return !m_redoStack.empty(); }
+    UndoCommand* topCommand() const { return m_undoStack.empty() ? nullptr : m_undoStack.back().get(); }
 
 private:
     std::vector<std::unique_ptr<UndoCommand>> m_undoStack;

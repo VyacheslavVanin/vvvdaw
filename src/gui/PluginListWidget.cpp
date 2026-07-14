@@ -1,9 +1,7 @@
 #include "PluginListWidget.h"
-#include "PluginWindow.h"
 #include "plugin/PluginChain.h"
 #include "plugin/PluginInstance.h"
 #include "plugin/PluginManager.h"
-#include "plugin/VST3Instance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include <QHBoxLayout>
@@ -159,22 +157,8 @@ void PluginListWidget::onAddClicked() {
     if (dialog.exec() == QDialog::Accepted && listWidget->currentItem()) {
         auto* item = listWidget->currentItem();
         QString type = item->data(Qt::UserRole + 1).toString();
-        QString id = item->data(Qt::UserRole).toString();
         QString path = item->data(Qt::UserRole + 2).toString();
-
-        std::unique_ptr<PluginInstance> instance;
-        if (type == "vst3") {
-            auto vst3 = std::make_unique<VST3Instance>();
-            if (vst3->load(path)) instance = std::move(vst3);
-        }
-
-        if (instance) {
-            instance->activate(m_sampleRate, m_bufferSize);
-            int idx = chain->count();
-            emit pluginAdded(idx);
-            chain->addPlugin(std::move(instance));
-            rebuild();
-        }
+        emit pluginAddRequested(type, path);
     }
 }
 

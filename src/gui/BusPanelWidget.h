@@ -29,7 +29,7 @@ signals:
     void removeBusRequested(int index);
     void openBusPluginEditorRequested(int busIndex, PluginInstance* plugin);
     void busPluginWillBeRemoved(PluginInstance* plugin);
-    void busPluginAdded(int busIndex, int pluginIndex);
+    void busPluginAddRequested(int busIndex, const QString& type, const QString& path);
     void busPluginRemoved(int busIndex, int pluginIndex);
     void busPluginWillBeMoved(int busIndex, int from, int to);
     void busPluginWillBeToggled(int busIndex);

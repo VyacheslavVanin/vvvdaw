@@ -1,6 +1,7 @@
 #pragma once
 #include "core/UndoCommand.h"
 #include <QJsonObject>
+#include <functional>
 
 class PluginChain;
 class PluginManager;
@@ -13,12 +14,15 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 50; }
+    void setBeforeRemoveCallback(std::function<void(PluginInstance*)> cb) { m_beforeRemove = std::move(cb); }
 private:
     PluginChain& m_chain;
     QJsonObject m_pluginJson;
     PluginManager* m_manager;
     double m_sampleRate;
     int m_bufferSize;
+    PluginInstance* m_addedPlugin = nullptr;
+    std::function<void(PluginInstance*)> m_beforeRemove;
 };
 
 class RemovePluginCommand : public UndoCommand {

@@ -209,8 +209,10 @@ void BusPanelWidget::rebuild() {
         });
         connect(row.pluginList, &PluginListWidget::pluginWillBeRemoved, this,
                 [this](PluginInstance* plugin) { emit busPluginWillBeRemoved(plugin); });
-        connect(row.pluginList, &PluginListWidget::pluginAdded, this,
-                [this, busIndex](int idx) { emit busPluginAdded(busIndex, idx); });
+        connect(row.pluginList, &PluginListWidget::pluginAddRequested, this,
+                [this, busIndex](const QString& type, const QString& path) {
+            emit busPluginAddRequested(busIndex, type, path);
+        });
         connect(row.pluginList, &PluginListWidget::pluginRemoved, this,
                 [this, busIndex](int idx) { emit busPluginRemoved(busIndex, idx); });
         connect(row.pluginList, &PluginListWidget::pluginWillBeMoved, this,

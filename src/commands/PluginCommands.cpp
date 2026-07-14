@@ -17,13 +17,17 @@ void AddPluginCommand::execute() {
         auto instance = std::make_unique<VST3Instance>();
         if (instance->load(m_pluginJson["path"].toString())) {
             instance->activate(m_sampleRate, m_bufferSize);
+            m_addedPlugin = instance.get();
             m_chain.addPlugin(std::move(instance));
         }
     }
 }
 
 void AddPluginCommand::undo() {
+    if (m_beforeRemove && m_addedPlugin)
+        m_beforeRemove(m_addedPlugin);
     m_chain.removePlugin(m_chain.count() - 1);
+    m_addedPlugin = nullptr;
 }
 
 // --- RemovePluginCommand ---

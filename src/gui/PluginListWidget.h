@@ -27,12 +27,12 @@ public:
     void rebuild();
 
 signals:
-    void pluginAdded(int index);
     void pluginRemoved(int index);
     void pluginWillBeRemoved(PluginInstance* plugin);
     void pluginWillBeMoved(int from, int to);
     void openEditorRequested(PluginInstance* plugin);
     void pluginWillBeToggled();
+    void pluginAddRequested(const QString& type, const QString& path);
     void scanRequested();
 
 protected:

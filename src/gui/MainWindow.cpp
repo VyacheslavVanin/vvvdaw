@@ -317,8 +317,25 @@ void MainWindow::setupUi() {
             w->close();
     });
 
-    connect(m_busPanel, &BusPanelWidget::busPluginAdded, this, [this](int, int) {
-        pushCommand(std::make_unique<SnapshotCommand>(m_project));
+    connect(m_busPanel, &BusPanelWidget::busPluginAddRequested, this,
+            [this](int busIndex, const QString& type, const QString& path) {
+        if (busIndex < 0 || busIndex >= static_cast<int>(m_project.buses().size())) return;
+        QJsonObject pluginJson;
+        pluginJson["type"] = type;
+        pluginJson["path"] = path;
+        auto cmd = std::make_unique<AddPluginCommand>(
+            m_project.buses()[busIndex].pluginChain, pluginJson, &m_pluginManager,
+            static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
+        cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
+            std::vector<PluginWindow*> toClose;
+            for (auto* w : m_pluginWindows) {
+                if (w->plugin() == plugin)
+                    toClose.push_back(w);
+            }
+            for (auto* w : toClose)
+                w->close();
+        });
+        executeCommand(std::move(cmd));
     });
     connect(m_busPanel, &BusPanelWidget::busPluginRemoved, this, [this](int, int) {
         pushCommand(std::make_unique<SnapshotCommand>(m_project));
@@ -484,16 +501,20 @@ void MainWindow::pushCommand(std::unique_ptr<UndoCommand> cmd) {
 }
 
 void MainWindow::performUndo() {
-    if (m_undoStack.undo()) {
+    auto* cmd = m_undoStack.topCommand();
+    if (!cmd || cmd->id() != 50)
         closeAllPluginWindows();
+    if (m_undoStack.undo()) {
         rebuildTracks();
         refreshBusCombos();
     }
 }
 
 void MainWindow::performRedo() {
-    if (m_undoStack.redo()) {
+    auto* cmd = m_undoStack.topCommand();
+    if (!cmd || cmd->id() != 50)
         closeAllPluginWindows();
+    if (m_undoStack.redo()) {
         rebuildTracks();
         refreshBusCombos();
     }
@@ -520,6 +541,7 @@ void MainWindow::setupMenus() {
     connect(newAction, &QAction::triggered, this, [this] {
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setProject(nullptr);
+        closeAllPluginWindows();
         m_undoStack.clear();
         m_project = Project();
         m_project.addTrack("Track 1");
@@ -537,6 +559,7 @@ void MainWindow::setupMenus() {
 
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setProject(nullptr);
+        closeAllPluginWindows();
         m_undoStack.clear();
         Project newProject;
         if (!newProject.load(path)) {
@@ -760,8 +783,24 @@ void MainWindow::rebuildTracks() {
                 w->close();
         });
 
-        connect(row.pluginList, &PluginListWidget::pluginAdded, this, [this](int) {
-            pushCommand(std::make_unique<SnapshotCommand>(m_project));
+        connect(row.pluginList, &PluginListWidget::pluginAddRequested, this,
+                [this, &track](const QString& type, const QString& path) {
+            QJsonObject pluginJson;
+            pluginJson["type"] = type;
+            pluginJson["path"] = path;
+            auto cmd = std::make_unique<AddPluginCommand>(
+                track.pluginChain(), pluginJson, &m_pluginManager,
+                static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
+            cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
+                std::vector<PluginWindow*> toClose;
+                for (auto* w : m_pluginWindows) {
+                    if (w->plugin() == plugin)
+                        toClose.push_back(w);
+                }
+                for (auto* w : toClose)
+                    w->close();
+            });
+            executeCommand(std::move(cmd));
         });
         connect(row.pluginList, &PluginListWidget::pluginRemoved, this, [this](int) {
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
