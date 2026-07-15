@@ -14,6 +14,7 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 50; }
+    bool requiresPluginWindowsClose() const override { return false; }
     void setBeforeRemoveCallback(std::function<void(PluginInstance*)> cb) { m_beforeRemove = std::move(cb); }
 private:
     PluginChain& m_chain;
@@ -72,6 +73,7 @@ public:
     void undo() override;
     int id() const override { return 54; }
     bool mergeWith(const UndoCommand* other) override;
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     PluginInstance* m_plugin;
     int m_paramIndex;

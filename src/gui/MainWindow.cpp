@@ -502,7 +502,7 @@ void MainWindow::pushCommand(std::unique_ptr<UndoCommand> cmd) {
 
 void MainWindow::performUndo() {
     auto* cmd = m_undoStack.topCommand();
-    if (!cmd || (cmd->id() != 50 && cmd->id() != 54))
+    if (!cmd || cmd->requiresPluginWindowsClose())
         closeAllPluginWindows();
     if (m_undoStack.undo()) {
         rebuildTracks();
@@ -512,7 +512,7 @@ void MainWindow::performUndo() {
 
 void MainWindow::performRedo() {
     auto* cmd = m_undoStack.topCommand();
-    if (!cmd || (cmd->id() != 50 && cmd->id() != 54))
+    if (!cmd || cmd->requiresPluginWindowsClose())
         closeAllPluginWindows();
     if (m_undoStack.redo()) {
         rebuildTracks();
