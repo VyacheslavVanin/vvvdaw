@@ -64,3 +64,17 @@ private:
     bool m_oldValue;
     bool m_newValue;
 };
+
+class SetPluginParameterCommand : public UndoCommand {
+public:
+    SetPluginParameterCommand(PluginInstance* plugin, int paramIndex, float oldValue, float newValue);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 54; }
+    bool mergeWith(const UndoCommand* other) override;
+private:
+    PluginInstance* m_plugin;
+    int m_paramIndex;
+    float m_oldValue;
+    float m_newValue;
+};

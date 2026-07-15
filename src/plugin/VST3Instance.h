@@ -138,6 +138,7 @@ public:
     void stateFromJson(const QJsonObject& json) override;
 
     void queueInputParamChange(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value);
+    void handlePerformEdit(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value);
 
 private:
     bool m_enabled = true;

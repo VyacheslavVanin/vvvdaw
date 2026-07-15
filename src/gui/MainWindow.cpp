@@ -502,7 +502,7 @@ void MainWindow::pushCommand(std::unique_ptr<UndoCommand> cmd) {
 
 void MainWindow::performUndo() {
     auto* cmd = m_undoStack.topCommand();
-    if (!cmd || cmd->id() != 50)
+    if (!cmd || (cmd->id() != 50 && cmd->id() != 54))
         closeAllPluginWindows();
     if (m_undoStack.undo()) {
         rebuildTracks();
@@ -512,7 +512,7 @@ void MainWindow::performUndo() {
 
 void MainWindow::performRedo() {
     auto* cmd = m_undoStack.topCommand();
-    if (!cmd || cmd->id() != 50)
+    if (!cmd || (cmd->id() != 50 && cmd->id() != 54))
         closeAllPluginWindows();
     if (m_undoStack.redo()) {
         rebuildTracks();
@@ -1045,10 +1045,21 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
     }
     auto* window = new PluginWindow(plugin, this);
     m_pluginWindows.push_back(window);
-    connect(window, &PluginWindow::windowClosed, this, [this, window]() {
+    connect(window, &PluginWindow::windowClosed, this, [this, window, plugin]() {
+        plugin->setParameterChangeCallback({});
         m_pluginWindows.erase(
             std::remove(m_pluginWindows.begin(), m_pluginWindows.end(), window),
             m_pluginWindows.end());
+    });
+    connect(window, &PluginWindow::parameterChangeRequested, this,
+            [this, plugin](int paramIndex, float oldValue, float newValue) {
+        m_undoStack.execute(
+            std::make_unique<SetPluginParameterCommand>(plugin, paramIndex, oldValue, newValue));
+    });
+    plugin->setParameterChangeCallback(
+        [this, plugin](int paramIndex, float oldValue, float newValue) {
+        m_undoStack.execute(
+            std::make_unique<SetPluginParameterCommand>(plugin, paramIndex, oldValue, newValue));
     });
     window->open();
 }

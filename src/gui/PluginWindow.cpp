@@ -51,6 +51,8 @@ void PluginWindow::open() {
         if (label) label->hide();
 
         auto* paramWidget = new PluginParameterWidget(m_plugin, this);
+        connect(paramWidget, &PluginParameterWidget::parameterChangeRequested,
+                this, &PluginWindow::parameterChangeRequested);
         layout()->addWidget(paramWidget);
         adjustSize();
     });

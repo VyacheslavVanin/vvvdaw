@@ -88,6 +88,8 @@ PluginParameterWidget::PluginParameterWidget(PluginInstance* plugin, QWidget* pa
 }
 
 void PluginParameterWidget::onSliderChanged(int paramIndex, float normalizedValue) {
-    if (m_plugin)
-        m_plugin->setParameter(paramIndex, normalizedValue);
+    if (!m_plugin) return;
+    float oldValue = m_plugin->getParameter(paramIndex);
+    if (oldValue == normalizedValue) return;
+    emit parameterChangeRequested(paramIndex, oldValue, normalizedValue);
 }

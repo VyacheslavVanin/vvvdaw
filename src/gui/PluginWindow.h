@@ -19,6 +19,7 @@ public:
 
 signals:
     void windowClosed();
+    void parameterChangeRequested(int paramIndex, float oldValue, float newValue);
 
 protected:
     void closeEvent(QCloseEvent* event) override;

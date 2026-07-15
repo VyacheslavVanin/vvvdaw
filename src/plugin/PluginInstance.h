@@ -1,6 +1,7 @@
 #pragma once
 #include <QString>
 #include <QJsonObject>
+#include <functional>
 #include <vector>
 #include <cstdint>
 
@@ -19,6 +20,8 @@ struct PluginPortInfo {
 
 class PluginInstance {
 public:
+    using ParamChangeCallback = std::function<void(int paramIndex, float oldValue, float newValue)>;
+
     virtual ~PluginInstance() = default;
 
     virtual bool load(const QString& path) = 0;
@@ -51,4 +54,10 @@ public:
 
     virtual QJsonObject stateToJson() const = 0;
     virtual void stateFromJson(const QJsonObject& json) = 0;
+
+    void setParameterChangeCallback(ParamChangeCallback cb) { m_paramChangeCallback = std::move(cb); }
+    const ParamChangeCallback& parameterChangeCallback() const { return m_paramChangeCallback; }
+
+protected:
+    ParamChangeCallback m_paramChangeCallback;
 };

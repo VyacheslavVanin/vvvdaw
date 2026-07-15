@@ -81,3 +81,27 @@ void TogglePluginCommand::execute() {
 void TogglePluginCommand::undo() {
     m_plugin->setEnabled(m_oldValue);
 }
+
+// --- SetPluginParameterCommand ---
+
+SetPluginParameterCommand::SetPluginParameterCommand(PluginInstance* plugin, int paramIndex,
+                                                     float oldValue, float newValue)
+    : m_plugin(plugin), m_paramIndex(paramIndex), m_oldValue(oldValue), m_newValue(newValue) {}
+
+void SetPluginParameterCommand::execute() {
+    if (m_plugin)
+        m_plugin->setParameter(m_paramIndex, m_newValue);
+}
+
+void SetPluginParameterCommand::undo() {
+    if (m_plugin)
+        m_plugin->setParameter(m_paramIndex, m_oldValue);
+}
+
+bool SetPluginParameterCommand::mergeWith(const UndoCommand* other) {
+    auto* cmd = dynamic_cast<const SetPluginParameterCommand*>(other);
+    if (!cmd) return false;
+    if (m_plugin != cmd->m_plugin || m_paramIndex != cmd->m_paramIndex) return false;
+    m_newValue = cmd->m_newValue;
+    return true;
+}

@@ -120,8 +120,8 @@ uint32 PLUGIN_API HostComponentHandler::addRef() { return 1; }
 uint32 PLUGIN_API HostComponentHandler::release() { return 0; }
 
 tresult PLUGIN_API HostComponentHandler::performEdit(ParamID id, ParamValue value) {
-    if (m_controller)
-        m_controller->setParamNormalized(id, value);
+    if (m_instance)
+        m_instance->handlePerformEdit(id, value);
     if (m_instance)
         m_instance->queueInputParamChange(id, value);
     return kResultTrue;
@@ -510,6 +510,16 @@ void VST3Instance::setParameter(int index, float value) {
 float VST3Instance::getParameter(int index) const {
     if (!m_controller) return 0.0f;
     return static_cast<float>(m_controller->getParamNormalized(index));
+}
+
+void VST3Instance::handlePerformEdit(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) {
+    if (m_paramChangeCallback) {
+        float oldValue = m_controller ? static_cast<float>(m_controller->getParamNormalized(id)) : 0.0f;
+        m_paramChangeCallback(static_cast<int>(id), oldValue, static_cast<float>(value));
+    } else {
+        if (m_controller)
+            m_controller->setParamNormalized(id, value);
+    }
 }
 
 bool VST3Instance::hasEditor() const {
