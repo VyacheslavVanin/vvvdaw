@@ -16,6 +16,7 @@ public:
     int id() const override { return 50; }
     bool requiresPluginWindowsClose() const override { return false; }
     void setBeforeRemoveCallback(std::function<void(PluginInstance*)> cb) { m_beforeRemove = std::move(cb); }
+    PluginInstance* addedPlugin() const { return m_addedPlugin; }
 private:
     PluginChain& m_chain;
     QJsonObject m_pluginJson;

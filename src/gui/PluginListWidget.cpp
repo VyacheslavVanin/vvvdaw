@@ -153,6 +153,7 @@ void PluginListWidget::onAddClicked() {
 
     connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
     connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    connect(listWidget, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
 
     if (dialog.exec() == QDialog::Accepted && listWidget->currentItem()) {
         auto* item = listWidget->currentItem();

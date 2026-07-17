@@ -336,6 +336,8 @@ void MainWindow::setupUi() {
                 w->close();
         });
         executeCommand(std::move(cmd));
+        if (auto* added = dynamic_cast<AddPluginCommand*>(m_undoStack.topCommand()))
+            if (added->addedPlugin()) openPluginEditor(added->addedPlugin());
     });
     connect(m_busPanel, &BusPanelWidget::busPluginRemoved, this, [this](int, int) {
         pushCommand(std::make_unique<SnapshotCommand>(m_project));
@@ -801,6 +803,8 @@ void MainWindow::rebuildTracks() {
                     w->close();
             });
             executeCommand(std::move(cmd));
+            if (auto* added = dynamic_cast<AddPluginCommand*>(m_undoStack.topCommand()))
+                if (added->addedPlugin()) openPluginEditor(added->addedPlugin());
         });
         connect(row.pluginList, &PluginListWidget::pluginRemoved, this, [this](int) {
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
