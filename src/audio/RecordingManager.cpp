@@ -4,7 +4,6 @@
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
 #include "core/Constants.h"
-#include "AudioUtils.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -242,34 +241,6 @@ void RecordingManager::processCapture(const float* input, unsigned long frameCou
             rt.buffer->write(m_scratch.data(), frameCount * 2);
         } else {
             rt.buffer->write(input, frameCount * 2);
-        }
-    }
-}
-
-void RecordingManager::processMonitoring(Project* proj, const float* input, float* output,
-                                          unsigned long frameCount, int inCh, int outCh) {
-    for (const auto& track : proj->tracks()) {
-        if (!track.isRecordArmed() || !track.isMonitoring()) continue;
-        float trackVol = track.volume() * vvvdaw::MonitoringVolumeFactor;
-        float pan = track.pan();
-        auto [leftGain, rightGain] = panGains(pan);
-
-        if (outCh >= 2) {
-            if (inCh == 1) {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    float s = input[f] * trackVol;
-                    output[f * 2]     += s * leftGain;
-                    output[f * 2 + 1] += s * rightGain;
-                }
-            } else {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    output[f * 2]     += input[f * 2]     * trackVol * leftGain;
-                    output[f * 2 + 1] += input[f * 2 + 1] * trackVol * rightGain;
-                }
-            }
-        } else {
-            for (unsigned long f = 0; f < frameCount; ++f)
-                output[f] += input[f * inCh] * trackVol;
         }
     }
 }

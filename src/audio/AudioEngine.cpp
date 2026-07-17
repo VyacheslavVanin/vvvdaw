@@ -291,19 +291,25 @@ void AudioEngine::processAudio(const float* input, float* output,
                 return;
             }
 
-            if (state == TransportState::Recording &&
-                m_recordingManager.isRegionActive() &&
-                input && inCh > 0) {
-                m_recordingManager.processMonitoring(proj, input, output, frameCount, inCh, outCh);
-                m_recordingManager.notifyWriter();
-            }
+            processBusMixing(proj, output, frameCount, pos, outCh, input, inCh);
 
-            processBusMixing(proj, output, frameCount, pos, outCh);
+            if (state == TransportState::Recording)
+                m_recordingManager.notifyWriter();
 
             int64_t newPos = advancePlayhead(proj, pos, frameCount, state);
 
             m_playPosition.store(newPos, std::memory_order_release);
         }
+    }
+
+    if ((state == TransportState::Stopped || state == TransportState::Paused)
+        && input && inCh > 0) {
+        auto* proj = m_project.load(std::memory_order_acquire);
+        if (!proj) return;
+        std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
+        if (!projectLock) return;
+        int64_t pos = m_playPosition.load(std::memory_order_acquire);
+        processBusMixing(proj, output, frameCount, pos, outCh, input, inCh, true);
     }
 }
 
@@ -353,7 +359,8 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
 }
 
 void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long frameCount,
-                                    int64_t pos, int outCh) {
+                                    int64_t pos, int outCh, const float* input, int inCh,
+                                    bool monitoringOnly) {
     int busCount = static_cast<int>(proj->buses().size());
     if (busCount == 0) return;
 
@@ -387,7 +394,40 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         if (hasPlugins)
             std::fill(m_trackScratch.begin(), m_trackScratch.begin() + frameCount * 2, 0.0f);
 
-        for (const auto& event : track.events()) {
+        bool hasMonitor = track.isMonitoring() && input && inCh > 0;
+        if (hasMonitor) {
+            if (hasPlugins) {
+                if (inCh == 1) {
+                    for (unsigned long f = 0; f < frameCount; ++f) {
+                        trackL[f] += input[f];
+                        trackR[f] += input[f];
+                    }
+                } else {
+                    for (unsigned long f = 0; f < frameCount; ++f) {
+                        trackL[f] += input[f * 2];
+                        trackR[f] += input[f * 2 + 1];
+                    }
+                }
+                hasAnyEvent = true;
+            } else {
+                float* busBuf = m_busBuffers[busIdx].data();
+                if (inCh == 1) {
+                    for (unsigned long f = 0; f < frameCount; ++f) {
+                        float s = input[f] * trackVol;
+                        busBuf[f * 2]     += s * leftGain;
+                        busBuf[f * 2 + 1] += s * rightGain;
+                    }
+                } else {
+                    for (unsigned long f = 0; f < frameCount; ++f) {
+                        busBuf[f * 2]     += input[f * 2]     * trackVol * leftGain;
+                        busBuf[f * 2 + 1] += input[f * 2 + 1] * trackVol * rightGain;
+                    }
+                }
+            }
+        }
+
+        if (!monitoringOnly) {
+            for (const auto& event : track.events()) {
             auto activeClip = event.activeClip();
             if (!activeClip || !activeClip->isValid()) continue;
 
@@ -457,6 +497,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                 }
             }
         }
+        } // !monitoringOnly
 
         if (hasPlugins && hasAnyEvent) {
             float* inBufs[2] = { trackL, trackR };
@@ -471,7 +512,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         }
     }
 
-    if (m_metronomeEnabled) {
+    if (m_metronomeEnabled && !monitoringOnly) {
         int metroIdx = 1;
         if (metroIdx < busCount) {
             generateClick(proj, m_busBuffers[metroIdx].data(), frameCount, pos, outCh);

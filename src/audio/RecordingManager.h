@@ -37,8 +37,6 @@ public:
 
     // Called from audio callback (real-time, non-blocking)
     void processCapture(const float* input, unsigned long frameCount, int inCh);
-    void processMonitoring(Project* proj, const float* input, float* output,
-                           unsigned long frameCount, int inCh, int outCh);
     void notifyWriter();
 
     void setScratchSize(size_t frames);

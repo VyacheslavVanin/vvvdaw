@@ -67,7 +67,8 @@ private:
     void mixPlayback(Project* proj, float* output, unsigned long frameCount,
                      int64_t pos, int outCh);
     void processBusMixing(Project* proj, float* output, unsigned long frameCount,
-                          int64_t pos, int outCh);
+                          int64_t pos, int outCh, const float* input, int inCh,
+                          bool monitoringOnly = false);
     void rebuildBusGraph(Project* proj);
     int64_t advancePlayhead(Project* proj, int64_t pos, unsigned long frameCount,
                             vvvdaw::TransportState state);
