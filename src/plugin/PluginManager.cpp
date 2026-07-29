@@ -1,6 +1,7 @@
 #include "PluginManager.h"
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/base/ipluginbase.h>
+#include <lilv/lilv.h>
 #include <filesystem>
 #include <dlfcn.h>
 #include <cstring>
@@ -14,10 +15,16 @@
 using namespace Steinberg;
 
 PluginManager::PluginManager() {
+    m_lilvWorld = lilv_world_new();
+    lilv_world_load_all(m_lilvWorld);
     loadCache();
 }
 
 PluginManager::~PluginManager() {
+    if (m_lilvWorld) {
+        lilv_world_free(m_lilvWorld);
+        m_lilvWorld = nullptr;
+    }
 }
 
 void PluginManager::scanDirectories(const std::vector<QString>& directories) {
@@ -68,7 +75,41 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
             m_plugins.push_back(pi);
         }
     }
+    scanLV2();
     saveCache();
+}
+
+void PluginManager::scanLV2() {
+    if (!m_lilvWorld) return;
+
+    std::set<QString> knownLV2;
+    for (auto& pi : m_plugins)
+        if (pi.type == "lv2")
+            knownLV2.insert(pi.pluginId);
+
+    const LilvPlugins* plugins = lilv_world_get_all_plugins(m_lilvWorld);
+    LILV_FOREACH(plugins, it, plugins) {
+        const LilvPlugin* p = lilv_plugins_get(plugins, it);
+
+        const LilvNode* uriNode = lilv_plugin_get_uri(p);
+        QString uri = QString::fromUtf8(lilv_node_as_string(uriNode));
+        if (knownLV2.contains(uri)) continue;
+
+        const LilvNode* nameNode = lilv_plugin_get_name(p);
+        QString name = nameNode ? QString::fromUtf8(lilv_node_as_string(nameNode)) : uri;
+
+        const LilvNode* authorNode = lilv_plugin_get_author_name(p);
+        QString vendor = authorNode ? QString::fromUtf8(lilv_node_as_string(authorNode)) : QString();
+
+        PluginInfo pi;
+        pi.name = name;
+        pi.vendor = vendor;
+        pi.path = uri;
+        pi.pluginId = uri;
+        pi.category = QString::fromUtf8(LV2_CORE__Plugin);
+        pi.type = "lv2";
+        m_plugins.push_back(pi);
+    }
 }
 
 void PluginManager::loadCache() {
@@ -129,5 +170,8 @@ std::vector<QString> PluginManager::defaultScanPaths() {
     paths.push_back(home + "/.vst3");
     paths.push_back("/usr/lib/vst3");
     paths.push_back("/usr/local/lib/vst3");
+    paths.push_back(home + "/.lv2");
+    paths.push_back("/usr/lib/lv2");
+    paths.push_back("/usr/local/lib/lv2");
     return paths;
 }

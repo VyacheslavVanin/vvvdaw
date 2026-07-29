@@ -22,6 +22,7 @@ class TrackViewWidget;
 class BusPanelWidget;
 class PluginWindow;
 class PluginInstance;
+class PluginChain;
 class PluginListWidget;
 class QSplitter;
 class QVBoxLayout;
@@ -48,6 +49,7 @@ private:
     void performUndo();
     void performRedo();
     void openPluginEditor(PluginInstance* plugin);
+    class PluginChain* findChainForPlugin(PluginInstance* plugin);
     void closeAllPluginWindows();
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);

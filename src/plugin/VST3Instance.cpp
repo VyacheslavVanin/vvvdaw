@@ -505,6 +505,8 @@ std::vector<PluginPortInfo> VST3Instance::ports() const {
 void VST3Instance::setParameter(int index, float value) {
     if (!m_controller) return;
     m_controller->setParamNormalized(index, qBound(0.0f, value, 1.0f));
+    if (m_paramValueCallback)
+        m_paramValueCallback(index, value);
 }
 
 float VST3Instance::getParameter(int index) const {

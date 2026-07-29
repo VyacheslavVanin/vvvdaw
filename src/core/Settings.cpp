@@ -16,6 +16,7 @@ Settings::Settings()
     , outputChannel(0)
     , streamingThresholdSec(30)
     , mouseWheelScroll(false)
+    , pluginKnobsPerRow(3)
 {
 }
 
@@ -53,6 +54,7 @@ QJsonObject Settings::toJson() const {
     obj["lastProjectPath"] = lastProjectPath;
     obj["streamingThresholdSec"] = streamingThresholdSec;
     obj["mouseWheelScroll"] = mouseWheelScroll;
+    obj["pluginKnobsPerRow"] = pluginKnobsPerRow;
 
     QJsonArray pathsArr;
     for (const auto& path : pluginScanPaths)
@@ -72,6 +74,7 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("lastProjectPath")) lastProjectPath = obj["lastProjectPath"].toString();
     if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
     if (obj.contains("mouseWheelScroll")) mouseWheelScroll = obj["mouseWheelScroll"].toBool(false);
+    if (obj.contains("pluginKnobsPerRow")) pluginKnobsPerRow = obj["pluginKnobsPerRow"].toInt(3);
     if (obj.contains("pluginScanPaths")) {
         pluginScanPaths.clear();
         QJsonArray arr = obj["pluginScanPaths"].toArray();

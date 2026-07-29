@@ -26,6 +26,8 @@
 #include "audio/DeviceInfo.h"
 #include "core/Settings.h"
 #include "plugin/PluginInstance.h"
+#include "plugin/PluginChain.h"
+#include "plugin/LV2Instance.h"
 
 using vvvdaw::TransportState;
 #include <QApplication>
@@ -1038,8 +1040,32 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
     return QMainWindow::eventFilter(obj, event);
 }
 
+PluginChain* MainWindow::findChainForPlugin(PluginInstance* plugin) {
+    // Search all tracks
+    for (auto& track : m_project.tracks()) {
+        auto& chain = track.pluginChain();
+        for (int j = 0; j < chain.count(); ++j)
+            if (chain.plugin(j) == plugin) return &chain;
+    }
+    // Search all buses
+    for (auto& bus : m_project.buses()) {
+        for (int j = 0; j < bus.pluginChain.count(); ++j)
+            if (bus.pluginChain.plugin(j) == plugin) return &bus.pluginChain;
+    }
+    return nullptr;
+}
+
 void MainWindow::openPluginEditor(PluginInstance* plugin) {
     if (!plugin || !plugin->hasEditor()) return;
+
+    auto* chain = findChainForPlugin(plugin);
+
+    auto* lv2 = dynamic_cast<LV2Instance*>(plugin);
+    if (lv2 && lv2->hasNativeUI()) {
+        // Use plugin window path for embedding native X11 UIs.
+        // The LV2Instance::createEditor will reparent into PluginWindow.
+    }
+
     for (auto* w : m_pluginWindows) {
         if (w->plugin() == plugin && w->isVisible()) {
             w->raise();
@@ -1047,7 +1073,7 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
             return;
         }
     }
-    auto* window = new PluginWindow(plugin, this);
+    auto* window = new PluginWindow(plugin, m_settings.pluginKnobsPerRow, this);
     m_pluginWindows.push_back(window);
     connect(window, &PluginWindow::windowClosed, this, [this, window, plugin]() {
         plugin->setParameterChangeCallback({});
@@ -1056,14 +1082,28 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
             m_pluginWindows.end());
     });
     connect(window, &PluginWindow::parameterChangeRequested, this,
-            [this, plugin](int paramIndex, float oldValue, float newValue) {
-        m_undoStack.execute(
-            std::make_unique<SetPluginParameterCommand>(plugin, paramIndex, oldValue, newValue));
+            [this, chain, plugin](int paramIndex, float oldValue, float newValue) {
+        if (chain)
+            m_undoStack.execute(
+                std::make_unique<SetPluginParameterCommand>(*chain, plugin, paramIndex, oldValue, newValue));
+    });
+    connect(window, &PluginWindow::pathParameterChangeRequested, this,
+            [this, chain, plugin](int paramIndex, const QString& oldValue, const QString& newValue) {
+        if (chain)
+            m_undoStack.execute(
+                std::make_unique<SetPluginPathParameterCommand>(*chain, plugin, paramIndex, oldValue, newValue));
     });
     plugin->setParameterChangeCallback(
-        [this, plugin](int paramIndex, float oldValue, float newValue) {
-        m_undoStack.execute(
-            std::make_unique<SetPluginParameterCommand>(plugin, paramIndex, oldValue, newValue));
+        [this, chain, plugin](int paramIndex, float oldValue, float newValue) {
+        if (chain)
+            m_undoStack.execute(
+                std::make_unique<SetPluginParameterCommand>(*chain, plugin, paramIndex, oldValue, newValue));
+    });
+    plugin->setStringParameterChangeCallback(
+        [this, chain, plugin](int paramIndex, const QString& oldValue, const QString& newValue) {
+        if (chain && oldValue != newValue)
+            m_undoStack.execute(
+                std::make_unique<SetPluginPathParameterCommand>(*chain, plugin, paramIndex, oldValue, newValue));
     });
     window->open();
 }

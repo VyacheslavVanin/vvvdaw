@@ -31,5 +31,6 @@ private:
     QSpinBox* m_outputChannelSpin;
     QSpinBox* m_streamingThresholdSpin;
     QCheckBox* m_mouseWheelCheck;
+    QSpinBox* m_knobsPerRowSpin;
     QListWidget* m_pluginPathList;
 };

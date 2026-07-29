@@ -18,6 +18,7 @@ public:
     int outputChannel;
     int streamingThresholdSec;
     bool mouseWheelScroll;
+    int pluginKnobsPerRow;
 
     QString lastProjectPath;
     std::vector<QString> pluginScanPaths;

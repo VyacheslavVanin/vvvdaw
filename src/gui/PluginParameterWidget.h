@@ -4,19 +4,33 @@
 
 class PluginInstance;
 struct PluginPortInfo;
+class RotaryKnob;
+class QLabel;
+class QLineEdit;
 
 class PluginParameterWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit PluginParameterWidget(PluginInstance* plugin, QWidget* parent = nullptr);
+    explicit PluginParameterWidget(PluginInstance* plugin,
+                                   int knobsPerRow = 3,
+                                   QWidget* parent = nullptr);
+    ~PluginParameterWidget();
 
 signals:
     void parameterChangeRequested(int paramIndex, float oldValue, float newValue);
-
-private slots:
-    void onSliderChanged(int paramIndex, float normalizedValue);
+    void pathParameterChangeRequested(int paramIndex, const QString& oldValue, const QString& newValue);
 
 private:
+    void buildControlGrid(int knobsPerRow, const std::vector<PluginPortInfo>& ports);
+    void buildStringRows(const std::vector<PluginPortInfo>& ports);
+
     PluginInstance* m_plugin = nullptr;
     std::vector<int> m_paramIndices;
+    std::vector<RotaryKnob*> m_knobs;
+
+    struct KnobRange { float min; float range; QLabel* label = nullptr; };
+    std::vector<KnobRange> m_knobRanges;
+
+    struct StringParamInfo { int paramIndex; QLineEdit* edit = nullptr; };
+    std::vector<StringParamInfo> m_stringParams;
 };

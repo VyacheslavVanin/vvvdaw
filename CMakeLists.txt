@@ -10,6 +10,10 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PORTAUDIO REQUIRED IMPORTED_TARGET portaudio-2.0)
 pkg_check_modules(SNDFILE REQUIRED IMPORTED_TARGET sndfile)
+pkg_check_modules(LILV REQUIRED IMPORTED_TARGET lilv-0)
+pkg_check_modules(SORD REQUIRED IMPORTED_TARGET sord-0)
+pkg_check_modules(SRATOM REQUIRED IMPORTED_TARGET sratom-0)
+find_package(X11 REQUIRED)
 
 add_executable(vvvdaw
     resources.qrc
@@ -30,6 +34,8 @@ add_executable(vvvdaw
     src/model/Track.cpp
     src/model/Project.cpp
     src/plugin/VST3Instance.cpp
+    src/plugin/LV2Instance.cpp
+    src/plugin/LV2UIHost.cpp
     src/plugin/PluginChain.cpp
     src/plugin/PluginManager.cpp
     src/gui/MainWindow.cpp
@@ -45,6 +51,7 @@ add_executable(vvvdaw
     src/gui/PluginListWidget.cpp
     src/gui/PluginWindow.cpp
     src/gui/PluginParameterWidget.cpp
+    src/gui/RotaryKnob.cpp
 )
 
 target_include_directories(vvvdaw PRIVATE
@@ -60,6 +67,10 @@ target_link_libraries(vvvdaw PRIVATE
     Qt6::Widgets
     PkgConfig::PORTAUDIO
     PkgConfig::SNDFILE
+    PkgConfig::LILV
+    PkgConfig::SORD
+    PkgConfig::SRATOM
+    X11::X11
     -Wl,--start-group
     sdk_hosting
     sdk_common
@@ -68,3 +79,5 @@ target_link_libraries(vvvdaw PRIVATE
     -Wl,--end-group
     dl
 )
+
+target_link_options(vvvdaw PRIVATE -rdynamic)

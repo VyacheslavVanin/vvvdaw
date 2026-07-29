@@ -10,7 +10,9 @@ class PluginInstance;
 class PluginWindow : public QWidget {
     Q_OBJECT
 public:
-    explicit PluginWindow(PluginInstance* plugin, QWidget* parent = nullptr);
+    explicit PluginWindow(PluginInstance* plugin,
+                          int knobsPerRow = 3,
+                          QWidget* parent = nullptr);
     ~PluginWindow() override;
 
     void open();
@@ -20,6 +22,7 @@ public:
 signals:
     void windowClosed();
     void parameterChangeRequested(int paramIndex, float oldValue, float newValue);
+    void pathParameterChangeRequested(int paramIndex, const QString& oldValue, const QString& newValue);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -29,4 +32,5 @@ private:
     PluginInstance* m_plugin = nullptr;
     void* m_editorHandle = nullptr;
     QWindow* m_editorWindow = nullptr;
+    int m_knobsPerRow = 3;
 };

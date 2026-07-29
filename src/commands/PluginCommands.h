@@ -67,16 +67,37 @@ private:
     bool m_newValue;
 };
 
+class SetPluginPathParameterCommand : public UndoCommand {
+public:
+    SetPluginPathParameterCommand(PluginChain& chain, PluginInstance* plugin, int paramIndex,
+                                  QString oldValue, QString newValue);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 55; }
+    bool mergeWith(const UndoCommand* other) override;
+    bool requiresPluginWindowsClose() const override { return false; }
+private:
+    PluginInstance* resolvePlugin() const;
+    PluginChain& m_chain;
+    int m_pluginIndex;
+    int m_paramIndex;
+    QString m_oldValue;
+    QString m_newValue;
+};
+
 class SetPluginParameterCommand : public UndoCommand {
 public:
-    SetPluginParameterCommand(PluginInstance* plugin, int paramIndex, float oldValue, float newValue);
+    SetPluginParameterCommand(PluginChain& chain, PluginInstance* plugin, int paramIndex,
+                              float oldValue, float newValue);
     void execute() override;
     void undo() override;
     int id() const override { return 54; }
     bool mergeWith(const UndoCommand* other) override;
     bool requiresPluginWindowsClose() const override { return false; }
 private:
-    PluginInstance* m_plugin;
+    PluginInstance* resolvePlugin() const;
+    PluginChain& m_chain;
+    int m_pluginIndex;
     int m_paramIndex;
     float m_oldValue;
     float m_newValue;

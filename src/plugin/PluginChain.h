@@ -18,6 +18,7 @@ public:
     int count() const;
     PluginInstance* plugin(int index) const;
     PluginInstance* pluginById(const QString& id) const;
+    int indexOf(PluginInstance* p) const;
 
     bool process(float** inputBuffers, float** outputBuffers,
                  int numSamples, int numChannels) const;

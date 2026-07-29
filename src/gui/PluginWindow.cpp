@@ -5,11 +5,12 @@
 #include <QResizeEvent>
 #include <QVBoxLayout>
 #include <QLabel>
-#include <QTimer>
-
-PluginWindow::PluginWindow(PluginInstance* plugin, QWidget* parent)
+PluginWindow::PluginWindow(PluginInstance* plugin,
+                           int knobsPerRow,
+                           QWidget* parent)
     : QWidget(parent)
-    , m_plugin(plugin) {
+    , m_plugin(plugin)
+    , m_knobsPerRow(knobsPerRow) {
     setWindowTitle(m_plugin ? m_plugin->name() : "Plugin");
     setMinimumSize(100, 100);
     setAttribute(Qt::WA_DeleteOnClose);
@@ -35,27 +36,29 @@ void PluginWindow::open() {
     }
 
     auto* label = findChild<QLabel*>();
-    if (label) label->hide();
+    if (label) label->deleteLater();
+
+    // Try native editor synchronously
+    m_editorHandle = m_plugin->createEditor(static_cast<void*>(this));
+    if (m_editorHandle) {
+        int w = 0, h = 0;
+        if (m_plugin->getEditorSize(w, h))
+            resize(w, h);
+        show();
+        return;
+    }
+
+    // Native editor failed — show fallback parameter UI
+    auto* paramWidget = new PluginParameterWidget(m_plugin, m_knobsPerRow, this);
+    connect(paramWidget, &PluginParameterWidget::parameterChangeRequested,
+            this, &PluginWindow::parameterChangeRequested);
+    connect(paramWidget, &PluginParameterWidget::pathParameterChangeRequested,
+            this, &PluginWindow::pathParameterChangeRequested);
+    layout()->addWidget(paramWidget);
+    adjustSize();
+    if (width() < 300) resize(300, height());
+    if (height() < 150) resize(width(), 150);
     show();
-
-    QTimer::singleShot(0, this, [this]() {
-        m_editorHandle = m_plugin->createEditor(static_cast<void*>(this));
-        if (m_editorHandle) {
-            int w = 0, h = 0;
-            if (m_plugin->getEditorSize(w, h))
-                resize(w, h);
-            return;
-        }
-
-        auto* label = findChild<QLabel*>();
-        if (label) label->hide();
-
-        auto* paramWidget = new PluginParameterWidget(m_plugin, this);
-        connect(paramWidget, &PluginParameterWidget::parameterChangeRequested,
-                this, &PluginWindow::parameterChangeRequested);
-        layout()->addWidget(paramWidget);
-        adjustSize();
-    });
 }
 
 void PluginWindow::close() {

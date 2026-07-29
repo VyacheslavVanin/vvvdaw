@@ -54,6 +54,11 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
     m_mouseWheelCheck->setChecked(m_settings.mouseWheelScroll);
     form->addRow("Mouse Wheel Scroll:", m_mouseWheelCheck);
 
+    m_knobsPerRowSpin = new QSpinBox(this);
+    m_knobsPerRowSpin->setRange(2, 6);
+    m_knobsPerRowSpin->setValue(m_settings.pluginKnobsPerRow);
+    form->addRow("Knobs Per Row:", m_knobsPerRowSpin);
+
     layout->addLayout(form);
 
     auto* pluginPathsGroup = new QWidget(this);
@@ -177,6 +182,7 @@ void SettingsDialog::accept() {
     m_settings.outputChannel = m_outputChannelSpin->value();
     m_settings.streamingThresholdSec = m_streamingThresholdSpin->value();
     m_settings.mouseWheelScroll = m_mouseWheelCheck->isChecked();
+    m_settings.pluginKnobsPerRow = m_knobsPerRowSpin->value();
 
     m_settings.pluginScanPaths.clear();
     for (int i = 0; i < m_pluginPathList->count(); ++i)
