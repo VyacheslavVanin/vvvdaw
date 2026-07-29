@@ -119,7 +119,7 @@ void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
 
     row->installEventFilter(this);
 
-    m_containerLayout->insertWidget(m_containerLayout->count() - 1, row);
+    m_containerLayout->addWidget(row);
     m_rows.push_back(row);
 }
 
