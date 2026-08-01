@@ -39,7 +39,7 @@ public:
     AudioBus& masterBus() { return m_buses[0]; }
     const AudioBus& masterBus() const { return m_buses[0]; }
 
-    Track* addTrack(const QString& name = {});
+    Track* addTrack(const QString& name = {}, int channels = 2);
     bool removeTrack(int index);
 
     int addBus(AudioBus bus);

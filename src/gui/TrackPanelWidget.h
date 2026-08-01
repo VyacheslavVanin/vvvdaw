@@ -34,7 +34,7 @@ signals:
     void outputBusChanged(int index);
     void inputDeviceChanged(int deviceId);
     void deleteRequested();
-    void addTrackRequested();
+    void addTrackRequested(int channels);
     void beforeModify();
 
 protected:
@@ -44,6 +44,7 @@ protected:
 private:
     Track* m_track = nullptr;
     QLineEdit* m_nameEdit = nullptr;
+    QLabel* m_channelsBadge = nullptr;
     QPushButton* m_armButton = nullptr;
     QPushButton* m_soloButton = nullptr;
     QPushButton* m_muteButton = nullptr;

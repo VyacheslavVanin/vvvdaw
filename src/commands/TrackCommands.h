@@ -8,13 +8,14 @@ class PluginManager;
 
 class AddTrackCommand : public UndoCommand {
 public:
-    AddTrackCommand(Project& project, int index);
+    AddTrackCommand(Project& project, int index, int channels = 2);
     void execute() override;
     void undo() override;
     int id() const override { return 1; }
 private:
     Project& m_project;
     int m_index;
+    int m_channels;
 };
 
 class RemoveTrackCommand : public UndoCommand {

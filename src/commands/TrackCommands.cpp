@@ -12,6 +12,7 @@
 static QJsonObject trackToJson(const Track& track) {
     QJsonObject tObj;
     tObj["name"] = track.name();
+    tObj["channels"] = track.channels();
     tObj["inputDeviceId"] = track.inputDeviceId();
     tObj["inputChannel"] = track.inputChannel();
     tObj["outputBusIndex"] = track.outputBusIndex();
@@ -44,7 +45,7 @@ static QJsonObject trackToJson(const Track& track) {
 }
 
 static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nullptr) {
-    Track track(tObj["name"].toString());
+    Track track(tObj["name"].toString(), tObj["channels"].toInt(2));
     track.setInputDeviceId(tObj["inputDeviceId"].toInt(-1));
     track.setInputChannel(tObj["inputChannel"].toInt(0));
     track.setOutputBusIndex(tObj["outputBusIndex"].toInt(0));
@@ -89,11 +90,11 @@ static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nul
 
 // --- AddTrackCommand ---
 
-AddTrackCommand::AddTrackCommand(Project& project, int index)
-    : m_project(project), m_index(index) {}
+AddTrackCommand::AddTrackCommand(Project& project, int index, int channels)
+    : m_project(project), m_index(index), m_channels(channels) {}
 
 void AddTrackCommand::execute() {
-    m_project.addTrack();
+    m_project.addTrack(QString(), m_channels);
 }
 
 void AddTrackCommand::undo() {

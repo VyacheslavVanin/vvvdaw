@@ -8,13 +8,16 @@
 class Track {
 public:
     Track() = default;
-    explicit Track(const QString& name);
+    explicit Track(const QString& name, int channels = 2);
 
     const QString& name() const { return m_name; }
     void setName(const QString& name) { m_name = name; }
 
     int inputDeviceId() const { return m_inputDeviceId; }
     void setInputDeviceId(int id) { m_inputDeviceId = id; }
+
+    int channels() const { return m_channels; }
+    void setChannels(int ch) { m_channels = ch; }
 
     int inputChannel() const { return m_inputChannel; }
     void setInputChannel(int ch) { m_inputChannel = ch; }
@@ -56,6 +59,7 @@ private:
     int m_inputDeviceId = -1;
     int m_inputChannel = 0;
     int m_outputBusIndex = 0;
+    int m_channels = 2;
 
     bool m_recordArmed = false;
     bool m_solo = false;

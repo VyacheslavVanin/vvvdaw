@@ -639,9 +639,13 @@ void MainWindow::setupMenus() {
     });
 
     auto* trackMenu = menuBar()->addMenu("&Track");
-    auto* addTrackAction = trackMenu->addAction("&Add Track", QKeySequence("Ctrl+T"));
-    connect(addTrackAction, &QAction::triggered, this, [this] {
-        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size())));
+    auto* addStereoAction = trackMenu->addAction("Add &Stereo Track", QKeySequence("Ctrl+T"));
+    connect(addStereoAction, &QAction::triggered, this, [this] {
+        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), 2));
+    });
+    auto* addMonoAction = trackMenu->addAction("Add &Mono Track", QKeySequence("Ctrl+M"));
+    connect(addMonoAction, &QAction::triggered, this, [this] {
+        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), 1));
     });
 
     auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
@@ -759,8 +763,8 @@ void MainWindow::rebuildTracks() {
             syncZoom();
         });
 
-        connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this] {
-            executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size())));
+        connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this](int channels) {
+            executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), channels));
         });
 
         connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {

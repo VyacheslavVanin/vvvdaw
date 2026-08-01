@@ -1,7 +1,7 @@
 #include "Track.h"
 
-Track::Track(const QString& name)
-    : m_name(name)
+Track::Track(const QString& name, int channels)
+    : m_name(name), m_channels(channels)
 {
 }
 

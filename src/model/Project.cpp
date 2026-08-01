@@ -112,8 +112,8 @@ bool Project::save(const QString& filePath) {
     return true;
 }
 
-Track* Project::addTrack(const QString& name) {
-    Track track(name.isEmpty() ? QString("Track %1").arg(m_tracks.size() + 1) : name);
+Track* Project::addTrack(const QString& name, int channels) {
+    Track track(name.isEmpty() ? QString("Track %1").arg(m_tracks.size() + 1) : name, channels);
     m_tracks.push_back(std::move(track));
     return &m_tracks.back();
 }
@@ -175,7 +175,7 @@ static QString relativePath(const QString& filePath, const QString& projectDir) 
 
 QJsonObject Project::toJson() const {
     QJsonObject obj;
-    obj["formatVersion"] = 2;
+    obj["formatVersion"] = 3;
     obj["name"] = m_name;
     obj["snapToGrid"] = m_snapToGrid;
     obj["metronomeEnabled"] = m_metronomeEnabled;
@@ -199,6 +199,7 @@ QJsonObject Project::toJson() const {
     for (const auto& track : m_tracks) {
         QJsonObject tObj;
         tObj["name"] = track.name();
+        tObj["channels"] = track.channels();
         tObj["inputDeviceId"] = track.inputDeviceId();
         tObj["inputChannel"] = track.inputChannel();
         tObj["outputBusIndex"] = track.outputBusIndex();
@@ -286,7 +287,7 @@ void Project::fromJson(const QJsonObject& obj) {
     const QJsonArray tracksArr = obj["tracks"].toArray();
     for (const auto& tVal : tracksArr) {
         QJsonObject tObj = tVal.toObject();
-        Track track(tObj["name"].toString());
+        Track track(tObj["name"].toString(), tObj["channels"].toInt(2));
         track.setInputDeviceId(tObj["inputDeviceId"].toInt(-1));
         track.setInputChannel(tObj["inputChannel"].toInt(0));
         track.setOutputBusIndex(tObj["outputBusIndex"].toInt(0));

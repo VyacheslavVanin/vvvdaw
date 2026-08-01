@@ -41,6 +41,15 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     });
     topRow->addWidget(m_nameEdit, 1);
 
+    m_channelsBadge = new QLabel(this);
+    m_channelsBadge->setFixedWidth(16);
+    m_channelsBadge->setAlignment(Qt::AlignCenter);
+    m_channelsBadge->setStyleSheet(
+        "QLabel { color: #8899aa; font-size: 9px; font-weight: bold; border: 1px solid #445566; border-radius: 2px; padding: 0px; }"
+    );
+    m_channelsBadge->setToolTip("Track channel count");
+    topRow->addWidget(m_channelsBadge);
+
     auto makeBtn = [&](const QString& text, const QString& style) {
         auto* btn = new QPushButton(text, this);
         btn->setFixedSize(20, 16);
@@ -196,6 +205,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 void TrackPanelWidget::updateFromTrack() {
     if (!m_track) return;
     m_nameEdit->setText(m_track->name());
+    m_channelsBadge->setText(m_track->channels() == 1 ? "M" : "S");
     m_armButton->setChecked(m_track->isRecordArmed());
     m_soloButton->setChecked(m_track->isSolo());
     m_muteButton->setChecked(m_track->isMuted());
@@ -258,9 +268,13 @@ bool TrackPanelWidget::eventFilter(QObject* obj, QEvent* event) {
 
 void TrackPanelWidget::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
-    QAction* addAction = menu.addAction("Add Track");
-    connect(addAction, &QAction::triggered, this, [this] {
-        QMetaObject::invokeMethod(this, [this] { emit addTrackRequested(); }, Qt::QueuedConnection);
+    QAction* addStereoAction = menu.addAction("Add Stereo Track");
+    connect(addStereoAction, &QAction::triggered, this, [this] {
+        QMetaObject::invokeMethod(this, [this] { emit addTrackRequested(2); }, Qt::QueuedConnection);
+    });
+    QAction* addMonoAction = menu.addAction("Add Mono Track");
+    connect(addMonoAction, &QAction::triggered, this, [this] {
+        QMetaObject::invokeMethod(this, [this] { emit addTrackRequested(1); }, Qt::QueuedConnection);
     });
     menu.addSeparator();
     QAction* deleteAction = menu.addAction("Delete Track");

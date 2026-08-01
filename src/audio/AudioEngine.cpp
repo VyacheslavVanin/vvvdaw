@@ -386,6 +386,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         float pan = track.pan();
         auto [leftGain, rightGain] = panGains(pan);
 
+        bool isMono = track.channels() < 2;
         bool hasPlugins = track.pluginChain().count() > 0;
         bool hasAnyEvent = false;
 
@@ -397,7 +398,15 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         bool hasMonitor = track.isMonitoring() && input && inCh > 0;
         if (hasMonitor) {
             if (hasPlugins) {
-                if (inCh == 1) {
+                if (isMono) {
+                    if (inCh == 1) {
+                        for (unsigned long f = 0; f < frameCount; ++f)
+                            trackL[f] += input[f];
+                    } else {
+                        for (unsigned long f = 0; f < frameCount; ++f)
+                            trackL[f] += input[f * 2];
+                    }
+                } else if (inCh == 1) {
                     for (unsigned long f = 0; f < frameCount; ++f) {
                         trackL[f] += input[f];
                         trackR[f] += input[f];
@@ -411,7 +420,21 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                 hasAnyEvent = true;
             } else {
                 float* busBuf = m_busBuffers[busIdx].data();
-                if (inCh == 1) {
+                if (isMono) {
+                    if (inCh == 1) {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            float s = input[f] * trackVol;
+                            busBuf[f * 2]     += s * leftGain;
+                            busBuf[f * 2 + 1] += s * rightGain;
+                        }
+                    } else {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            float s = input[f * 2] * trackVol;
+                            busBuf[f * 2]     += s * leftGain;
+                            busBuf[f * 2 + 1] += s * rightGain;
+                        }
+                    }
+                } else if (inCh == 1) {
                     for (unsigned long f = 0; f < frameCount; ++f) {
                         float s = input[f] * trackVol;
                         busBuf[f * 2]     += s * leftGain;
@@ -447,19 +470,32 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                                                   m_stereoScratch.data(), frameCount, ch,
                                                   framesAvail)) {
                     if (hasPlugins) {
-                        for (unsigned long f = 0; f < framesAvail; ++f) {
-                            float sL = m_stereoScratch[f * ch];
-                            float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                            trackL[f] += sL;
-                            trackR[f] += sR;
+                        if (isMono) {
+                            for (unsigned long f = 0; f < framesAvail; ++f)
+                                trackL[f] += m_stereoScratch[f * ch];
+                        } else {
+                            for (unsigned long f = 0; f < framesAvail; ++f) {
+                                float sL = m_stereoScratch[f * ch];
+                                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                                trackL[f] += sL;
+                                trackR[f] += sR;
+                            }
                         }
                     } else {
                         float* busBuf = m_busBuffers[busIdx].data();
-                        for (unsigned long f = 0; f < framesAvail; ++f) {
-                            float sL = m_stereoScratch[f * ch];
-                            float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                            busBuf[f * 2]     += sL * trackVol * leftGain;
-                            busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                        if (isMono) {
+                            for (unsigned long f = 0; f < framesAvail; ++f) {
+                                float s = m_stereoScratch[f * ch] * trackVol;
+                                busBuf[f * 2]     += s * leftGain;
+                                busBuf[f * 2 + 1] += s * rightGain;
+                            }
+                        } else {
+                            for (unsigned long f = 0; f < framesAvail; ++f) {
+                                float sL = m_stereoScratch[f * ch];
+                                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                                busBuf[f * 2]     += sL * trackVol * leftGain;
+                                busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                            }
                         }
                     }
                 }
@@ -469,30 +505,54 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                 size_t clipFrames = activeClip->frameCount();
 
                 if (hasPlugins) {
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        int64_t clipFrame = localPos + f;
-                        if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                            clipFrame >= event.offsetSample() + event.durationSample())
-                            continue;
+                    if (isMono) {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            int64_t clipFrame = localPos + f;
+                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                                clipFrame >= event.offsetSample() + event.durationSample())
+                                continue;
 
-                        float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                        float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
-                        trackL[f] += sL;
-                        trackR[f] += sR;
+                            trackL[f] += clipData[clipFrame * ch];
+                        }
+                    } else {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            int64_t clipFrame = localPos + f;
+                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                                clipFrame >= event.offsetSample() + event.durationSample())
+                                continue;
+
+                            float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
+                            float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+                            trackL[f] += sL;
+                            trackR[f] += sR;
+                        }
                     }
                 } else {
                     float* busBuf = m_busBuffers[busIdx].data();
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        int64_t clipFrame = localPos + f;
-                        if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                            clipFrame >= event.offsetSample() + event.durationSample())
-                            continue;
+                    if (isMono) {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            int64_t clipFrame = localPos + f;
+                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                                clipFrame >= event.offsetSample() + event.durationSample())
+                                continue;
 
-                        float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                        float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+                            float s = clipData[clipFrame * ch] * trackVol;
+                            busBuf[f * 2]     += s * leftGain;
+                            busBuf[f * 2 + 1] += s * rightGain;
+                        }
+                    } else {
+                        for (unsigned long f = 0; f < frameCount; ++f) {
+                            int64_t clipFrame = localPos + f;
+                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
+                                clipFrame >= event.offsetSample() + event.durationSample())
+                                continue;
 
-                        busBuf[f * 2]     += sL * trackVol * leftGain;
-                        busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                            float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
+                            float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
+
+                            busBuf[f * 2]     += sL * trackVol * leftGain;
+                            busBuf[f * 2 + 1] += sR * trackVol * rightGain;
+                        }
                     }
                 }
             }
@@ -502,12 +562,21 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         if (hasPlugins && hasAnyEvent) {
             float* inBufs[2] = { trackL, trackR };
             float* outBufs[2] = { trackL, trackR };
-            track.pluginChain().process(inBufs, outBufs, frameCount, 2);
+            int pluginChannels = isMono ? 1 : 2;
+            track.pluginChain().process(inBufs, outBufs, frameCount, pluginChannels);
 
             float* busBuf = m_busBuffers[busIdx].data();
-            for (unsigned long f = 0; f < frameCount; ++f) {
-                busBuf[f * 2]     += trackL[f] * trackVol * leftGain;
-                busBuf[f * 2 + 1] += trackR[f] * trackVol * rightGain;
+            if (isMono) {
+                for (unsigned long f = 0; f < frameCount; ++f) {
+                    float s = trackL[f] * trackVol;
+                    busBuf[f * 2]     += s * leftGain;
+                    busBuf[f * 2 + 1] += s * rightGain;
+                }
+            } else {
+                for (unsigned long f = 0; f < frameCount; ++f) {
+                    busBuf[f * 2]     += trackL[f] * trackVol * leftGain;
+                    busBuf[f * 2 + 1] += trackR[f] * trackVol * rightGain;
+                }
             }
         }
     }
