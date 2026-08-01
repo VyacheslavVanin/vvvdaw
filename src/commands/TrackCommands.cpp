@@ -210,3 +210,33 @@ void SetTrackOutputCommand::undo() {
     if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
         m_project.tracks()[m_trackIndex].setOutputBusIndex(m_oldValue);
 }
+
+// --- SetTrackMonitorCommand ---
+
+SetTrackMonitorCommand::SetTrackMonitorCommand(Project& project, int trackIndex, bool oldValue, bool newValue)
+    : m_project(project), m_trackIndex(trackIndex), m_oldValue(oldValue), m_newValue(newValue) {}
+
+void SetTrackMonitorCommand::execute() {
+    if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
+        m_project.tracks()[m_trackIndex].setMonitoring(m_newValue);
+}
+
+void SetTrackMonitorCommand::undo() {
+    if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
+        m_project.tracks()[m_trackIndex].setMonitoring(m_oldValue);
+}
+
+// --- SetTrackArmCommand ---
+
+SetTrackArmCommand::SetTrackArmCommand(Project& project, int trackIndex, bool oldValue, bool newValue)
+    : m_project(project), m_trackIndex(trackIndex), m_oldValue(oldValue), m_newValue(newValue) {}
+
+void SetTrackArmCommand::execute() {
+    if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
+        m_project.tracks()[m_trackIndex].setRecordArmed(m_newValue);
+}
+
+void SetTrackArmCommand::undo() {
+    if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
+        m_project.tracks()[m_trackIndex].setRecordArmed(m_oldValue);
+}

@@ -98,3 +98,29 @@ private:
     int m_oldValue;
     int m_newValue;
 };
+
+class SetTrackMonitorCommand : public UndoCommand {
+public:
+    SetTrackMonitorCommand(Project& project, int trackIndex, bool oldValue, bool newValue);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 15; }
+private:
+    Project& m_project;
+    int m_trackIndex;
+    bool m_oldValue;
+    bool m_newValue;
+};
+
+class SetTrackArmCommand : public UndoCommand {
+public:
+    SetTrackArmCommand(Project& project, int trackIndex, bool oldValue, bool newValue);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 16; }
+private:
+    Project& m_project;
+    int m_trackIndex;
+    bool m_oldValue;
+    bool m_newValue;
+};

@@ -25,13 +25,13 @@ public:
     void updateInputDeviceList(const std::vector<DeviceInfo>& devices);
 
 signals:
-    void armToggled(bool armed);
-    void soloToggled(bool solo);
-    void muteToggled(bool muted);
-    void monitorToggled(bool monitoring);
-    void panChanged(float pan);
-    void volumeChanged(float volume);
-    void outputBusChanged(int index);
+    void armToggled(bool oldValue, bool newValue);
+    void soloToggled(bool oldValue, bool newValue);
+    void muteToggled(bool oldValue, bool newValue);
+    void monitorToggled(bool oldValue, bool newValue);
+    void panChanged(float oldValue, float newValue);
+    void volumeChanged(float oldValue, float newValue);
+    void outputBusChanged(int oldIndex, int newIndex);
     void inputDeviceChanged(int deviceId);
     void deleteRequested();
     void addTrackRequested(int channels);

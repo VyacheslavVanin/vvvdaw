@@ -777,6 +777,48 @@ void MainWindow::rebuildTracks() {
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
+        connect(row.panel, &TrackPanelWidget::armToggled, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+            if (oldValue == newValue) return;
+            pushCommand(std::make_unique<SetTrackArmCommand>(m_project, idx, oldValue, newValue));
+        });
+
+        connect(row.panel, &TrackPanelWidget::soloToggled, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+            if (oldValue == newValue) return;
+            pushCommand(std::make_unique<SetTrackSoloCommand>(m_project, idx, oldValue, newValue));
+        });
+
+        connect(row.panel, &TrackPanelWidget::muteToggled, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+            if (oldValue == newValue) return;
+            pushCommand(std::make_unique<SetTrackMuteCommand>(m_project, idx, oldValue, newValue));
+        });
+
+        connect(row.panel, &TrackPanelWidget::monitorToggled, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+            if (oldValue == newValue) return;
+            pushCommand(std::make_unique<SetTrackMonitorCommand>(m_project, idx, oldValue, newValue));
+        });
+
+        connect(row.panel, &TrackPanelWidget::panChanged, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](float oldValue, float newValue) {
+            if (oldValue == newValue) return;
+            pushCommand(std::make_unique<SetTrackPanCommand>(m_project, idx, oldValue, newValue));
+        });
+
+        connect(row.panel, &TrackPanelWidget::volumeChanged, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](float oldValue, float newValue) {
+            if (oldValue == newValue) return;
+            pushCommand(std::make_unique<SetTrackVolumeCommand>(m_project, idx, oldValue, newValue));
+        });
+
+        connect(row.panel, &TrackPanelWidget::outputBusChanged, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](int oldIndex, int newIndex) {
+            if (oldIndex == newIndex) return;
+            pushCommand(std::make_unique<SetTrackOutputCommand>(m_project, idx, oldIndex, newIndex));
+        });
+
         connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
                 &MainWindow::openPluginEditor);
 

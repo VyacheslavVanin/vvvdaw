@@ -153,43 +153,55 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     layout->addLayout(outRow);
 
     connect(m_armButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (m_track) m_track->setRecordArmed(checked);
-        emit armToggled(checked);
+        if (m_track) {
+            bool oldValue = m_track->isRecordArmed();
+            m_track->setRecordArmed(checked);
+            emit armToggled(oldValue, checked);
+        }
     });
     connect(m_soloButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (m_track) m_track->setSolo(checked);
-        emit soloToggled(checked);
+        if (m_track) {
+            bool oldValue = m_track->isSolo();
+            m_track->setSolo(checked);
+            emit soloToggled(oldValue, checked);
+        }
     });
     connect(m_muteButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (m_track) m_track->setMuted(checked);
-        emit muteToggled(checked);
+        if (m_track) {
+            bool oldValue = m_track->isMuted();
+            m_track->setMuted(checked);
+            emit muteToggled(oldValue, checked);
+        }
     });
     connect(m_monitorButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (m_track) m_track->setMonitoring(checked);
-        emit monitorToggled(checked);
+        if (m_track) {
+            bool oldValue = m_track->isMonitoring();
+            m_track->setMonitoring(checked);
+            emit monitorToggled(oldValue, checked);
+        }
     });
-    connect(m_panSlider, &QSlider::sliderPressed, this, [this] { emit beforeModify(); });
-    connect(m_volumeSlider, &QSlider::sliderPressed, this, [this] { emit beforeModify(); });
-    for (auto* btn : {m_muteButton, m_soloButton, m_armButton, m_monitorButton}) {
-        connect(btn, &QPushButton::pressed, this, [this] { emit beforeModify(); });
-    }
-
     connect(m_panSlider, &QSlider::valueChanged, this, [this](int val) {
         float pan = val / 100.0f;
-        if (m_track) m_track->setPan(pan);
-        emit panChanged(pan);
+        if (m_track) {
+            float oldValue = m_track->pan();
+            m_track->setPan(pan);
+            emit panChanged(oldValue, pan);
+        }
     });
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int val) {
         float vol = val / 100.0f;
-        if (m_track) m_track->setVolume(vol);
-        emit volumeChanged(vol);
+        if (m_track) {
+            float oldValue = m_track->volume();
+            m_track->setVolume(vol);
+            emit volumeChanged(oldValue, vol);
+        }
     });
 
     connect(m_outputBusCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
         if (m_track) {
-            emit beforeModify();
+            int oldIndex = m_track->outputBusIndex();
             m_track->setOutputBusIndex(index);
-            emit outputBusChanged(index);
+            emit outputBusChanged(oldIndex, index);
         }
     });
     connect(m_inputDeviceCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
