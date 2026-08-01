@@ -639,13 +639,13 @@ void MainWindow::setupMenus() {
     });
 
     auto* trackMenu = menuBar()->addMenu("&Track");
-    auto* addStereoAction = trackMenu->addAction("Add &Stereo Track", QKeySequence("Ctrl+T"));
-    connect(addStereoAction, &QAction::triggered, this, [this] {
-        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), 2));
-    });
-    auto* addMonoAction = trackMenu->addAction("Add &Mono Track", QKeySequence("Ctrl+M"));
+    auto* addMonoAction = trackMenu->addAction("Add &Mono Track", QKeySequence("Ctrl+T"));
     connect(addMonoAction, &QAction::triggered, this, [this] {
         executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), 1));
+    });
+    auto* addStereoAction = trackMenu->addAction("Add &Stereo Track", QKeySequence("Ctrl+M"));
+    connect(addStereoAction, &QAction::triggered, this, [this] {
+        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), 2));
     });
 
     auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
