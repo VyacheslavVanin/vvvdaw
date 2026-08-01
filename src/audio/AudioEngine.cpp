@@ -395,169 +395,68 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         if (hasPlugins)
             std::fill(m_trackScratch.begin(), m_trackScratch.begin() + frameCount * 2, 0.0f);
 
+        float* busBuf = m_busBuffers[busIdx].data();
+
         bool hasMonitor = track.isMonitoring() && input && inCh > 0;
         if (hasMonitor) {
             if (hasPlugins) {
-                if (isMono) {
-                    if (inCh == 1) {
-                        for (unsigned long f = 0; f < frameCount; ++f)
-                            trackL[f] += input[f];
-                    } else {
-                        for (unsigned long f = 0; f < frameCount; ++f)
-                            trackL[f] += input[f * 2];
-                    }
-                } else if (inCh == 1) {
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        trackL[f] += input[f];
-                        trackR[f] += input[f];
-                    }
-                } else {
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        trackL[f] += input[f * 2];
-                        trackR[f] += input[f * 2 + 1];
-                    }
-                }
+                addSourceToTrack(trackL, trackR, input, inCh, frameCount, isMono);
                 hasAnyEvent = true;
             } else {
-                float* busBuf = m_busBuffers[busIdx].data();
-                if (isMono) {
-                    if (inCh == 1) {
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            float s = input[f] * trackVol;
-                            busBuf[f * 2]     += s * leftGain;
-                            busBuf[f * 2 + 1] += s * rightGain;
-                        }
-                    } else {
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            float s = input[f * 2] * trackVol;
-                            busBuf[f * 2]     += s * leftGain;
-                            busBuf[f * 2 + 1] += s * rightGain;
-                        }
-                    }
-                } else if (inCh == 1) {
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        float s = input[f] * trackVol;
-                        busBuf[f * 2]     += s * leftGain;
-                        busBuf[f * 2 + 1] += s * rightGain;
-                    }
-                } else {
-                    for (unsigned long f = 0; f < frameCount; ++f) {
-                        busBuf[f * 2]     += input[f * 2]     * trackVol * leftGain;
-                        busBuf[f * 2 + 1] += input[f * 2 + 1] * trackVol * rightGain;
-                    }
-                }
+                addSourceToBus(busBuf, input, inCh, frameCount, trackVol,
+                               leftGain, rightGain, isMono);
             }
         }
 
         if (!monitoringOnly) {
             for (const auto& event : track.events()) {
-            auto activeClip = event.activeClip();
-            if (!activeClip || !activeClip->isValid()) continue;
+                auto activeClip = event.activeClip();
+                if (!activeClip || !activeClip->isValid()) continue;
 
-            int64_t eventEnd = event.startSample() + event.durationSample();
-            if (pos >= eventEnd || pos + frameCount <= event.startSample())
-                continue;
+                int64_t eventEnd = event.startSample() + event.durationSample();
+                if (pos >= eventEnd || pos + frameCount <= event.startSample())
+                    continue;
 
-            hasAnyEvent = true;
-            int64_t localPos = pos - event.startSample() + event.offsetSample();
-            if (localPos < event.offsetSample()) localPos = event.offsetSample();
+                hasAnyEvent = true;
+                int64_t localPos = pos - event.startSample() + event.offsetSample();
+                if (localPos < event.offsetSample()) localPos = event.offsetSample();
 
-            if (activeClip->isStreaming()) {
-                int ch = activeClip->channels();
-                size_t framesAvail = 0;
-                if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
-                                                  event.durationSample(),
-                                                  m_stereoScratch.data(), frameCount, ch,
-                                                  framesAvail)) {
-                    if (hasPlugins) {
-                        if (isMono) {
-                            for (unsigned long f = 0; f < framesAvail; ++f)
-                                trackL[f] += m_stereoScratch[f * ch];
+                if (activeClip->isStreaming()) {
+                    int ch = activeClip->channels();
+                    size_t framesAvail = 0;
+                    if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
+                                                      event.durationSample(),
+                                                      m_stereoScratch.data(), frameCount, ch,
+                                                      framesAvail)) {
+                        if (hasPlugins) {
+                            addSourceToTrack(trackL, trackR, m_stereoScratch.data(), ch,
+                                             framesAvail, isMono);
                         } else {
-                            for (unsigned long f = 0; f < framesAvail; ++f) {
-                                float sL = m_stereoScratch[f * ch];
-                                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                                trackL[f] += sL;
-                                trackR[f] += sR;
-                            }
-                        }
-                    } else {
-                        float* busBuf = m_busBuffers[busIdx].data();
-                        if (isMono) {
-                            for (unsigned long f = 0; f < framesAvail; ++f) {
-                                float s = m_stereoScratch[f * ch] * trackVol;
-                                busBuf[f * 2]     += s * leftGain;
-                                busBuf[f * 2 + 1] += s * rightGain;
-                            }
-                        } else {
-                            for (unsigned long f = 0; f < framesAvail; ++f) {
-                                float sL = m_stereoScratch[f * ch];
-                                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                                busBuf[f * 2]     += sL * trackVol * leftGain;
-                                busBuf[f * 2 + 1] += sR * trackVol * rightGain;
-                            }
-                        }
-                    }
-                }
-            } else {
-                const float* clipData = activeClip->data();
-                int ch = activeClip->channels();
-                size_t clipFrames = activeClip->frameCount();
-
-                if (hasPlugins) {
-                    if (isMono) {
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            int64_t clipFrame = localPos + f;
-                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                                clipFrame >= event.offsetSample() + event.durationSample())
-                                continue;
-
-                            trackL[f] += clipData[clipFrame * ch];
-                        }
-                    } else {
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            int64_t clipFrame = localPos + f;
-                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                                clipFrame >= event.offsetSample() + event.durationSample())
-                                continue;
-
-                            float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                            float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
-                            trackL[f] += sL;
-                            trackR[f] += sR;
+                            addSourceToBus(busBuf, m_stereoScratch.data(), ch,
+                                           framesAvail, trackVol, leftGain, rightGain, isMono);
                         }
                     }
                 } else {
-                    float* busBuf = m_busBuffers[busIdx].data();
-                    if (isMono) {
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            int64_t clipFrame = localPos + f;
-                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                                clipFrame >= event.offsetSample() + event.durationSample())
-                                continue;
+                    const float* clipData = activeClip->data();
+                    int ch = activeClip->channels();
+                    int64_t limit = event.offsetSample() + event.durationSample();
+                    int64_t validFrames = std::min<int64_t>(
+                        static_cast<int64_t>(activeClip->frameCount()), limit) - localPos;
+                    if (validFrames <= 0) continue;
 
-                            float s = clipData[clipFrame * ch] * trackVol;
-                            busBuf[f * 2]     += s * leftGain;
-                            busBuf[f * 2 + 1] += s * rightGain;
-                        }
+                    size_t toCopy = static_cast<size_t>(
+                        std::min<int64_t>(validFrames, static_cast<int64_t>(frameCount)));
+                    const float* src = clipData + localPos * ch;
+
+                    if (hasPlugins) {
+                        addSourceToTrack(trackL, trackR, src, ch, toCopy, isMono);
                     } else {
-                        for (unsigned long f = 0; f < frameCount; ++f) {
-                            int64_t clipFrame = localPos + f;
-                            if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                                clipFrame >= event.offsetSample() + event.durationSample())
-                                continue;
-
-                            float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                            float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
-
-                            busBuf[f * 2]     += sL * trackVol * leftGain;
-                            busBuf[f * 2 + 1] += sR * trackVol * rightGain;
-                        }
+                        addSourceToBus(busBuf, src, ch, toCopy, trackVol,
+                                       leftGain, rightGain, isMono);
                     }
                 }
             }
         }
-        } // !monitoringOnly
 
         if (hasPlugins && hasAnyEvent) {
             float* inBufs[2] = { trackL, trackR };
@@ -565,19 +464,8 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             int pluginChannels = isMono ? 1 : 2;
             track.pluginChain().process(inBufs, outBufs, frameCount, pluginChannels);
 
-            float* busBuf = m_busBuffers[busIdx].data();
-            if (isMono) {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    float s = trackL[f] * trackVol;
-                    busBuf[f * 2]     += s * leftGain;
-                    busBuf[f * 2 + 1] += s * rightGain;
-                }
-            } else {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    busBuf[f * 2]     += trackL[f] * trackVol * leftGain;
-                    busBuf[f * 2 + 1] += trackR[f] * trackVol * rightGain;
-                }
-            }
+            writeTrackToBus(busBuf, trackL, trackR, frameCount, trackVol,
+                            leftGain, rightGain, isMono);
         }
     }
 
