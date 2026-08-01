@@ -39,6 +39,7 @@ public:
     void undo() override;
     int id() const override { return 10; }
     bool mergeWith(const UndoCommand* other) override;
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;
@@ -53,6 +54,7 @@ public:
     void undo() override;
     int id() const override { return 11; }
     bool mergeWith(const UndoCommand* other) override;
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;
@@ -66,6 +68,7 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 12; }
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;
@@ -79,6 +82,7 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 13; }
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;
@@ -92,6 +96,7 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 14; }
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;
@@ -105,6 +110,7 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 15; }
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;
@@ -118,6 +124,7 @@ public:
     void execute() override;
     void undo() override;
     int id() const override { return 16; }
+    bool requiresPluginWindowsClose() const override { return false; }
 private:
     Project& m_project;
     int m_trackIndex;

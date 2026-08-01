@@ -1123,6 +1123,7 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
     m_pluginWindows.push_back(window);
     connect(window, &PluginWindow::windowClosed, this, [this, window, plugin]() {
         plugin->setParameterChangeCallback({});
+        plugin->setStringParameterChangeCallback({});
         m_pluginWindows.erase(
             std::remove(m_pluginWindows.begin(), m_pluginWindows.end(), window),
             m_pluginWindows.end());

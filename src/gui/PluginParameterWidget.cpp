@@ -198,9 +198,14 @@ PluginParameterWidget::PluginParameterWidget(PluginInstance* plugin,
             }
         }
     });
-    // Null out plugin pointer when parent window closes, before plugin is destroyed
+    // Null out plugin pointer when parent window closes, before plugin is destroyed.
+    // Clear value callbacks first so the plugin never holds dangling widget pointers.
     if (auto* pw = qobject_cast<PluginWindow*>(parentWidget())) {
         connect(pw, &PluginWindow::windowClosed, this, [this]() {
+            if (m_plugin) {
+                m_plugin->setParamValueCallback(nullptr);
+                m_plugin->setStringParamValueCallback(nullptr);
+            }
             m_plugin = nullptr;
         });
     }
