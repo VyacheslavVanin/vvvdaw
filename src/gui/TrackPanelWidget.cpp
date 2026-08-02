@@ -9,6 +9,11 @@
 #include <QContextMenuEvent>
 #include <QMouseEvent>
 
+namespace {
+int midiComboEncodeDevice(int deviceId) { return deviceId + 1; }
+int midiComboEncodeInstrument(int index) { return -(index + 1); }
+}
+
 TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     : QWidget(parent)
     , m_track(track)
@@ -94,11 +99,14 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     layout->addLayout(topRow);
 
-    auto* panRow = new QHBoxLayout;
-    auto* panLabel = new QLabel("pan:", this);
+    auto* panRowWidget = new QWidget(this);
+    m_panRow = panRowWidget;
+    auto* panRow = new QHBoxLayout(panRowWidget);
+    panRow->setContentsMargins(0, 0, 0, 0);
+    auto* panLabel = new QLabel("pan:", panRowWidget);
     panLabel->setStyleSheet("font-size: 10px; color: #aaa;");
     panRow->addWidget(panLabel);
-    m_panSlider = new QSlider(Qt::Horizontal, this);
+    m_panSlider = new QSlider(Qt::Horizontal, panRowWidget);
     m_panSlider->setRange(-100, 100);
     m_panSlider->setValue(0);
     m_panSlider->setFixedHeight(10);
@@ -108,13 +116,16 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         "QSlider::sub-page:horizontal { background: #6688cc; border-radius: 2px; }"
     );
     panRow->addWidget(m_panSlider, 1);
-    layout->addLayout(panRow);
+    layout->addWidget(panRowWidget);
 
-    auto* volRow = new QHBoxLayout;
-    auto* volLabel = new QLabel("level:", this);
+    auto* volRowWidget = new QWidget(this);
+    m_volRow = volRowWidget;
+    auto* volRow = new QHBoxLayout(volRowWidget);
+    volRow->setContentsMargins(0, 0, 0, 0);
+    auto* volLabel = new QLabel("level:", volRowWidget);
     volLabel->setStyleSheet("font-size: 10px; color: #aaa;");
     volRow->addWidget(volLabel);
-    m_volumeSlider = new QSlider(Qt::Horizontal, this);
+    m_volumeSlider = new QSlider(Qt::Horizontal, volRowWidget);
     m_volumeSlider->setRange(0, 100);
     m_volumeSlider->setValue(80);
     m_volumeSlider->setFixedHeight(10);
@@ -124,20 +135,23 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         "QSlider::sub-page:horizontal { background: #44aa44; border-radius: 2px; }"
     );
     volRow->addWidget(m_volumeSlider, 1);
-    layout->addLayout(volRow);
+    layout->addWidget(volRowWidget);
 
-    auto* inRow = new QHBoxLayout;
-    auto* inLabel = new QLabel("in: ", this);
+    auto* inRowWidget = new QWidget(this);
+    m_inRow = inRowWidget;
+    auto* inRow = new QHBoxLayout(inRowWidget);
+    inRow->setContentsMargins(0, 0, 0, 0);
+    auto* inLabel = new QLabel("in: ", inRowWidget);
     inLabel->setStyleSheet("font-size: 10px; color: #aaa;");
     inRow->addWidget(inLabel);
-    m_inputDeviceCombo = new QComboBox(this);
+    m_inputDeviceCombo = new QComboBox(inRowWidget);
     m_inputDeviceCombo->setStyleSheet(
         "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
         "QComboBox::drop-down { border: none; width: 14px; }"
         "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
     );
     inRow->addWidget(m_inputDeviceCombo, 1);
-    layout->addLayout(inRow);
+    layout->addWidget(inRowWidget);
 
     auto* outRow = new QHBoxLayout;
     auto* outLabel = new QLabel("out:", this);
@@ -198,11 +212,34 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     });
 
     connect(m_outputBusCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
-        if (m_track) {
-            int oldIndex = m_track->outputBusIndex();
-            m_track->setOutputBusIndex(index);
-            emit outputBusChanged(oldIndex, index);
+        if (!m_track) return;
+        if (m_track->type() == Track::Type::Midi) {
+            emit beforeModify();
+            int encoded = m_outputBusCombo->itemData(index).toInt();
+            if (encoded > 0) {
+                int deviceId = encoded - 1;
+                QString deviceName = m_outputBusCombo->currentText();
+                m_track->setMidiOutputDeviceId(deviceId);
+                m_track->setMidiOutputDeviceName(deviceName);
+                m_track->setInstrumentIndex(-1);
+                emit midiOutputChanged(deviceId, deviceName, -1);
+            } else if (encoded < 0) {
+                int instIndex = -encoded - 1;
+                m_track->setInstrumentIndex(instIndex);
+                m_track->setMidiOutputDeviceId(-1);
+                m_track->setMidiOutputDeviceName(QString());
+                emit midiOutputChanged(-1, QString(), instIndex);
+            } else {
+                m_track->setInstrumentIndex(-1);
+                m_track->setMidiOutputDeviceId(-1);
+                m_track->setMidiOutputDeviceName(QString());
+                emit midiOutputChanged(-1, QString(), -1);
+            }
+            return;
         }
+        int oldIndex = m_track->outputBusIndex();
+        m_track->setOutputBusIndex(index);
+        emit outputBusChanged(oldIndex, index);
     });
     connect(m_inputDeviceCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
         if (m_track) {
@@ -212,22 +249,80 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
             emit inputDeviceChanged(deviceId);
         }
     });
+
+    applyTrackType();
+}
+
+void TrackPanelWidget::applyTrackType() {
+    bool isMidi = m_track && m_track->type() == Track::Type::Midi;
+    m_panRow->setVisible(!isMidi);
+    m_volRow->setVisible(!isMidi);
+    m_inRow->setVisible(!isMidi);
+    m_armButton->setVisible(!isMidi);
+    m_monitorButton->setVisible(!isMidi);
+    m_channelsBadge->setText(isMidi ? "MIDI" : (m_track && m_track->channels() == 1 ? "M" : "S"));
+    m_channelsBadge->setFixedWidth(isMidi ? 30 : 16);
 }
 
 void TrackPanelWidget::updateFromTrack() {
     if (!m_track) return;
     m_nameEdit->setText(m_track->name());
-    m_channelsBadge->setText(m_track->channels() == 1 ? "M" : "S");
-    m_armButton->setChecked(m_track->isRecordArmed());
+    applyTrackType();
     m_soloButton->setChecked(m_track->isSolo());
     m_muteButton->setChecked(m_track->isMuted());
-    m_monitorButton->setChecked(m_track->isMonitoring());
-    m_panSlider->setValue(static_cast<int>(m_track->pan() * 100));
-    m_volumeSlider->setValue(static_cast<int>(m_track->volume() * 100));
+    if (m_track->type() != Track::Type::Midi) {
+        m_armButton->setChecked(m_track->isRecordArmed());
+        m_monitorButton->setChecked(m_track->isMonitoring());
+        m_panSlider->setValue(static_cast<int>(m_track->pan() * 100));
+        m_volumeSlider->setValue(static_cast<int>(m_track->volume() * 100));
+    }
+
+    if (m_track->type() == Track::Type::Midi) {
+        // Select current routing in the MIDI out combo, if present.
+        int targetEncoded = 0;
+        if (m_track->instrumentIndex() >= 0)
+            targetEncoded = midiComboEncodeInstrument(m_track->instrumentIndex());
+        else if (m_track->midiOutputDeviceId() >= 0)
+            targetEncoded = midiComboEncodeDevice(m_track->midiOutputDeviceId());
+        for (int i = 0; i < m_outputBusCombo->count(); ++i) {
+            if (m_outputBusCombo->itemData(i).toInt() == targetEncoded) {
+                m_outputBusCombo->setCurrentIndex(i);
+                break;
+            }
+        }
+        return;
+    }
 
     int busIdx = m_track->outputBusIndex();
     if (busIdx >= 0 && busIdx < m_outputBusCombo->count())
         m_outputBusCombo->setCurrentIndex(busIdx);
+}
+
+void TrackPanelWidget::updateMidiOutputs(const std::vector<std::pair<int, QString>>& devices,
+                                         const std::vector<QString>& instrumentNames) {
+    QSignalBlocker blocker(m_outputBusCombo);
+    m_outputBusCombo->clear();
+    m_outputBusCombo->addItem("None");
+    m_outputBusCombo->setItemData(0, 0);
+
+    int selectIdx = 0;
+    if (m_track && m_track->midiOutputDeviceId() < 0 && m_track->instrumentIndex() < 0)
+        selectIdx = 0;
+
+    for (const auto& [id, name] : devices) {
+        m_outputBusCombo->addItem("MIDI: " + name);
+        m_outputBusCombo->setItemData(m_outputBusCombo->count() - 1, midiComboEncodeDevice(id));
+        if (m_track && m_track->midiOutputDeviceId() == id)
+            selectIdx = m_outputBusCombo->count() - 1;
+    }
+    for (int i = 0; i < static_cast<int>(instrumentNames.size()); ++i) {
+        m_outputBusCombo->addItem("Inst: " + instrumentNames[i]);
+        m_outputBusCombo->setItemData(m_outputBusCombo->count() - 1, midiComboEncodeInstrument(i));
+        if (m_track && m_track->instrumentIndex() == i)
+            selectIdx = m_outputBusCombo->count() - 1;
+    }
+
+    m_outputBusCombo->setCurrentIndex(selectIdx);
 }
 
 void TrackPanelWidget::updateBusList(const std::vector<AudioBus>& buses) {
@@ -288,6 +383,16 @@ void TrackPanelWidget::contextMenuEvent(QContextMenuEvent* event) {
     connect(addMonoAction, &QAction::triggered, this, [this] {
         QMetaObject::invokeMethod(this, [this] { emit addTrackRequested(1); }, Qt::QueuedConnection);
     });
+    QAction* addMidiAction = menu.addAction("Add MIDI Track");
+    connect(addMidiAction, &QAction::triggered, this, [this] {
+        QMetaObject::invokeMethod(this, [this] { emit addMidiTrackRequested(); }, Qt::QueuedConnection);
+    });
+    if (m_track && m_track->type() == Track::Type::Midi) {
+        QAction* addMidiEventAction = menu.addAction("Add MIDI Event");
+        connect(addMidiEventAction, &QAction::triggered, this, [this] {
+            QMetaObject::invokeMethod(this, [this] { emit addMidiEventRequested(); }, Qt::QueuedConnection);
+        });
+    }
     menu.addSeparator();
     QAction* deleteAction = menu.addAction("Delete Track");
     connect(deleteAction, &QAction::triggered, this, [this] {

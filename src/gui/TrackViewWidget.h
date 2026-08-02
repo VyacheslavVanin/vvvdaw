@@ -5,6 +5,7 @@
 #include "core/Constants.h"
 #include "model/AudioClip.h"
 #include "model/AudioEvent.h"
+#include "model/MidiEvent.h"
 
 class Track;
 
@@ -48,6 +49,8 @@ signals:
     void eventEdgeTrimStarted();
     void zoomChanged(double zoom);
     void takeSwitchStarted();
+    void eventDoubleClicked(int64_t eventId);
+    void addMidiEventRequested(int64_t startSample);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -55,6 +58,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
 
@@ -62,11 +66,29 @@ private:
     enum class EdgeDrag { None, Left, Right };
 
     int64_t sampleAtX(int x) const;
-    AudioEvent* eventAtX(int x, int& eventIndex);
+    int eventAtX(int x, int& eventIndex);
     EdgeDrag edgeAtX(int x, int eventIndex) const;
     void renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
                         size_t offsetFrame, size_t visibleFrames,
                         int x, int y, int w, int h);
+    void renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
+                           int64_t offsetSample, int64_t durationSample,
+                           int x, int y, int w, int h);
+
+    bool isMidiMode() const;
+    int eventCount() const;
+    int64_t eventStart(int index) const;
+    int64_t eventOffset(int index) const;
+    int64_t eventDuration(int index) const;
+    int64_t eventIdAt(int index) const;
+    bool eventHasTakes(int index) const;
+    int eventActiveTake(int index) const;
+    int eventTakeCount(int index) const;
+    void setEventStart(int index, int64_t value);
+    void setEventOffset(int index, int64_t value);
+    void setEventDuration(int index, int64_t value);
+    void switchEventTake(int index, int takeIndex);
+    std::shared_ptr<MidiClip> midiClipAt(int index) const;
 
     Track* m_track = nullptr;
     int64_t m_scrollOffset = 0;
@@ -78,6 +100,12 @@ private:
         int64_t frameCount = 0;
     };
     QMap<std::shared_ptr<AudioClip>, ClipCache> m_thumbnailCache;
+
+    struct MidiThumbCache {
+        QImage image;
+        int64_t revision = -1;
+    };
+    QMap<std::shared_ptr<MidiClip>, MidiThumbCache> m_midiThumbCache;
 
     // Drag state
     bool m_dragging = false;

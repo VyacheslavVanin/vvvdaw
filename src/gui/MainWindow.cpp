@@ -7,6 +7,8 @@
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
 #include "BusPanelWidget.h"
+#include "InstrumentPanelWidget.h"
+#include "PianoRollWindow.h"
 #include "PluginListWidget.h"
 #include "PluginWindow.h"
 #include "core/UndoStack.h"
@@ -15,6 +17,8 @@
 #include "commands/BusCommands.h"
 #include "commands/ProjectCommands.h"
 #include "commands/EventCommands.h"
+#include "commands/MidiCommands.h"
+#include "commands/InstrumentCommands.h"
 #include "commands/PluginCommands.h"
 #include "commands/SnapshotCommand.h"
 #include "model/Project.h"
@@ -22,6 +26,7 @@
 #include "model/AudioBus.h"
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
+#include "model/Instrument.h"
 #include "audio/AudioEngine.h"
 #include "audio/DeviceInfo.h"
 #include "core/Settings.h"
@@ -357,6 +362,151 @@ void MainWindow::setupUi() {
         pushCommand(std::make_unique<SnapshotCommand>(m_project));
     });
 
+    // Instrument panel grip (draggable resize handle)
+    m_instrumentPanelGrip = new QWidget(this);
+    m_instrumentPanelGrip->setFixedHeight(6);
+    m_instrumentPanelGrip->setCursor(Qt::SizeVerCursor);
+    m_instrumentPanelGrip->setStyleSheet("background-color: #555;:hover { background-color: #777; }");
+    layout->addWidget(m_instrumentPanelGrip);
+
+    // Instrument panel
+    m_instrumentPanel = new InstrumentPanelWidget(m_project, this);
+    m_instrumentPanel->setPluginManager(&m_pluginManager);
+    m_instrumentPanel->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
+    m_instrumentPanel->setFixedHeight(220);
+    m_instrumentPanel->hide();
+    m_instrumentPanelGrip->hide();
+    layout->addWidget(m_instrumentPanel);
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::addInstrumentRequested, this, [this] {
+        executeCommand(std::make_unique<AddInstrumentCommand>(m_project));
+    });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::removeInstrumentRequested, this,
+            [this](int index) {
+        if (index < 0 || index >= static_cast<int>(m_project.instruments().size()))
+            return;
+        executeCommand(std::make_unique<RemoveInstrumentCommand>(m_project, index));
+    });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::volumeWillChange, this,
+            [this](int index, float oldVal, float newVal) {
+        pushCommand(std::make_unique<SetInstrumentVolumeCommand>(m_project, index, oldVal, newVal));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::panWillChange, this,
+            [this](int index, float oldVal, float newVal) {
+        pushCommand(std::make_unique<SetInstrumentPanCommand>(m_project, index, oldVal, newVal));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::soloWillChange, this,
+            [this](int index, bool oldVal, bool newVal) {
+        pushCommand(std::make_unique<SetInstrumentSoloCommand>(m_project, index, oldVal, newVal));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::muteWillChange, this,
+            [this](int index, bool oldVal, bool newVal) {
+        pushCommand(std::make_unique<SetInstrumentMuteCommand>(m_project, index, oldVal, newVal));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::nameWillChange, this,
+            [this](int index, const QString& oldName, const QString& newName) {
+        pushCommand(std::make_unique<SetInstrumentNameCommand>(m_project, index, oldName, newName));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::outputWillChange, this,
+            [this](int index, int oldVal, int newVal) {
+        pushCommand(std::make_unique<SetInstrumentOutputCommand>(m_project, index, oldVal, newVal));
+    });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::synthAddRequested, this,
+            [this](int index, const QString& type, const QString& path) {
+        if (index < 0 || index >= static_cast<int>(m_project.instruments().size())) return;
+        QJsonObject synthJson;
+        synthJson["type"] = type;
+        synthJson["path"] = path;
+        auto cmd = std::make_unique<SetInstrumentSynthCommand>(
+            m_project, index, QJsonObject(), synthJson, &m_pluginManager);
+        executeCommand(std::move(cmd));
+        resyncPianoRollWindows();
+        if (m_instrumentPanel->isVisible())
+            m_instrumentPanel->rebuild();
+        if (auto* synth = m_project.instruments()[index].synth())
+            openPluginEditor(synth);
+    });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::synthRemoveRequested, this,
+            [this](int index) {
+        if (index < 0 || index >= static_cast<int>(m_project.instruments().size())) return;
+        auto& inst = m_project.instruments()[index];
+        if (!inst.synth()) return;
+        std::vector<PluginWindow*> toClose;
+        for (auto* w : m_pluginWindows) {
+            if (w->plugin() == inst.synth())
+                toClose.push_back(w);
+        }
+        for (auto* w : toClose)
+            w->close();
+        auto cmd = std::make_unique<SetInstrumentSynthCommand>(
+            m_project, index, inst.synth()->stateToJson(), QJsonObject(), &m_pluginManager);
+        executeCommand(std::move(cmd));
+        resyncPianoRollWindows();
+        if (m_instrumentPanel->isVisible())
+            m_instrumentPanel->rebuild();
+    });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::openSynthEditorRequested, this,
+            [this](int index, PluginInstance* plugin) {
+        Q_UNUSED(index);
+        openPluginEditor(plugin);
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::openFxEditorRequested, this,
+            [this](int, PluginInstance* plugin) { openPluginEditor(plugin); });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::pluginWillBeRemoved, this,
+            [this](PluginInstance* plugin) {
+        std::vector<PluginWindow*> toClose;
+        for (auto* w : m_pluginWindows) {
+            if (w->plugin() == plugin)
+                toClose.push_back(w);
+        }
+        for (auto* w : toClose)
+            w->close();
+    });
+
+    connect(m_instrumentPanel, &InstrumentPanelWidget::fxAddRequested, this,
+            [this](int index, const QString& type, const QString& path) {
+        if (index < 0 || index >= static_cast<int>(m_project.instruments().size())) return;
+        QJsonObject pluginJson;
+        pluginJson["type"] = type;
+        pluginJson["path"] = path;
+        auto cmd = std::make_unique<AddPluginCommand>(
+            m_project.instruments()[index].effects(), pluginJson, &m_pluginManager,
+            static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
+        cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
+            std::vector<PluginWindow*> toClose;
+            for (auto* w : m_pluginWindows) {
+                if (w->plugin() == plugin)
+                    toClose.push_back(w);
+            }
+            for (auto* w : toClose)
+                w->close();
+        });
+        executeCommand(std::move(cmd));
+        if (auto* added = dynamic_cast<AddPluginCommand*>(m_undoStack.topCommand()))
+            if (added->addedPlugin()) openPluginEditor(added->addedPlugin());
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::pluginRemoved, this, [this](int, int) {
+        pushCommand(std::make_unique<SnapshotCommand>(m_project));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::pluginWillBeMoved, this,
+            [this](int index, int from, int to) {
+        if (index >= 0 && index < static_cast<int>(m_project.instruments().size())) {
+            pushCommand(std::make_unique<MovePluginCommand>(
+                m_project.instruments()[index].effects(), from, to));
+        }
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::pluginWillBeToggled, this, [this](int) {
+        pushCommand(std::make_unique<SnapshotCommand>(m_project));
+    });
+
+    m_instrumentPanelGrip->installEventFilter(this);
+
     m_busPanelGrip->installEventFilter(this);
 
     setCentralWidget(central);
@@ -500,6 +650,10 @@ void MainWindow::executeCommand(std::unique_ptr<UndoCommand> cmd) {
     m_undoStack.execute(std::move(cmd));
     rebuildTracks();
     refreshBusCombos();
+    resyncPianoRollWindows();
+    m_engine.refreshMidiOutputs();
+    if (m_instrumentPanel->isVisible())
+        m_instrumentPanel->rebuild();
 }
 
 void MainWindow::pushCommand(std::unique_ptr<UndoCommand> cmd) {
@@ -513,6 +667,10 @@ void MainWindow::performUndo() {
     if (m_undoStack.undo()) {
         rebuildTracks();
         refreshBusCombos();
+        resyncPianoRollWindows();
+        m_engine.refreshMidiOutputs();
+        if (m_instrumentPanel->isVisible())
+            m_instrumentPanel->rebuild();
     }
 }
 
@@ -523,6 +681,10 @@ void MainWindow::performRedo() {
     if (m_undoStack.redo()) {
         rebuildTracks();
         refreshBusCombos();
+        resyncPianoRollWindows();
+        m_engine.refreshMidiOutputs();
+        if (m_instrumentPanel->isVisible())
+            m_instrumentPanel->rebuild();
     }
 }
 
@@ -548,11 +710,14 @@ void MainWindow::setupMenus() {
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setProject(nullptr);
         closeAllPluginWindows();
+        resyncPianoRollWindows();
         m_undoStack.clear();
         m_project = Project();
         m_project.addTrack("Track 1");
+        m_project.setPluginManager(&m_pluginManager);
         m_engine.setProject(&m_project);
         m_engine.activateAllPlugins();
+        m_engine.refreshMidiOutputs();
         m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
@@ -567,6 +732,7 @@ void MainWindow::setupMenus() {
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setProject(nullptr);
         closeAllPluginWindows();
+        resyncPianoRollWindows();
         m_undoStack.clear();
         Project newProject;
         if (!newProject.load(path)) {
@@ -574,8 +740,10 @@ void MainWindow::setupMenus() {
             return;
         }
         m_project = std::move(newProject);
+        m_project.setPluginManager(&m_pluginManager);
         m_engine.setProject(&m_project);
         m_engine.activateAllPlugins();
+        m_engine.refreshMidiOutputs();
         m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
@@ -630,6 +798,16 @@ void MainWindow::setupMenus() {
             m_busPanel->rebuild();
     });
 
+    auto* toggleInstrumentPanelAction = viewMenu->addAction("Show &Instrument Panel", QKeySequence("Ctrl+I"));
+    toggleInstrumentPanelAction->setCheckable(true);
+    toggleInstrumentPanelAction->setChecked(false);
+    connect(toggleInstrumentPanelAction, &QAction::triggered, this, [this](bool checked) {
+        m_instrumentPanel->setVisible(checked);
+        m_instrumentPanelGrip->setVisible(checked);
+        if (checked)
+            m_instrumentPanel->rebuild();
+    });
+
     connect(settingsAction, &QAction::triggered, this, [this] {
         SettingsDialog dialog(m_settings, m_engine, this);
         if (dialog.exec() == QDialog::Accepted) {
@@ -650,6 +828,10 @@ void MainWindow::setupMenus() {
     auto* addStereoAction = trackMenu->addAction("Add &Stereo Track", QKeySequence("Ctrl+M"));
     connect(addStereoAction, &QAction::triggered, this, [this] {
         executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), 2));
+    });
+    auto* addMidiAction = trackMenu->addAction("Add &MIDI Track", QKeySequence("Ctrl+Shift+T"));
+    connect(addMidiAction, &QAction::triggered, this, [this] {
+        executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), Track::Type::Midi));
     });
 
     auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
@@ -697,10 +879,18 @@ void MainWindow::loadStyleSheet() {
 
 void MainWindow::refreshBusCombos() {
     auto devices = AudioEngine::enumerateInputDevices();
+    auto midiDevices = AudioEngine::enumerateMidiOutputDevices();
+    std::vector<std::pair<int, QString>> midiOutList;
+    for (const auto& dev : midiDevices)
+        midiOutList.emplace_back(dev.id, dev.name);
+    std::vector<QString> instrumentNames;
+    for (const auto& inst : m_project.instruments())
+        instrumentNames.push_back(inst.name());
     for (auto& row : m_trackRows) {
         if (row.panel) {
             row.panel->updateBusList(m_project.buses());
             row.panel->updateInputDeviceList(devices);
+            row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         }
     }
 }
@@ -739,6 +929,13 @@ void MainWindow::rebuildTracks() {
     }
 
     auto devices = AudioEngine::enumerateInputDevices();
+    auto midiDevices = AudioEngine::enumerateMidiOutputDevices();
+    std::vector<std::pair<int, QString>> midiOutList;
+    for (const auto& dev : midiDevices)
+        midiOutList.emplace_back(dev.id, dev.name);
+    std::vector<QString> instrumentNames;
+    for (const auto& inst : m_project.instruments())
+        instrumentNames.push_back(inst.name());
 
     for (auto& track : m_project.tracks()) {
         TrackRow row;
@@ -747,6 +944,7 @@ void MainWindow::rebuildTracks() {
         row.panel->setAlternateRow(odd);
         row.panel->updateBusList(m_project.buses());
         row.panel->updateInputDeviceList(devices);
+        row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         row.panel->updateFromTrack();
 
         row.pluginList = new PluginListWidget(m_trackContainer);
@@ -769,6 +967,52 @@ void MainWindow::rebuildTracks() {
 
         connect(row.panel, &TrackPanelWidget::addTrackRequested, this, [this](int channels) {
             executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), channels));
+        });
+
+        connect(row.panel, &TrackPanelWidget::addMidiTrackRequested, this, [this] {
+            executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), Track::Type::Midi));
+        });
+
+        connect(row.panel, &TrackPanelWidget::addMidiEventRequested, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size()))
+                return;
+            int64_t start = m_engine.playPosition();
+            double snapUnit = m_project.samplesPerBar() / m_snapResolution;
+            start = TimeUtils::snapSample(start, snapUnit);
+            if (start < 0) start = 0;
+            QJsonObject clipJson;
+            clipJson["ppq"] = MidiClip::kPPQ;
+            clipJson["lengthTicks"] = static_cast<qint64>(MidiClip::kPPQ) * 4;
+            QJsonObject eventJson;
+            eventJson["startSample"] = static_cast<qint64>(start);
+            eventJson["offsetSample"] = 0;
+            eventJson["durationSample"] = static_cast<qint64>(m_project.samplesPerBar());
+            eventJson["clip"] = clipJson;
+            auto cmd = std::make_unique<AddMidiEventCommand>(m_project, idx, eventJson);
+            executeCommand(std::move(cmd));
+            if (auto* added = dynamic_cast<AddMidiEventCommand*>(m_undoStack.topCommand()))
+                if (added->createdEventId() >= 0)
+                    openPianoRoll(idx, added->createdEventId());
+        });
+
+        connect(row.panel, &TrackPanelWidget::midiOutputChanged, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())]
+                (int deviceId, const QString& deviceName, int instrumentIndex) {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
+            auto& trk = m_project.tracks()[idx];
+            SetTrackMidiOutputCommand::Routing oldR;
+            oldR.deviceId = trk.midiOutputDeviceId();
+            oldR.deviceName = trk.midiOutputDeviceName();
+            oldR.instrumentIndex = trk.instrumentIndex();
+            SetTrackMidiOutputCommand::Routing newR;
+            newR.deviceId = deviceId;
+            newR.deviceName = deviceName;
+            newR.instrumentIndex = instrumentIndex;
+            if (oldR.deviceId == newR.deviceId && oldR.instrumentIndex == newR.instrumentIndex)
+                return;
+            pushCommand(std::make_unique<SetTrackMidiOutputCommand>(m_project, idx, oldR, newR));
+            m_engine.refreshMidiOutputs();
         });
 
         connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
@@ -878,6 +1122,31 @@ void MainWindow::rebuildTracks() {
 
         connect(row.view, &TrackViewWidget::takeSwitchStarted, this, [this] {
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
+        });
+
+        connect(row.view, &TrackViewWidget::eventDoubleClicked, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](int64_t eventId) {
+            openPianoRoll(idx, eventId);
+        });
+
+        connect(row.view, &TrackViewWidget::addMidiEventRequested, this,
+                [this, idx = static_cast<int>(&track - m_project.tracks().data())](int64_t startSample) {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size()))
+                return;
+            QJsonObject clipJson;
+            clipJson["ppq"] = MidiClip::kPPQ;
+            clipJson["lengthTicks"] = static_cast<qint64>(MidiClip::kPPQ) * 4;
+            QJsonObject eventJson;
+            eventJson["startSample"] = static_cast<qint64>(startSample);
+            eventJson["offsetSample"] = 0;
+            eventJson["durationSample"] = static_cast<qint64>(m_project.samplesPerBar());
+            eventJson["clip"] = clipJson;
+
+            auto cmd = std::make_unique<AddMidiEventCommand>(m_project, idx, eventJson);
+            executeCommand(std::move(cmd));
+            if (auto* added = dynamic_cast<AddMidiEventCommand*>(m_undoStack.topCommand()))
+                if (added->createdEventId() >= 0)
+                    openPianoRoll(idx, added->createdEventId());
         });
 
         connect(row.view, &TrackViewWidget::dragInProgress, this,
@@ -1087,6 +1356,25 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
             return true;
         }
     }
+    if (obj == m_instrumentPanelGrip) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
+            m_gripDragging = true;
+            m_gripStartY = me->globalPosition().toPoint().y();
+            m_gripStartHeight = m_instrumentPanel->height();
+            return true;
+        }
+        if (event->type() == QEvent::MouseMove && m_gripDragging) {
+            int delta = m_gripStartY - me->globalPosition().toPoint().y();
+            int newH = qBound(100, m_gripStartHeight + delta, 600);
+            m_instrumentPanel->setFixedHeight(newH);
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonRelease) {
+            m_gripDragging = false;
+            return true;
+        }
+    }
     return QMainWindow::eventFilter(obj, event);
 }
 
@@ -1102,7 +1390,49 @@ PluginChain* MainWindow::findChainForPlugin(PluginInstance* plugin) {
         for (int j = 0; j < bus.pluginChain.count(); ++j)
             if (bus.pluginChain.plugin(j) == plugin) return &bus.pluginChain;
     }
+    // Search all instruments (synth + effects)
+    for (auto& inst : m_project.instruments()) {
+        if (inst.synth() == plugin)
+            return const_cast<PluginChain*>(&inst.effects());
+        for (int j = 0; j < inst.effects().count(); ++j)
+            if (inst.effects().plugin(j) == plugin) return &inst.effects();
+    }
     return nullptr;
+}
+
+void MainWindow::openPianoRoll(int trackIndex, int64_t eventId) {
+    if (trackIndex < 0 || trackIndex >= static_cast<int>(m_project.tracks().size()))
+        return;
+    MidiEvent* event = m_project.tracks()[trackIndex].findMidiEvent(eventId);
+    if (!event || !event->activeClip()) return;
+
+    for (auto* w : m_pianoRollWindows) {
+        if (w->trackIndex() == trackIndex && w->eventId() == eventId) {
+            w->raise();
+            w->activateWindow();
+            w->reload();
+            return;
+        }
+    }
+
+    auto* window = new PianoRollWindow(m_project, m_undoStack, trackIndex, eventId, this);
+    m_pianoRollWindows.push_back(window);
+    connect(window, &PianoRollWindow::windowClosed, this, [this, window]() {
+        m_pianoRollWindows.erase(
+            std::remove(m_pianoRollWindows.begin(), m_pianoRollWindows.end(), window),
+            m_pianoRollWindows.end());
+    });
+    window->show();
+}
+
+void MainWindow::resyncPianoRollWindows() {
+    std::vector<PianoRollWindow*> toClose;
+    for (auto* w : m_pianoRollWindows) {
+        if (!w->reload())
+            toClose.push_back(w);
+    }
+    for (auto* w : toClose)
+        w->close();
 }
 
 void MainWindow::openPluginEditor(PluginInstance* plugin) {

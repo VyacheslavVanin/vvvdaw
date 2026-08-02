@@ -7,6 +7,8 @@
 #include <mutex>
 #include "Track.h"
 #include "AudioBus.h"
+#include "Instrument.h"
+#include "MidiClip.h"
 
 class PluginManager;
 
@@ -36,14 +38,21 @@ public:
     std::vector<AudioBus>& buses() { return m_buses; }
     const std::vector<AudioBus>& buses() const { return m_buses; }
 
+    std::vector<Instrument>& instruments() { return m_instruments; }
+    const std::vector<Instrument>& instruments() const { return m_instruments; }
+
     AudioBus& masterBus() { return m_buses[0]; }
     const AudioBus& masterBus() const { return m_buses[0]; }
 
     Track* addTrack(const QString& name = {}, int channels = 2);
+    Track* addMidiTrack(const QString& name = {});
     bool removeTrack(int index);
 
     int addBus(AudioBus bus);
     bool removeBus(int index);
+
+    int addInstrument(Instrument instrument);
+    bool removeInstrument(int index);
 
     QString audioDirectory() const;
 
@@ -69,6 +78,15 @@ public:
     double samplesPerBeat() const { return (60.0 / m_tempo) * m_sampleRate; }
     double samplesPerBar() const { return samplesPerBeat() * m_timeSigNum; }
     int64_t snapSample(int64_t sample, int beatDivision = 4) const;
+
+    double samplesPerTick() const { return (60.0 / m_tempo) * m_sampleRate / MidiClip::kPPQ; }
+    int64_t ticksToSamples(int64_t ticks) const {
+        return static_cast<int64_t>(static_cast<double>(ticks) * samplesPerTick());
+    }
+    int64_t samplesToTicks(int64_t samples) const {
+        double ticks = static_cast<double>(samples) / samplesPerTick();
+        return static_cast<int64_t>(std::llround(ticks));
+    }
 
     void rescaleTimeline(double factor);
 
@@ -108,5 +126,6 @@ private:
 
     std::vector<Track> m_tracks;
     std::vector<AudioBus> m_buses;
+    std::vector<Instrument> m_instruments;
     PluginManager* m_pluginManager = nullptr;
 };

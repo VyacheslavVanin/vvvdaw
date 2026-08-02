@@ -4,6 +4,7 @@
 #include "model/AudioBus.h"
 #include "model/AudioClip.h"
 #include "model/AudioEvent.h"
+#include "model/Instrument.h"
 #include "plugin/PluginChain.h"
 #include "plugin/PluginInstance.h"
 #include "AudioUtils.h"
@@ -28,6 +29,8 @@ bool AudioEngine::init(const Settings& settings) {
     m_sourceScratch.resize((static_cast<size_t>(m_bufferSize) * 4 + TimeStretch::kWindowSize) * 2, 0.0f);
     m_busDeinterleaveL.resize(static_cast<size_t>(m_bufferSize), 0.0f);
     m_busDeinterleaveR.resize(static_cast<size_t>(m_bufferSize), 0.0f);
+    m_instrumentScratchL.resize(static_cast<size_t>(m_bufferSize), 0.0f);
+    m_instrumentScratchR.resize(static_cast<size_t>(m_bufferSize), 0.0f);
     m_recordingManager.setScratchSize(static_cast<size_t>(m_bufferSize) * 2);
     AudioClip::setStreamingThresholdFrames(
         static_cast<size_t>(settings.streamingThresholdSec) * settings.sampleRate);
@@ -365,6 +368,157 @@ void AudioEngine::clearStretchSlots() {
     m_stretchSlots.clear();
 }
 
+void AudioEngine::flushActiveMidiNotes(Project* proj, unsigned long frameCount) {
+    for (auto& an : m_activeMidiNotes) {
+        if (an.toInstrument && an.destIndex >= 0 &&
+            an.destIndex < static_cast<int>(proj->instruments().size())) {
+            MidiMessage m;
+            m.sampleOffset = 0;
+            m.status = static_cast<uint8_t>(0x80 | an.channel);
+            m.data1 = an.pitch;
+            m.data2 = 0;
+            m_instrumentMidi[an.destIndex].push_back(m);
+        } else if (!an.toInstrument && an.destIndex >= 0) {
+            m_midiOutput.send(an.destIndex, static_cast<uint8_t>(0x80 | an.channel), an.pitch, 0);
+        }
+    }
+    m_activeMidiNotes.clear();
+    (void)frameCount;
+}
+
+void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, int64_t pos) {
+    bool anySolo = false;
+    for (const auto& track : proj->tracks()) {
+        if (track.isSolo()) { anySolo = true; break; }
+    }
+
+    int trackIndex = 0;
+    for (const auto& track : proj->tracks()) {
+        if (track.type() != Track::Type::Midi) { ++trackIndex; continue; }
+        if (track.isMuted()) { ++trackIndex; continue; }
+        if (anySolo && !track.isSolo()) { ++trackIndex; continue; }
+
+        int instIdx = track.instrumentIndex();
+        bool toInstrument = (instIdx >= 0 && instIdx < static_cast<int>(proj->instruments().size()));
+        int deviceId = track.midiOutputDeviceId();
+        int destIdx = toInstrument ? instIdx : deviceId;
+        uint8_t channel = static_cast<uint8_t>(trackIndex % 16);
+
+        for (const auto& event : track.midiEvents()) {
+            auto clip = event.activeClip();
+            if (!clip) continue;
+
+            int64_t eventEnd = event.startSample() + event.durationSample();
+            if (pos >= eventEnd || pos + static_cast<int64_t>(frameCount) <= event.startSample())
+                continue;
+
+            int64_t offsetTicks = proj->samplesToTicks(event.offsetSample());
+            for (const auto& note : clip->notes()) {
+                int64_t noteStart = event.startSample()
+                    + proj->ticksToSamples(note.startTick - offsetTicks);
+                int64_t noteEnd = event.startSample()
+                    + proj->ticksToSamples(note.endTick() - offsetTicks);
+                if (noteEnd <= pos || noteStart >= pos + static_cast<int64_t>(frameCount))
+                    continue;
+
+                bool alreadyActive = false;
+                for (auto& an : m_activeMidiNotes) {
+                    if (an.trackIndex == trackIndex && an.eventId == event.id()
+                        && an.noteId == note.id) {
+                        alreadyActive = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyActive) {
+                    int off = static_cast<int>(std::max<int64_t>(0, noteStart - pos));
+                    if (off < static_cast<int>(frameCount)) {
+                        if (toInstrument) {
+                            MidiMessage m;
+                            m.sampleOffset = off;
+                            m.status = static_cast<uint8_t>(0x90 | channel);
+                            m.data1 = static_cast<uint8_t>(note.pitch);
+                            m.data2 = static_cast<uint8_t>(note.velocity);
+                            m_instrumentMidi[instIdx].push_back(m);
+                        } else if (deviceId >= 0) {
+                            m_midiOutput.send(deviceId, static_cast<uint8_t>(0x90 | channel),
+                                              static_cast<uint8_t>(note.pitch),
+                                              static_cast<uint8_t>(note.velocity));
+                        }
+                        ActiveMidiNote an;
+                        an.trackIndex = trackIndex;
+                        an.eventId = event.id();
+                        an.noteId = note.id;
+                        an.destIndex = destIdx;
+                        an.toInstrument = toInstrument;
+                        an.channel = channel;
+                        an.pitch = static_cast<uint8_t>(note.pitch);
+                        m_activeMidiNotes.push_back(an);
+                    }
+                }
+
+                if (noteEnd >= pos && noteEnd < pos + static_cast<int64_t>(frameCount)) {
+                    int off = static_cast<int>(noteEnd - pos);
+                    if (toInstrument) {
+                        MidiMessage m;
+                        m.sampleOffset = off;
+                        m.status = static_cast<uint8_t>(0x80 | channel);
+                        m.data1 = static_cast<uint8_t>(note.pitch);
+                        m.data2 = 0;
+                        m_instrumentMidi[instIdx].push_back(m);
+                    } else if (deviceId >= 0) {
+                        m_midiOutput.send(deviceId, static_cast<uint8_t>(0x80 | channel),
+                                          static_cast<uint8_t>(note.pitch), 0);
+                    }
+                    auto it = std::remove_if(m_activeMidiNotes.begin(), m_activeMidiNotes.end(),
+                        [&](const ActiveMidiNote& a) {
+                            return a.trackIndex == trackIndex && a.eventId == event.id()
+                                && a.noteId == note.id;
+                        });
+                    m_activeMidiNotes.erase(it, m_activeMidiNotes.end());
+                }
+            }
+        }
+        ++trackIndex;
+    }
+}
+
+void AudioEngine::processInstruments(Project* proj, unsigned long frameCount) {
+    int instCount = static_cast<int>(proj->instruments().size());
+    if (instCount == 0) return;
+
+    bool anySolo = false;
+    for (auto& inst : proj->instruments()) {
+        if (inst.isSolo()) { anySolo = true; break; }
+    }
+
+    int busCount = static_cast<int>(proj->buses().size());
+    for (int i = 0; i < instCount; ++i) {
+        auto& inst = proj->instruments()[i];
+        if (inst.isMuted() || !inst.synth()) continue;
+        if (anySolo && !inst.isSolo()) continue;
+
+        int busIdx = inst.outputBusIndex();
+        if (busIdx < 0 || busIdx >= busCount) busIdx = 0;
+        float* busBuf = m_busBuffers[busIdx].data();
+        auto [lGain, rGain] = panGains(inst.pan());
+
+        std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.begin() + frameCount, 0.0f);
+        std::fill(m_instrumentScratchR.begin(), m_instrumentScratchR.begin() + frameCount, 0.0f);
+        float* inBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
+        float* outBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
+
+        inst.synth()->process(inBufs, outBufs, frameCount, 2, &m_instrumentMidi[i]);
+        if (inst.effects().count() > 0)
+            inst.effects().process(inBufs, outBufs, frameCount, 2);
+
+        for (unsigned long f = 0; f < frameCount; ++f) {
+            busBuf[f * 2]     += m_instrumentScratchL[f] * inst.volume() * lGain;
+            busBuf[f * 2 + 1] += m_instrumentScratchR[f] * inst.volume() * rGain;
+        }
+    }
+}
+
 size_t AudioEngine::readEventBlock(const AudioEvent& event, int trackIndex,
                                    int64_t pos, float* out, size_t outFrames) {
     auto clip = event.activeClip();
@@ -479,6 +633,24 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
     for (int i = 0; i < busCount; ++i)
         std::fill(m_busBuffers[i].begin(), m_busBuffers[i].end(), 0.0f);
 
+    int instCount = static_cast<int>(proj->instruments().size());
+    if (instCount != m_instrumentCount) {
+        m_instrumentMidi.resize(static_cast<size_t>(instCount));
+        for (auto& b : m_instrumentMidi)
+            b.reserve(256);
+        m_instrumentCount = instCount;
+    }
+    for (auto& b : m_instrumentMidi)
+        b.clear();
+
+    bool firstActiveBlock = !m_midiTransportActive && !monitoringOnly;
+    bool midiJumped = m_midiTransportActive &&
+        (pos < m_lastMidiPos || pos - m_lastMidiPos > static_cast<int64_t>(frameCount) * 2);
+    if ((firstActiveBlock && !m_activeMidiNotes.empty()) || midiJumped)
+        flushActiveMidiNotes(proj, frameCount);
+    m_midiTransportActive = !monitoringOnly;
+    m_lastMidiPos = pos;
+
     bool anySolo = false;
     for (const auto& track : proj->tracks()) {
         if (track.isSolo()) { anySolo = true; break; }
@@ -555,6 +727,12 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         }
         ++trackIndex;
     }
+
+    if (!monitoringOnly)
+        scheduleMidiTracks(proj, frameCount, pos);
+
+    if (!monitoringOnly)
+        processInstruments(proj, frameCount);
 
     if (m_metronomeEnabled && !monitoringOnly) {
         int metroIdx = 1;
@@ -697,6 +875,7 @@ void AudioEngine::startPlayback() {
     auto* proj = m_project.load(std::memory_order_acquire);
     if (!proj) return;
     clearStretchSlots();
+    refreshMidiOutputs();
     activateAllPlugins();
     m_streamingManager.start(proj, m_playPosition.load(std::memory_order_acquire));
 }
@@ -704,6 +883,34 @@ void AudioEngine::startPlayback() {
 void AudioEngine::stopPlayback() {
     m_streamingManager.stop();
     clearStretchSlots();
+    panicMidi();
+    m_activeMidiNotes.clear();
+}
+
+void AudioEngine::refreshMidiOutputs() {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+
+    std::set<int> needed;
+    for (const auto& track : proj->tracks()) {
+        if (track.type() == Track::Type::Midi && track.midiOutputDeviceId() >= 0)
+            needed.insert(track.midiOutputDeviceId());
+    }
+
+    for (int id : needed) {
+        if (!m_openMidiDevices.count(id))
+            m_midiOutput.open(id);
+    }
+    for (int id : m_openMidiDevices) {
+        if (!needed.count(id))
+            m_midiOutput.close(id);
+    }
+    m_openMidiDevices = std::move(needed);
+}
+
+void AudioEngine::panicMidi() {
+    for (int id : m_openMidiDevices)
+        m_midiOutput.sendAllNotesOff(id);
 }
 
 void AudioEngine::generateClick(Project* proj, float* buffer, unsigned long frameCount,
@@ -806,6 +1013,11 @@ void AudioEngine::activateAllPlugins() {
         activatePluginChain(const_cast<PluginChain&>(track.pluginChain()));
     for (auto& bus : proj->buses())
         activatePluginChain(bus.pluginChain);
+    for (auto& inst : proj->instruments()) {
+        if (inst.synth() && !inst.synth()->isActive())
+            inst.synth()->activate(m_sampleRate, m_bufferSize);
+        activatePluginChain(inst.effects());
+    }
 }
 
 void AudioEngine::deactivateAllPlugins() {
@@ -823,6 +1035,15 @@ void AudioEngine::deactivateAllPlugins() {
     for (auto& bus : proj->buses()) {
         for (int i = 0; i < bus.pluginChain.count(); ++i) {
             auto* plugin = bus.pluginChain.plugin(i);
+            if (plugin && plugin->isActive())
+                plugin->deactivate();
+        }
+    }
+    for (auto& inst : proj->instruments()) {
+        if (inst.synth() && inst.synth()->isActive())
+            inst.synth()->deactivate();
+        for (int i = 0; i < inst.effects().count(); ++i) {
+            auto* plugin = inst.effects().plugin(i);
             if (plugin && plugin->isActive())
                 plugin->deactivate();
         }

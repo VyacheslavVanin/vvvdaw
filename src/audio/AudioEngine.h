@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 #include <vector>
 #include "core/Constants.h"
@@ -12,6 +13,8 @@
 #include "RecordingManager.h"
 #include "StreamingManager.h"
 #include "TimeStretch.h"
+#include "midi/MidiBuffer.h"
+#include "midi/MidiOutputManager.h"
 
 class Project;
 class Track;
@@ -59,6 +62,13 @@ public:
     void deactivateAllPlugins();
     void activatePluginChain(PluginChain& chain);
 
+    void refreshMidiOutputs();
+    void panicMidi();
+
+    static std::vector<MidiOutputManager::Device> enumerateMidiOutputDevices() {
+        return MidiOutputManager::enumerateOutputDevices();
+    }
+
 private:
     static int audioCallback(const void* input, void* output,
                              unsigned long frameCount,
@@ -89,6 +99,10 @@ private:
                           float* out, size_t outFrames);
     void clearStretchSlots();
 
+    void scheduleMidiTracks(Project* proj, unsigned long frameCount, int64_t pos);
+    void processInstruments(Project* proj, unsigned long frameCount);
+    void flushActiveMidiNotes(Project* proj, unsigned long frameCount);
+
     void startPlayback();
     void stopPlayback();
 
@@ -110,6 +124,26 @@ private:
     std::vector<std::vector<float>> m_busBuffers;
     std::vector<int> m_busProcessOrder;
     int m_busCount = 0;
+
+    std::vector<MidiBuffer> m_instrumentMidi;
+    int m_instrumentCount = -1;
+    std::vector<float> m_instrumentScratchL;
+    std::vector<float> m_instrumentScratchR;
+    MidiOutputManager m_midiOutput;
+    std::set<int> m_openMidiDevices;
+
+    struct ActiveMidiNote {
+        int trackIndex = 0;
+        int64_t eventId = 0;
+        int64_t noteId = 0;
+        int destIndex = 0;
+        bool toInstrument = false;
+        uint8_t channel = 0;
+        uint8_t pitch = 0;
+    };
+    std::vector<ActiveMidiNote> m_activeMidiNotes;
+    int64_t m_lastMidiPos = 0;
+    bool m_midiTransportActive = false;
 
     RecordingManager m_recordingManager;
     StreamingManager m_streamingManager;

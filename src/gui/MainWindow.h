@@ -20,6 +20,8 @@ class TempoWidget;
 class TrackPanelWidget;
 class TrackViewWidget;
 class BusPanelWidget;
+class InstrumentPanelWidget;
+class PianoRollWindow;
 class PluginWindow;
 class PluginInstance;
 class PluginChain;
@@ -49,6 +51,8 @@ private:
     void performUndo();
     void performRedo();
     void openPluginEditor(PluginInstance* plugin);
+    void openPianoRoll(int trackIndex, int64_t eventId);
+    void resyncPianoRollWindows();
     class PluginChain* findChainForPlugin(PluginInstance* plugin);
     void closeAllPluginWindows();
     void updateRulerSpacers(int panelWidth);
@@ -70,10 +74,12 @@ private:
     QWidget* m_trackContainer = nullptr;
     QVBoxLayout* m_trackLayout = nullptr;
     BusPanelWidget* m_busPanel = nullptr;
+    InstrumentPanelWidget* m_instrumentPanel = nullptr;
     QWidget* m_rulerSpacer1 = nullptr;
     QWidget* m_rulerSpacer2 = nullptr;
     QWidget* m_scrollSpacer = nullptr;
     QWidget* m_busPanelGrip = nullptr;
+    QWidget* m_instrumentPanelGrip = nullptr;
     bool m_gripDragging = false;
     int m_gripStartY = 0;
     int m_gripStartHeight = 0;
@@ -87,6 +93,7 @@ private:
     std::vector<TrackRow> m_trackRows;
 
     std::vector<PluginWindow*> m_pluginWindows;
+    std::vector<PianoRollWindow*> m_pianoRollWindows;
     std::vector<QSplitter*> m_trackSplitters;
     bool m_syncingSplitters = false;
     int m_savedPluginListWidth = 200;

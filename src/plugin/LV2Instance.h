@@ -10,6 +10,8 @@
 #include <lv2/worker/worker.h>
 #include <lv2/log/log.h>
 #include <lv2/ui/ui.h>
+#include <lv2/midi/midi.h>
+#include <lv2/core/lv2.h>
 #include <memory>
 class LV2UIHost;
 class QTimer;
@@ -28,7 +30,9 @@ public:
     bool activate(double sampleRate, int maxBlockSize) override;
     bool deactivate() override;
     bool process(float** inputBuffers, float** outputBuffers,
-                 int numSamples, int numChannels) override;
+                 int numSamples, int numChannels,
+                 const MidiBuffer* midi = nullptr) override;
+    bool isInstrument() const override { return m_isInstrument; }
 
     QString name() const override;
     QString vendor() const override;
@@ -68,6 +72,7 @@ private:
 
     bool m_enabled = true;
     bool m_active = false;
+    bool m_isInstrument = false;
     double m_sampleRate = 48000;
     int m_maxBlockSize = 512;
     QString m_filePath;
@@ -106,6 +111,7 @@ private:
         uint32_t index;
         uint32_t minSize;
         bool isInput;
+        bool isMidi;
     };
     std::vector<AtomPortInfo> m_atomPorts;
     std::vector<std::vector<uint8_t>> m_atomBuffers;
@@ -148,6 +154,7 @@ private:
     LV2_URID m_uridPatchProperty = 0;
     LV2_URID m_uridPatchValue = 0;
     LV2_URID m_uridPatchMessage = 0;
+    LV2_URID m_uridMidiEvent = 0;
 
     // String/path parameter storage
     std::map<int, QString> m_stringParams;

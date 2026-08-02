@@ -1,5 +1,6 @@
 #pragma once
 #include "core/UndoCommand.h"
+#include "model/Track.h"
 #include <QString>
 #include <QJsonObject>
 
@@ -9,6 +10,7 @@ class PluginManager;
 class AddTrackCommand : public UndoCommand {
 public:
     AddTrackCommand(Project& project, int index, int channels = 2);
+    AddTrackCommand(Project& project, int index, Track::Type type);
     void execute() override;
     void undo() override;
     int id() const override { return 1; }
@@ -16,6 +18,7 @@ private:
     Project& m_project;
     int m_index;
     int m_channels;
+    Track::Type m_type;
 };
 
 class RemoveTrackCommand : public UndoCommand {
@@ -130,4 +133,24 @@ private:
     int m_trackIndex;
     bool m_oldValue;
     bool m_newValue;
+};
+
+class SetTrackMidiOutputCommand : public UndoCommand {
+public:
+    struct Routing {
+        int deviceId = -1;
+        QString deviceName;
+        int instrumentIndex = -1;
+    };
+    SetTrackMidiOutputCommand(Project& project, int trackIndex, Routing oldRouting, Routing newRouting);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 17; }
+    bool requiresPluginWindowsClose() const override { return false; }
+private:
+    void apply(const Routing& routing);
+    Project& m_project;
+    int m_trackIndex;
+    Routing m_oldRouting;
+    Routing m_newRouting;
 };

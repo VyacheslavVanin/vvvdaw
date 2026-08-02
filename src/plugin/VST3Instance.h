@@ -7,6 +7,7 @@
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 #include <pluginterfaces/vst/ivstparameterchanges.h>
+#include <pluginterfaces/vst/ivstevents.h>
 #include <pluginterfaces/gui/iplugview.h>
 #include "MemoryStream.h"
 #include <public.sdk/source/vst/hosting/hostclasses.h>
@@ -102,6 +103,57 @@ private:
     std::vector<HostParamValueQueue> m_queues;
 };
 
+class HostEventList : public Steinberg::Vst::IEventList {
+public:
+    HostEventList() = default;
+
+    Steinberg::int32 PLUGIN_API getEventCount() override {
+        return static_cast<Steinberg::int32>(m_events.size());
+    }
+
+    Steinberg::tresult PLUGIN_API getEvent(Steinberg::int32 index, Steinberg::Vst::Event& e) override {
+        if (index < 0 || index >= static_cast<Steinberg::int32>(m_events.size()))
+            return Steinberg::kInvalidArgument;
+        e = m_events[index];
+        return Steinberg::kResultTrue;
+    }
+
+    Steinberg::tresult PLUGIN_API addEvent(Steinberg::Vst::Event& e) override {
+        m_events.push_back(e);
+        return Steinberg::kResultTrue;
+    }
+
+    void setFromMidi(const MidiBuffer* midi) {
+        m_events.clear();
+        if (!midi) return;
+        for (const auto& m : *midi) {
+            uint8_t status = m.status;
+            Steinberg::Vst::Event e{};
+            e.busIndex = 0;
+            e.sampleOffset = m.sampleOffset;
+            if ((status & 0xF0) == 0x90 && m.data2 > 0) {
+                e.type = Steinberg::Vst::Event::kNoteOnEvent;
+                e.noteOn.noteId = -1;
+                e.noteOn.pitch = m.data1;
+                e.noteOn.velocity = m.data2;
+            } else if ((status & 0xF0) == 0x80 || ((status & 0xF0) == 0x90 && m.data2 == 0)) {
+                e.type = Steinberg::Vst::Event::kNoteOffEvent;
+                e.noteOff.noteId = -1;
+                e.noteOff.pitch = m.data1;
+                e.noteOff.velocity = m.data2;
+            } else {
+                continue;
+            }
+            m_events.push_back(e);
+        }
+    }
+
+    DECLARE_FUNKNOWN_METHODS
+
+private:
+    std::vector<Steinberg::Vst::Event> m_events;
+};
+
 class VST3Instance : public PluginInstance {
 public:
     VST3Instance();
@@ -111,7 +163,9 @@ public:
     bool activate(double sampleRate, int maxBlockSize) override;
     bool deactivate() override;
     bool process(float** inputBuffers, float** outputBuffers,
-                 int numSamples, int numChannels) override;
+                 int numSamples, int numChannels,
+                 const MidiBuffer* midi = nullptr) override;
+    bool isInstrument() const override { return m_isInstrument; }
 
     QString name() const override;
     QString vendor() const override;
@@ -143,6 +197,7 @@ public:
 private:
     bool m_enabled = true;
     bool m_active = false;
+    bool m_isInstrument = false;
     double m_sampleRate = 48000;
     int m_maxBlockSize = 512;
     QString m_filePath;
@@ -166,6 +221,7 @@ private:
     HostComponentHandler m_componentHandler;
     HostParameterChanges m_outputParamChanges;
     HostParameterChanges m_inputParamChanges;
+    HostEventList m_eventList;
     std::mutex m_paramMutex;
 
     std::vector<Steinberg::int32> m_inputBusChannels;

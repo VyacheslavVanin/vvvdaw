@@ -1,0 +1,50 @@
+#pragma once
+#include <QString>
+#include <memory>
+#include "plugin/PluginInstance.h"
+#include "plugin/PluginChain.h"
+
+class Instrument {
+public:
+    Instrument() = default;
+    ~Instrument() = default;
+    Instrument(Instrument&&) noexcept = default;
+    Instrument& operator=(Instrument&&) noexcept = default;
+    Instrument(const Instrument&) = delete;
+    Instrument& operator=(const Instrument&) = delete;
+
+    const QString& name() const { return m_name; }
+    void setName(const QString& name) { m_name = name; }
+
+    PluginInstance* synth() const { return m_synth.get(); }
+    void setSynth(std::unique_ptr<PluginInstance> synth) { m_synth = std::move(synth); }
+    std::unique_ptr<PluginInstance> takeSynth() { return std::move(m_synth); }
+
+    PluginChain& effects() { return m_effects; }
+    const PluginChain& effects() const { return m_effects; }
+
+    int outputBusIndex() const { return m_outputBusIndex; }
+    void setOutputBusIndex(int idx) { m_outputBusIndex = idx; }
+
+    float volume() const { return m_volume; }
+    void setVolume(float volume) { m_volume = volume; }
+
+    float pan() const { return m_pan; }
+    void setPan(float pan) { m_pan = pan; }
+
+    bool isMuted() const { return m_muted; }
+    void setMuted(bool muted) { m_muted = muted; }
+
+    bool isSolo() const { return m_solo; }
+    void setSolo(bool solo) { m_solo = solo; }
+
+private:
+    QString m_name;
+    std::unique_ptr<PluginInstance> m_synth;
+    PluginChain m_effects;
+    int m_outputBusIndex = 0;
+    float m_volume = 1.0f;
+    float m_pan = 0.0f;
+    bool m_muted = false;
+    bool m_solo = false;
+};

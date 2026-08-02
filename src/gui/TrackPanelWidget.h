@@ -5,7 +5,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QHBoxLayout>
 #include <vector>
+#include <utility>
 
 class Track;
 struct AudioBus;
@@ -23,6 +25,8 @@ public:
 
     void updateBusList(const std::vector<AudioBus>& buses);
     void updateInputDeviceList(const std::vector<DeviceInfo>& devices);
+    void updateMidiOutputs(const std::vector<std::pair<int, QString>>& devices,
+                           const std::vector<QString>& instrumentNames);
 
 signals:
     void armToggled(bool oldValue, bool newValue);
@@ -33,8 +37,11 @@ signals:
     void volumeChanged(float oldValue, float newValue);
     void outputBusChanged(int oldIndex, int newIndex);
     void inputDeviceChanged(int deviceId);
+    void midiOutputChanged(int deviceId, const QString& deviceName, int instrumentIndex);
     void deleteRequested();
     void addTrackRequested(int channels);
+    void addMidiTrackRequested();
+    void addMidiEventRequested();
     void beforeModify();
 
 protected:
@@ -42,6 +49,8 @@ protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
+    void applyTrackType();
+
     Track* m_track = nullptr;
     QLineEdit* m_nameEdit = nullptr;
     QLabel* m_channelsBadge = nullptr;
@@ -53,4 +62,7 @@ private:
     QSlider* m_volumeSlider = nullptr;
     QComboBox* m_outputBusCombo = nullptr;
     QComboBox* m_inputDeviceCombo = nullptr;
+    QWidget* m_panRow = nullptr;
+    QWidget* m_volRow = nullptr;
+    QWidget* m_inRow = nullptr;
 };

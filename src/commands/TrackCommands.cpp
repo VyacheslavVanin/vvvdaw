@@ -3,6 +3,7 @@
 #include "model/Track.h"
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
+#include "model/MidiEvent.h"
 #include "plugin/PluginManager.h"
 #include <QJsonArray>
 #include <QJsonObject>
@@ -12,6 +13,7 @@
 static QJsonObject trackToJson(const Track& track) {
     QJsonObject tObj;
     tObj["name"] = track.name();
+    tObj["type"] = track.type() == Track::Type::Midi ? "midi" : "audio";
     tObj["channels"] = track.channels();
     tObj["inputDeviceId"] = track.inputDeviceId();
     tObj["inputChannel"] = track.inputChannel();
@@ -20,6 +22,12 @@ static QJsonObject trackToJson(const Track& track) {
     tObj["volume"] = track.volume();
     tObj["muted"] = track.isMuted();
     tObj["solo"] = track.isSolo();
+
+    if (track.type() == Track::Type::Midi) {
+        tObj["midiOutputDeviceId"] = track.midiOutputDeviceId();
+        tObj["midiOutputDeviceName"] = track.midiOutputDeviceName();
+        tObj["instrumentIndex"] = track.instrumentIndex();
+    }
 
     QJsonArray eventsArr;
     for (const auto& event : track.events()) {
@@ -40,13 +48,38 @@ static QJsonObject trackToJson(const Track& track) {
         eventsArr.append(eObj);
     }
     tObj["events"] = eventsArr;
+
+    if (track.type() == Track::Type::Midi) {
+        QJsonArray midiEventsArr;
+        for (const auto& event : track.midiEvents()) {
+            QJsonObject eObj;
+            eObj["startSample"] = static_cast<qint64>(event.startSample());
+            eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
+            eObj["durationSample"] = static_cast<qint64>(event.durationSample());
+            if (event.clip())
+                eObj["clip"] = event.clip()->toJson();
+            if (!event.takes().empty()) {
+                QJsonArray takesArr;
+                for (const auto& take : event.takes())
+                    takesArr.append(take->toJson());
+                eObj["takes"] = takesArr;
+                eObj["activeTakeIndex"] = event.activeTakeIndex();
+            }
+            midiEventsArr.append(eObj);
+        }
+        tObj["midiEvents"] = midiEventsArr;
+    }
+
     if (track.pluginChain().count() > 0)
         tObj["plugins"] = track.pluginChain().toJson();
     return tObj;
 }
 
 static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nullptr) {
-    Track track(tObj["name"].toString(), tObj["channels"].toInt(2));
+    bool isMidi = tObj["type"].toString() == "midi";
+    Track track(isMidi ? Track::Type::Midi : Track::Type::Audio,
+                tObj["name"].toString());
+    track.setChannels(tObj["channels"].toInt(2));
     track.setInputDeviceId(tObj["inputDeviceId"].toInt(-1));
     track.setInputChannel(tObj["inputChannel"].toInt(0));
     track.setOutputBusIndex(tObj["outputBusIndex"].toInt(0));
@@ -54,6 +87,12 @@ static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nul
     track.setVolume(static_cast<float>(tObj["volume"].toDouble(0.8)));
     track.setMuted(tObj["muted"].toBool(false));
     track.setSolo(tObj["solo"].toBool(false));
+
+    if (isMidi) {
+        track.setMidiOutputDeviceId(tObj["midiOutputDeviceId"].toInt(-1));
+        track.setMidiOutputDeviceName(tObj["midiOutputDeviceName"].toString());
+        track.setInstrumentIndex(tObj["instrumentIndex"].toInt(-1));
+    }
 
     const QJsonArray eventsArr = tObj["events"].toArray();
     for (const auto& eVal : eventsArr) {
@@ -87,6 +126,35 @@ static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nul
         }
         track.addEvent(event);
     }
+
+    if (isMidi) {
+        const QJsonArray midiEventsArr = tObj["midiEvents"].toArray();
+        for (const auto& eVal : midiEventsArr) {
+            QJsonObject eObj = eVal.toObject();
+            MidiEvent event;
+            if (eObj.contains("clip")) {
+                auto clip = std::make_shared<MidiClip>();
+                clip->fromJson(eObj["clip"].toObject());
+                event.setClip(clip);
+            }
+            event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
+            event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
+            event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
+            if (eObj.contains("takes")) {
+                const QJsonArray takesArr = eObj["takes"].toArray();
+                for (const auto& takeVal : takesArr) {
+                    auto takeClip = std::make_shared<MidiClip>();
+                    takeClip->fromJson(takeVal.toObject());
+                    event.takes().push_back(takeClip);
+                }
+                event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
+                if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
+                    event.setClip(event.takes()[event.activeTakeIndex()]);
+            }
+            track.addMidiEvent(event);
+        }
+    }
+
     if (tObj.contains("plugins"))
         track.pluginChain().fromJson(tObj["plugins"].toObject(), manager);
     return track;
@@ -95,10 +163,16 @@ static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nul
 // --- AddTrackCommand ---
 
 AddTrackCommand::AddTrackCommand(Project& project, int index, int channels)
-    : m_project(project), m_index(index), m_channels(channels) {}
+    : m_project(project), m_index(index), m_channels(channels), m_type(Track::Type::Audio) {}
+
+AddTrackCommand::AddTrackCommand(Project& project, int index, Track::Type type)
+    : m_project(project), m_index(index), m_channels(2), m_type(type) {}
 
 void AddTrackCommand::execute() {
-    m_project.addTrack(QString(), m_channels);
+    if (m_type == Track::Type::Midi)
+        m_project.addMidiTrack(QString());
+    else
+        m_project.addTrack(QString(), m_channels);
 }
 
 void AddTrackCommand::undo() {
@@ -244,3 +318,22 @@ void SetTrackArmCommand::undo() {
     if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
         m_project.tracks()[m_trackIndex].setRecordArmed(m_oldValue);
 }
+
+// --- SetTrackMidiOutputCommand ---
+
+SetTrackMidiOutputCommand::SetTrackMidiOutputCommand(Project& project, int trackIndex,
+                                                     Routing oldRouting, Routing newRouting)
+    : m_project(project), m_trackIndex(trackIndex),
+      m_oldRouting(oldRouting), m_newRouting(newRouting) {}
+
+void SetTrackMidiOutputCommand::apply(const Routing& routing) {
+    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+        return;
+    auto& track = m_project.tracks()[m_trackIndex];
+    track.setMidiOutputDeviceId(routing.deviceId);
+    track.setMidiOutputDeviceName(routing.deviceName);
+    track.setInstrumentIndex(routing.instrumentIndex);
+}
+
+void SetTrackMidiOutputCommand::execute() { apply(m_newRouting); }
+void SetTrackMidiOutputCommand::undo() { apply(m_oldRouting); }

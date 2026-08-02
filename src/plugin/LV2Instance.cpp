@@ -143,6 +143,13 @@ bool LV2Instance::load(const QString& path) {
     m_uridPatchProperty = uridMapCallback(this, LV2_PATCH__property);
     m_uridPatchValue = uridMapCallback(this, LV2_PATCH__value);
     m_uridPatchMessage = uridMapCallback(this, LV2_PATCH__Message);
+    m_uridMidiEvent = uridMapCallback(this, LV2_MIDI__MidiEvent);
+
+    LilvNode* instrumentClass = lilv_new_uri(m_world, LV2_CORE__InstrumentPlugin);
+    const LilvPluginClass* pluginClass = lilv_plugin_get_class(m_plugin);
+    const LilvNode* classUri = pluginClass ? lilv_plugin_class_get_uri(pluginClass) : nullptr;
+    m_isInstrument = classUri && lilv_node_equals(classUri, instrumentClass);
+    lilv_node_free(instrumentClass);
 
     m_optionSampleRate = static_cast<float>(m_sampleRate);
     m_optionMaxBlockLength = m_maxBlockSize;
@@ -237,6 +244,9 @@ bool LV2Instance::load(const QString& path) {
             LilvNode* patchMsgNode = lilv_new_uri(m_world, LV2_PATCH__Message);
             bool isPatchMsg = isInput && lilv_port_supports_event(m_plugin, port, patchMsgNode);
             lilv_node_free(patchMsgNode);
+            LilvNode* midiNode = lilv_new_uri(m_world, LV2_MIDI__MidiEvent);
+            bool isMidi = lilv_port_supports_event(m_plugin, port, midiNode);
+            lilv_node_free(midiNode);
 
             if (isPatchMsg && isInput) {
                 pi.type = PluginPortInfo::Type::Path;
@@ -295,7 +305,7 @@ bool LV2Instance::load(const QString& path) {
                 minSize = static_cast<uint32_t>(lilv_node_as_int(minSizeNodeVal));
                 lilv_node_free(minSizeNodeVal);
             }
-            m_atomPorts.push_back({i, minSize, isInput});
+            m_atomPorts.push_back({i, minSize, isInput, isMidi});
         } else {
             pi.type = PluginPortInfo::Type::Control;
             pi.direction = isInput ? PluginPortInfo::Direction::Input
@@ -414,7 +424,7 @@ bool LV2Instance::deactivate() {
 }
 
 bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
-                          int numSamples, int numChannels) {
+                          int numSamples, int numChannels, const MidiBuffer* midi) {
     if (!m_active || !m_instance || !m_enabled) {
         if (outputBuffers && inputBuffers) {
             for (int ch = 0; ch < numChannels; ++ch)
@@ -452,7 +462,7 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
         seq->body.pad = 0;
     }
 
-    // Forge pending patch messages into input atom buffers just before run()
+    // Forge pending patch messages and MIDI events into input atom buffers just before run()
     for (size_t j = 0; j < m_atomPorts.size(); ++j) {
         if (!m_atomPorts[j].isInput) continue;
         int portIdx = static_cast<int>(m_atomPorts[j].index);
@@ -460,7 +470,8 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
         bool doGet = m_pendingPatchGet && m_pendingPortIndex == portIdx;
         bool doSet = m_pendingPatchSet && m_pendingPortIndex == portIdx;
-        if (!doGet && !doSet) continue;
+        bool hasMidi = m_atomPorts[j].isMidi && midi && !midi->empty();
+        if (!doGet && !doSet && !hasMidi) continue;
 
         if (buf.size() < sizeof(LV2_Atom_Sequence) + 256) continue;
 
@@ -500,6 +511,19 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
                 }
 
                 lv2_atom_forge_pop(&forge, &obj_frame);
+            }
+        }
+
+        if (hasMidi) {
+            for (const auto& m : *midi) {
+                lv2_atom_forge_frame_time(&forge, m.sampleOffset);
+                LV2_Atom atom;
+                atom.size = 3;
+                atom.type = m_uridMidiEvent;
+                lv2_atom_forge_raw(&forge, &atom, sizeof(LV2_Atom));
+                uint8_t midiBytes[3] = { m.status, m.data1, m.data2 };
+                lv2_atom_forge_raw(&forge, midiBytes, 3);
+                lv2_atom_forge_pad(&forge, sizeof(LV2_Atom) + 3);
             }
         }
 

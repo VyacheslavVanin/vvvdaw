@@ -49,6 +49,7 @@ void TrackViewWidget::setZoom(double pixelsPerSample) {
 
 void TrackViewWidget::updateFromTrack() {
     m_thumbnailCache.clear();
+    m_midiThumbCache.clear();
     update();
 }
 
@@ -56,27 +57,108 @@ int64_t TrackViewWidget::sampleAtX(int x) const {
     return m_scrollOffset + static_cast<int64_t>(x / m_pixelsPerSample);
 }
 
-AudioEvent* TrackViewWidget::eventAtX(int x, int& eventIndex) {
-    if (!m_track) return nullptr;
-    int64_t s = sampleAtX(x);
-    for (size_t i = 0; i < m_track->events().size(); ++i) {
-        auto& ev = const_cast<Track*>(m_track)->events()[i];
-        int64_t end = ev.startSample() + ev.durationSample();
-        if (s >= ev.startSample() && s <= end) {
-            eventIndex = static_cast<int>(i);
-            return &ev;
-        }
-    }
+bool TrackViewWidget::isMidiMode() const {
+    return m_track && m_track->type() == Track::Type::Midi;
+}
+
+int TrackViewWidget::eventCount() const {
+    if (!m_track) return 0;
+    return isMidiMode() ? static_cast<int>(m_track->midiEvents().size())
+                        : static_cast<int>(m_track->events().size());
+}
+
+int64_t TrackViewWidget::eventStart(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return 0;
+    if (isMidiMode()) return m_track->midiEvents()[index].startSample();
+    return m_track->events()[index].startSample();
+}
+
+int64_t TrackViewWidget::eventOffset(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return 0;
+    if (isMidiMode()) return m_track->midiEvents()[index].offsetSample();
+    return m_track->events()[index].offsetSample();
+}
+
+int64_t TrackViewWidget::eventDuration(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return 0;
+    if (isMidiMode()) return m_track->midiEvents()[index].durationSample();
+    return m_track->events()[index].durationSample();
+}
+
+int64_t TrackViewWidget::eventIdAt(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return -1;
+    if (isMidiMode()) return m_track->midiEvents()[index].id();
+    return m_track->events()[index].id();
+}
+
+bool TrackViewWidget::eventHasTakes(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return false;
+    if (isMidiMode()) return !m_track->midiEvents()[index].takes().empty();
+    return !m_track->events()[index].takes().empty();
+}
+
+int TrackViewWidget::eventActiveTake(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return -1;
+    if (isMidiMode()) return m_track->midiEvents()[index].activeTakeIndex();
+    return m_track->events()[index].activeTakeIndex();
+}
+
+int TrackViewWidget::eventTakeCount(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return 0;
+    if (isMidiMode()) return static_cast<int>(m_track->midiEvents()[index].takes().size());
+    return static_cast<int>(m_track->events()[index].takes().size());
+}
+
+void TrackViewWidget::setEventStart(int index, int64_t value) {
+    if (!m_track || index < 0 || index >= eventCount()) return;
+    if (isMidiMode()) m_track->midiEvents()[index].setStartSample(value);
+    else m_track->events()[index].setStartSample(value);
+}
+
+void TrackViewWidget::setEventOffset(int index, int64_t value) {
+    if (!m_track || index < 0 || index >= eventCount()) return;
+    if (isMidiMode()) m_track->midiEvents()[index].setOffsetSample(value);
+    else m_track->events()[index].setOffsetSample(value);
+}
+
+void TrackViewWidget::setEventDuration(int index, int64_t value) {
+    if (!m_track || index < 0 || index >= eventCount()) return;
+    if (isMidiMode()) m_track->midiEvents()[index].setDurationSample(value);
+    else m_track->events()[index].setDurationSample(value);
+}
+
+void TrackViewWidget::switchEventTake(int index, int takeIndex) {
+    if (!m_track || index < 0 || index >= eventCount()) return;
+    if (isMidiMode()) m_track->midiEvents()[index].setActiveTake(takeIndex);
+    else m_track->events()[index].setActiveTake(takeIndex);
+}
+
+std::shared_ptr<MidiClip> TrackViewWidget::midiClipAt(int index) const {
+    if (!m_track || index < 0 || index >= eventCount()) return nullptr;
+    if (isMidiMode()) return m_track->midiEvents()[index].activeClip();
     return nullptr;
 }
 
+int TrackViewWidget::eventAtX(int x, int& eventIndex) {
+    if (!m_track) return -1;
+    int64_t s = sampleAtX(x);
+    int n = eventCount();
+    for (int i = 0; i < n; ++i) {
+        int64_t end = eventStart(i) + eventDuration(i);
+        if (s >= eventStart(i) && s <= end) {
+            eventIndex = i;
+            return i;
+        }
+    }
+    return -1;
+}
+
 TrackViewWidget::EdgeDrag TrackViewWidget::edgeAtX(int x, int eventIndex) const {
-    if (!m_track || eventIndex < 0 || eventIndex >= static_cast<int>(m_track->events().size()))
+    if (!m_track || eventIndex < 0 || eventIndex >= eventCount())
         return EdgeDrag::None;
 
-    const auto& ev = m_track->events()[eventIndex];
-    int ex = static_cast<int>((ev.startSample() - m_scrollOffset) * m_pixelsPerSample);
-    int ew = static_cast<int>(ev.durationSample() * m_pixelsPerSample);
+    int ex = static_cast<int>((eventStart(eventIndex) - m_scrollOffset) * m_pixelsPerSample);
+    int ew = static_cast<int>(eventDuration(eventIndex) * m_pixelsPerSample);
 
     if (ew < EdgeHandleWidth * 2) {
         if (x >= ex && x < ex + ew)
@@ -113,23 +195,24 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.drawLine(x, 0, x, trackHeight);
     }
 
-    // Draw events
-    for (size_t i = 0; i < m_track->events().size(); ++i) {
-        const auto& event = m_track->events()[i];
-        if (!event.clip() || !event.clip()->isValid()) continue;
+    int n = eventCount();
+    for (int i = 0; i < n; ++i) {
+        if (!eventHasTakes(i) && !isMidiMode()) {
+            auto& ev = m_track->events()[i];
+            if (!ev.clip() || !ev.clip()->isValid()) continue;
+        }
 
-        int x = static_cast<int>((event.startSample() - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(event.durationSample() * m_pixelsPerSample);
+        int x = static_cast<int>((eventStart(i) - m_scrollOffset) * m_pixelsPerSample);
+        int w = static_cast<int>(eventDuration(i) * m_pixelsPerSample);
         if (x + w < 0 || x > width()) continue;
 
         QRect eventRect(x, 2, w, trackHeight - 4);
 
-        bool isHovered = (static_cast<int>(i) == m_hoverEventIndex);
-        bool isDragged = (static_cast<int>(i) == m_dragEventIndex && m_dragging);
-        bool isSelected = (static_cast<int>(i) == m_selectedEventIndex);
+        bool isHovered = (i == m_hoverEventIndex);
+        bool isDragged = (i == m_dragEventIndex && m_dragging);
+        bool isSelected = (i == m_selectedEventIndex);
         if (isDragged && !m_dragSourceVisible) continue;
 
-        // Event background
         QColor bgColor = isSelected ? QColor("#334466")
                        : (isHovered ? QColor("#224466") : QColor("#1a3344"));
         QColor borderColor = isDragged ? QColor("#ffcc00")
@@ -140,11 +223,18 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.setBrush(bgColor);
         painter.drawRect(eventRect);
 
-        // Waveform thumbnail
-        {
+        if (isMidiMode()) {
+            auto clip = midiClipAt(i);
+            if (clip) {
+                int th = eventRect.height() - 2;
+                renderMidiPreview(painter, clip, eventOffset(i), eventDuration(i),
+                                  eventRect.x() + 1, eventRect.y() + 1, w, th);
+            }
+        } else {
             int th = eventRect.height() - 2;
-            renderThumbnail(painter, event.clip(),
-                            event.offsetSample(), event.sourceFrames(),
+            auto& ev = m_track->events()[i];
+            renderThumbnail(painter, ev.clip(),
+                            ev.offsetSample(), ev.sourceFrames(),
                             eventRect.x() + 1, eventRect.y() + 1, w, th);
         }
 
@@ -165,29 +255,27 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         painter.drawRect(eventRect);
 
         // Take indicator
-        if (event.takes().size() > 1) {
+        if (eventTakeCount(i) > 1) {
             painter.setPen(QColor("#aaddff"));
             QFont takeFont = painter.font();
             takeFont.setPixelSize(9);
             painter.setFont(takeFont);
             painter.drawText(eventRect.x() + 3, eventRect.y() + 12,
-                QString("T%1/%2").arg(event.activeTakeIndex() + 1).arg(event.takes().size()));
+                QString("T%1/%2").arg(eventActiveTake(i) + 1).arg(eventTakeCount(i)));
         }
     }
 
-    // Drag preview on target track (full rendering, same style as normal event)
+    // Drag preview on target track (audio only)
     if (m_dragPreview.event && m_dragPreview.event->clip() && m_dragPreview.event->clip()->isValid()) {
         int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
         int w = static_cast<int>(m_dragPreview.event->durationSample() * m_pixelsPerSample);
         if (x + w >= 0 && x <= width()) {
             QRect eventRect(x, 2, w, trackHeight - 4);
 
-            // Full styled rendering like a dragged event
             painter.setPen(QPen(QColor("#ffcc00"), 2));
             painter.setBrush(QColor("#1a3344"));
             painter.drawRect(eventRect);
 
-            // Waveform
             {
                 auto clip = m_dragPreview.event->clip();
                 int th = eventRect.height() - 2;
@@ -196,7 +284,6 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                                 eventRect.x() + 1, eventRect.y() + 1, w, th);
             }
 
-            // Border
             painter.setPen(QPen(QColor("#ffcc00"), 1));
             painter.setBrush(Qt::NoBrush);
             painter.drawRect(eventRect);
@@ -219,15 +306,49 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 
     // Dragged event tooltip
     if (m_dragging && m_dragEventIndex >= 0) {
-        auto& ev = m_track->events()[m_dragEventIndex];
-        int phx = static_cast<int>((ev.startSample() - m_scrollOffset) * m_pixelsPerSample);
+        int64_t start = eventStart(m_dragEventIndex);
+        int phx = static_cast<int>((start - m_scrollOffset) * m_pixelsPerSample);
         painter.setPen(Qt::white);
         QFont f = painter.font();
         f.setPointSize(9);
         painter.setFont(f);
-        painter.drawText(phx + 4, 14,
-            QString("Sample: %1").arg(ev.startSample()));
+        painter.drawText(phx + 4, 14, QString("Sample: %1").arg(start));
     }
+}
+
+void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
+                                        int64_t offsetSample, int64_t durationSample,
+                                        int x, int y, int w, int h) {
+    if (!clip || clip->notes().empty()) return;
+
+    auto& cache = m_midiThumbCache[clip];
+    if (cache.image.isNull() || cache.revision != clip->revision() || cache.image.width() != w
+        || cache.image.height() != h) {
+        cache.image = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+        cache.image.fill(Qt::transparent);
+        cache.revision = clip->revision();
+
+        QPainter p(&cache.image);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#7fb4e0"));
+
+        constexpr double kMinPitch = 36.0;
+        constexpr double kMaxPitch = 84.0;
+        for (const auto& note : clip->notes()) {
+            double pitchFrac = (note.pitch - kMinPitch) / (kMaxPitch - kMinPitch);
+            pitchFrac = std::clamp(pitchFrac, 0.0, 1.0);
+            int ny = y + static_cast<int>((1.0 - pitchFrac) * (h - 2));
+            int nx = x + static_cast<int>((static_cast<double>(note.startTick) / MidiClip::kPPQ / 4.0) * w);
+            int nw = std::max(1, static_cast<int>(
+                (static_cast<double>(note.durationTicks) / MidiClip::kPPQ / 4.0) * w));
+            p.drawRect(nx, ny, nw, std::max(2, h / 16));
+        }
+    }
+
+    if (!cache.image.isNull())
+        painter.drawImage(x, y, cache.image);
+    (void)offsetSample;
+    (void)durationSample;
 }
 
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
@@ -252,16 +373,15 @@ void TrackViewWidget::wheelEvent(QWheelEvent* event) {
 void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_track) {
         int idx = -1;
-        AudioEvent* ev = eventAtX(static_cast<int>(event->position().x()), idx);
-        if (ev) {
+        if (eventAtX(static_cast<int>(event->position().x()), idx) >= 0) {
             EdgeDrag edge = edgeAtX(static_cast<int>(event->position().x()), idx);
             if (edge != EdgeDrag::None) {
                 m_selectedEventIndex = idx;
                 m_edgeDrag = edge;
                 m_edgeDragEventIndex = idx;
-                m_edgeDragStartOffset = ev->offsetSample();
-                m_edgeDragStartDuration = ev->durationSample();
-                m_edgeDragStartSample = ev->startSample();
+                m_edgeDragStartOffset = eventOffset(idx);
+                m_edgeDragStartDuration = eventDuration(idx);
+                m_edgeDragStartSample = eventStart(idx);
                 m_edgeDragStartMouseSample = sampleAtX(static_cast<int>(event->position().x()));
                 setCursor(Qt::SizeHorCursor);
                 emit eventEdgeTrimStarted();
@@ -274,16 +394,24 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             bool ctrlDrag = (event->modifiers() & Qt::ControlModifier);
             if (ctrlDrag) {
                 emit eventDragStarted();
-                AudioEvent copy = *ev;
-                copy.setStartSample(copy.startSample() +
-                    static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
-                m_track->addEvent(std::move(copy));
-                m_selectedEventIndex = static_cast<int>(m_track->events().size() - 1);
+                if (isMidiMode()) {
+                    MidiEvent copy = m_track->midiEvents()[idx];
+                    copy.setStartSample(copy.startSample() +
+                        static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+                    m_track->addMidiEvent(std::move(copy));
+                    m_selectedEventIndex = eventCount() - 1;
+                } else {
+                    AudioEvent copy = m_track->events()[idx];
+                    copy.setStartSample(copy.startSample() +
+                        static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+                    m_track->addEvent(std::move(copy));
+                    m_selectedEventIndex = eventCount() - 1;
+                }
             }
 
             m_dragEventIndex = m_selectedEventIndex;
             m_dragging = true;
-            m_dragStartSample = m_track->events()[m_selectedEventIndex].startSample();
+            m_dragStartSample = eventStart(m_selectedEventIndex);
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
 
@@ -304,9 +432,12 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
         int64_t currentMouseSample = sampleAtX(mouseX);
         int64_t delta = currentMouseSample - m_edgeDragStartMouseSample;
 
-        auto& ev = m_track->events()[m_edgeDragEventIndex];
-        auto clip = ev.activeClip();
-        int64_t clipFrames = clip ? static_cast<int64_t>(clip->frameCount()) : 0;
+        int idx = m_edgeDragEventIndex;
+        int64_t clipFrames = -1;
+        if (!isMidiMode()) {
+            auto clip = m_track->events()[idx].activeClip();
+            if (clip) clipFrames = static_cast<int64_t>(clip->frameCount());
+        }
 
         if (m_edgeDrag == EdgeDrag::Left) {
             int64_t maxLeftDelta = m_edgeDragStartOffset;
@@ -340,12 +471,13 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
                 newStart = 0;
             }
 
-            ev.setOffsetSample(newOffset);
-            ev.setDurationSample(newDuration);
-            ev.setSourceFrames(newDuration);
-            ev.setStartSample(newStart);
+            setEventOffset(idx, newOffset);
+            setEventDuration(idx, newDuration);
+            setEventStart(idx, newStart);
         } else {
-            int64_t maxDelta = clipFrames - m_edgeDragStartOffset - m_edgeDragStartDuration;
+            int64_t maxDelta = (clipFrames > 0)
+                ? clipFrames - m_edgeDragStartOffset - m_edgeDragStartDuration
+                : INT64_MAX;
             int64_t minDelta = -(m_edgeDragStartDuration - 1);
             if (delta > maxDelta) delta = maxDelta;
             if (delta < minDelta) delta = minDelta;
@@ -357,12 +489,11 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
                 endSample = TimeUtils::snapSample(endSample, m_snapUnit);
                 newDuration = endSample - m_edgeDragStartSample;
                 if (newDuration < 1) newDuration = 1;
-                if (m_edgeDragStartOffset + newDuration > clipFrames)
+                if (clipFrames > 0 && m_edgeDragStartOffset + newDuration > clipFrames)
                     newDuration = clipFrames - m_edgeDragStartOffset;
             }
 
-            ev.setDurationSample(newDuration);
-            ev.setSourceFrames(newDuration);
+            setEventDuration(idx, newDuration);
         }
         update();
         return;
@@ -376,17 +507,17 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
             newStart = TimeUtils::snapSample(newStart, m_snapUnit);
 
         if (newStart < 0) newStart = 0;
-        m_track->events()[m_dragEventIndex].setStartSample(newStart);
-        emit dragInProgress(m_track->events()[m_dragEventIndex].id(), newStart, event->globalPosition().toPoint());
+        setEventStart(m_dragEventIndex, newStart);
+        emit dragInProgress(eventIdAt(m_dragEventIndex), newStart, event->globalPosition().toPoint());
         update();
     } else {
         // Hover state
         int idx = -1;
-        AudioEvent* ev = eventAtX(mouseX, idx);
+        bool hit = (eventAtX(mouseX, idx) >= 0);
         if (idx != m_hoverEventIndex) {
             m_hoverEventIndex = idx;
         }
-        if (ev) {
+        if (hit) {
             EdgeDrag edge = edgeAtX(mouseX, idx);
             if (edge != EdgeDrag::None)
                 setCursor(Qt::SizeHorCursor);
@@ -405,11 +536,8 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
             m_edgeDrag = EdgeDrag::None;
             m_edgeDragEventIndex = -1;
             unsetCursor();
-            if (m_track && m_selectedEventIndex >= 0 &&
-                m_selectedEventIndex < static_cast<int>(m_track->events().size())) {
-                auto& ev = m_track->events()[m_selectedEventIndex];
+            if (m_track && m_selectedEventIndex >= 0 && m_selectedEventIndex < eventCount())
                 emit eventsChanged();
-            }
             update();
             return;
         }
@@ -418,14 +546,28 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
             m_dragging = false;
             unsetCursor();
             if (m_track && m_dragEventIndex >= 0) {
-                auto& ev = m_track->events()[m_dragEventIndex];
-                emit eventMoved(ev.id(), ev.startSample());
-                emit eventDragFinished(ev.id(), ev.startSample(), event->globalPosition().toPoint());
+                int64_t id = eventIdAt(m_dragEventIndex);
+                int64_t start = eventStart(m_dragEventIndex);
+                emit eventMoved(id, start);
+                emit eventDragFinished(id, start, event->globalPosition().toPoint());
             }
             m_dragEventIndex = -1;
             update();
         }
     }
+}
+
+void TrackViewWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && isMidiMode()) {
+        int idx = -1;
+        if (eventAtX(static_cast<int>(event->position().x()), idx) >= 0) {
+            m_selectedEventIndex = idx;
+            emit eventDoubleClicked(eventIdAt(idx));
+            update();
+            return;
+        }
+    }
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 void TrackViewWidget::keyPressEvent(QKeyEvent* event) {
@@ -438,14 +580,17 @@ void TrackViewWidget::keyPressEvent(QKeyEvent* event) {
 }
 
 void TrackViewWidget::deleteSelectedEvent() {
-    if (!m_track || m_selectedEventIndex < 0 ||
-        m_selectedEventIndex >= static_cast<int>(m_track->events().size()))
+    if (!m_track || m_selectedEventIndex < 0 || m_selectedEventIndex >= eventCount())
         return;
 
-    int64_t id = m_track->events()[m_selectedEventIndex].id();
-    m_track->removeEvent(id);
+    int64_t id = eventIdAt(m_selectedEventIndex);
+    if (isMidiMode())
+        m_track->removeMidiEvent(id);
+    else
+        m_track->removeEvent(id);
     m_selectedEventIndex = -1;
     m_thumbnailCache.clear();
+    m_midiThumbCache.clear();
     update();
     emit eventsChanged();
 }
@@ -491,8 +636,22 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     int idx = -1;
-    AudioEvent* ev = eventAtX(static_cast<int>(event->pos().x()), idx);
-    if (!ev) {
+    bool hit = (eventAtX(static_cast<int>(event->pos().x()), idx) >= 0);
+
+    if (!hit) {
+        if (isMidiMode()) {
+            int64_t start = sampleAtX(static_cast<int>(event->pos().x()));
+            if (m_snapToGrid)
+                start = TimeUtils::snapSample(start, m_snapUnit);
+            if (start < 0) start = 0;
+            QMenu menu(this);
+            QAction* addAction = menu.addAction("Add MIDI Event");
+            connect(addAction, &QAction::triggered, this, [this, start] {
+                emit addMidiEventRequested(start);
+            });
+            menu.exec(event->globalPos());
+            return;
+        }
         QWidget::contextMenuEvent(event);
         return;
     }
@@ -500,15 +659,23 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     QMenu menu(this);
 
     QAction* duplicateAction = menu.addAction("Duplicate");
-    connect(duplicateAction, &QAction::triggered, this, [this, eventData = *ev] {
-        if (!m_track) return;
+    connect(duplicateAction, &QAction::triggered, this, [this, idx] {
+        if (!m_track || idx < 0 || idx >= eventCount()) return;
         emit takeSwitchStarted();
-        AudioEvent copy = eventData;
-        copy.setStartSample(copy.startSample() +
-            static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
-        m_track->addEvent(std::move(copy));
-        m_selectedEventIndex = static_cast<int>(m_track->events().size() - 1);
+        if (isMidiMode()) {
+            MidiEvent copy = m_track->midiEvents()[idx];
+            copy.setStartSample(copy.startSample() +
+                static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+            m_track->addMidiEvent(std::move(copy));
+        } else {
+            AudioEvent copy = m_track->events()[idx];
+            copy.setStartSample(copy.startSample() +
+                static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+            m_track->addEvent(std::move(copy));
+        }
+        m_selectedEventIndex = eventCount() - 1;
         m_thumbnailCache.clear();
+        m_midiThumbCache.clear();
         update();
         emit eventsChanged();
     });
@@ -521,16 +688,25 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
         deleteSelectedEvent();
     });
 
-    if (!ev->takes().empty()) {
+    if (isMidiMode()) {
+        QAction* pianoRollAction = menu.addAction("Open Piano Roll");
+        connect(pianoRollAction, &QAction::triggered, this, [this, idx] {
+            if (!m_track || idx < 0 || idx >= eventCount()) return;
+            m_selectedEventIndex = idx;
+            emit eventDoubleClicked(eventIdAt(idx));
+        });
+    }
+
+    if (eventHasTakes(idx)) {
         menu.addSeparator();
-        for (size_t i = 0; i < ev->takes().size(); ++i) {
+        for (int i = 0; i < eventTakeCount(idx); ++i) {
             QString label = QString("Take %1").arg(i + 1);
-            if (static_cast<int>(i) == ev->activeTakeIndex())
+            if (i == eventActiveTake(idx))
                 label += " ✓";
             QAction* action = menu.addAction(label);
-            connect(action, &QAction::triggered, this, [this, ev, i] {
+            connect(action, &QAction::triggered, this, [this, idx, i] {
                 emit takeSwitchStarted();
-                ev->setActiveTake(static_cast<int>(i));
+                switchEventTake(idx, i);
                 update();
             });
         }
@@ -538,5 +714,3 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
 
     menu.exec(event->globalPos());
 }
-
-

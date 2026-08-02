@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 #include <cstdint>
+#include "midi/MidiBuffer.h"
 
 struct PluginPortInfo {
     enum class Type { Audio, Control, Path, String, Atom };
@@ -32,7 +33,10 @@ public:
     virtual bool activate(double sampleRate, int maxBlockSize) = 0;
     virtual bool deactivate() = 0;
     virtual bool process(float** inputBuffers, float** outputBuffers,
-                         int numSamples, int numChannels) = 0;
+                         int numSamples, int numChannels,
+                         const MidiBuffer* midi = nullptr) = 0;
+
+    virtual bool isInstrument() const { return false; }
 
     virtual QString name() const = 0;
     virtual QString vendor() const = 0;

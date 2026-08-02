@@ -4,6 +4,7 @@
 #include "plugin/PluginManager.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
+#include "model/Instrument.h"
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
@@ -77,16 +78,25 @@ PluginListWidget::PluginListWidget(QWidget* parent)
 void PluginListWidget::setTrack(Track* track) {
     m_track = track;
     m_bus = nullptr;
+    m_instrument = nullptr;
 }
 
 void PluginListWidget::setBus(AudioBus* bus) {
     m_bus = bus;
     m_track = nullptr;
+    m_instrument = nullptr;
+}
+
+void PluginListWidget::setInstrument(Instrument* instrument) {
+    m_instrument = instrument;
+    m_track = nullptr;
+    m_bus = nullptr;
 }
 
 PluginChain* PluginListWidget::targetChain() const {
     if (m_track) return const_cast<PluginChain*>(&m_track->pluginChain());
     if (m_bus) return &m_bus->pluginChain;
+    if (m_instrument) return &m_instrument->effects();
     return nullptr;
 }
 
@@ -166,6 +176,7 @@ void PluginListWidget::onAddClicked() {
     auto populateList = [this, listWidget](const QString& text) {
         QVector<QPair<int, const PluginInfo*>> scored;
         for (const auto& pi : m_pluginManager->plugins()) {
+            if (m_instrumentsOnly != pi.isInstrument) continue;
             const QString display = QString("[%1] %2").arg(pi.type.toUpper(), pi.name);
             const int score = fuzzyScore(text, display);
             if (score >= 0)

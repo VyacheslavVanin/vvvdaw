@@ -126,7 +126,7 @@ void PluginChain::fromJson(const QJsonObject& json, PluginManager* manager) {
     for (auto v : arr) {
         QJsonObject obj = v.toObject();
         QString type = obj["type"].toString();
-        if (type == "vst3") {
+        if (type == "vst3" || type == "lv2") {
             QString pluginId = obj["pluginId"].toString();
             auto it = oldPlugins.find(pluginId);
             if (it != oldPlugins.end()) {
@@ -134,27 +134,30 @@ void PluginChain::fromJson(const QJsonObject& json, PluginManager* manager) {
                 m_plugins.push_back(std::move(it->second));
                 oldPlugins.erase(it);
             } else {
-                auto instance = std::make_unique<VST3Instance>();
-                if (instance->load(obj["path"].toString())) {
-                    instance->stateFromJson(obj);
+                auto instance = createInstance(obj, manager);
+                if (instance)
                     m_plugins.push_back(std::move(instance));
-                }
-            }
-        } else if (type == "lv2") {
-            QString pluginId = obj["pluginId"].toString();
-            auto it = oldPlugins.find(pluginId);
-            if (it != oldPlugins.end()) {
-                it->second->stateFromJson(obj);
-                m_plugins.push_back(std::move(it->second));
-                oldPlugins.erase(it);
-            } else {
-                auto instance = std::make_unique<LV2Instance>();
-                if (manager) instance->setWorld(manager->lilvWorld());
-                if (instance->load(obj["path"].toString())) {
-                    instance->stateFromJson(obj);
-                    m_plugins.push_back(std::move(instance));
-                }
             }
         }
     }
+}
+
+std::unique_ptr<PluginInstance> PluginChain::createInstance(
+    const QJsonObject& obj, PluginManager* manager) {
+    QString type = obj["type"].toString();
+    if (type == "vst3") {
+        auto instance = std::make_unique<VST3Instance>();
+        if (instance->load(obj["path"].toString())) {
+            instance->stateFromJson(obj);
+            return instance;
+        }
+    } else if (type == "lv2") {
+        auto instance = std::make_unique<LV2Instance>();
+        if (manager) instance->setWorld(manager->lilvWorld());
+        if (instance->load(obj["path"].toString())) {
+            instance->stateFromJson(obj);
+            return instance;
+        }
+    }
+    return nullptr;
 }

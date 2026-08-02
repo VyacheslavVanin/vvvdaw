@@ -118,6 +118,12 @@ Track* Project::addTrack(const QString& name, int channels) {
     return &m_tracks.back();
 }
 
+Track* Project::addMidiTrack(const QString& name) {
+    Track track(name.isEmpty() ? QString("Track %1").arg(m_tracks.size() + 1) : name, Track::Type::Midi);
+    m_tracks.push_back(std::move(track));
+    return &m_tracks.back();
+}
+
 bool Project::removeTrack(int index) {
     if (index < 0 || index >= static_cast<int>(m_tracks.size()))
         return false;
@@ -128,6 +134,27 @@ bool Project::removeTrack(int index) {
 int Project::addBus(AudioBus bus) {
     m_buses.push_back(std::move(bus));
     return static_cast<int>(m_buses.size()) - 1;
+}
+
+int Project::addInstrument(Instrument instrument) {
+    m_instruments.push_back(std::move(instrument));
+    return static_cast<int>(m_instruments.size()) - 1;
+}
+
+bool Project::removeInstrument(int index) {
+    if (index < 0 || index >= static_cast<int>(m_instruments.size()))
+        return false;
+
+    m_instruments.erase(m_instruments.begin() + index);
+
+    for (auto& track : m_tracks) {
+        if (track.instrumentIndex() == index)
+            track.setInstrumentIndex(-1);
+        else if (track.instrumentIndex() > index)
+            track.setInstrumentIndex(track.instrumentIndex() - 1);
+    }
+
+    return true;
 }
 
 bool Project::removeBus(int index) {
@@ -150,6 +177,13 @@ bool Project::removeBus(int index) {
             bus.outputBusIndex = 0;
         else if (bus.outputBusIndex > index)
             bus.outputBusIndex -= 1;
+    }
+
+    for (auto& instrument : m_instruments) {
+        if (instrument.outputBusIndex() == index)
+            instrument.setOutputBusIndex(0);
+        else if (instrument.outputBusIndex() > index)
+            instrument.setOutputBusIndex(instrument.outputBusIndex() - 1);
     }
 
     return true;
@@ -191,12 +225,18 @@ void Project::rescaleTimeline(double factor) {
             event.setDurationSample(static_cast<int64_t>(
                 std::llround(static_cast<double>(event.durationSample()) * factor)));
         }
+        for (auto& event : track.midiEvents()) {
+            event.setStartSample(static_cast<int64_t>(
+                std::llround(static_cast<double>(event.startSample()) * factor)));
+            event.setDurationSample(static_cast<int64_t>(
+                std::llround(static_cast<double>(event.durationSample()) * factor)));
+        }
     }
 }
 
 QJsonObject Project::toJson() const {
     QJsonObject obj;
-    obj["formatVersion"] = 3;
+    obj["formatVersion"] = 4;
     obj["name"] = m_name;
     obj["snapToGrid"] = m_snapToGrid;
     obj["metronomeEnabled"] = m_metronomeEnabled;
@@ -220,6 +260,7 @@ QJsonObject Project::toJson() const {
     for (const auto& track : m_tracks) {
         QJsonObject tObj;
         tObj["name"] = track.name();
+        tObj["type"] = track.type() == Track::Type::Midi ? "midi" : "audio";
         tObj["channels"] = track.channels();
         tObj["inputDeviceId"] = track.inputDeviceId();
         tObj["inputChannel"] = track.inputChannel();
@@ -228,6 +269,13 @@ QJsonObject Project::toJson() const {
         tObj["volume"] = track.volume();
         tObj["muted"] = track.isMuted();
         tObj["solo"] = track.isSolo();
+
+        if (track.type() == Track::Type::Midi) {
+            tObj["midiOutputDeviceId"] = track.midiOutputDeviceId();
+            if (!track.midiOutputDeviceName().isEmpty())
+                tObj["midiOutputDeviceName"] = track.midiOutputDeviceName();
+            tObj["instrumentIndex"] = track.instrumentIndex();
+        }
 
         QJsonArray eventsArr;
         for (const auto& event : track.events()) {
@@ -259,6 +307,28 @@ QJsonObject Project::toJson() const {
             eventsArr.append(eObj);
         }
         tObj["events"] = eventsArr;
+
+        if (track.type() == Track::Type::Midi) {
+            QJsonArray midiEventsArr;
+            for (const auto& event : track.midiEvents()) {
+                QJsonObject eObj;
+                eObj["startSample"] = static_cast<qint64>(event.startSample());
+                eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
+                eObj["durationSample"] = static_cast<qint64>(event.durationSample());
+                if (event.clip())
+                    eObj["clip"] = event.clip()->toJson();
+                if (!event.takes().empty()) {
+                    QJsonArray takesArr;
+                    for (const auto& take : event.takes())
+                        takesArr.append(take->toJson());
+                    eObj["takes"] = takesArr;
+                    eObj["activeTakeIndex"] = event.activeTakeIndex();
+                }
+                midiEventsArr.append(eObj);
+            }
+            tObj["midiEvents"] = midiEventsArr;
+        }
+
         if (track.pluginChain().count() > 0)
             tObj["plugins"] = track.pluginChain().toJson();
         tracksArr.append(tObj);
@@ -280,6 +350,23 @@ QJsonObject Project::toJson() const {
         busesArr.append(bObj);
     }
     obj["buses"] = busesArr;
+
+    QJsonArray instrumentsArr;
+    for (const auto& instrument : m_instruments) {
+        QJsonObject iObj;
+        iObj["name"] = instrument.name();
+        iObj["pan"] = instrument.pan();
+        iObj["volume"] = instrument.volume();
+        iObj["outputBusIndex"] = instrument.outputBusIndex();
+        iObj["solo"] = instrument.isSolo();
+        iObj["muted"] = instrument.isMuted();
+        if (instrument.synth())
+            iObj["synth"] = instrument.synth()->stateToJson();
+        if (instrument.effects().count() > 0)
+            iObj["effects"] = instrument.effects().toJson();
+        instrumentsArr.append(iObj);
+    }
+    obj["instruments"] = instrumentsArr;
 
     return obj;
 }
@@ -309,7 +396,10 @@ void Project::fromJson(const QJsonObject& obj) {
     const QJsonArray tracksArr = obj["tracks"].toArray();
     for (const auto& tVal : tracksArr) {
         QJsonObject tObj = tVal.toObject();
-        Track track(tObj["name"].toString(), tObj["channels"].toInt(2));
+        bool isMidi = tObj["type"].toString() == "midi";
+        Track track(isMidi ? Track::Type::Midi : Track::Type::Audio,
+                    tObj["name"].toString());
+        track.setChannels(tObj["channels"].toInt(2));
         track.setInputDeviceId(tObj["inputDeviceId"].toInt(-1));
         track.setInputChannel(tObj["inputChannel"].toInt(0));
         track.setOutputBusIndex(tObj["outputBusIndex"].toInt(0));
@@ -317,6 +407,12 @@ void Project::fromJson(const QJsonObject& obj) {
         track.setVolume(static_cast<float>(tObj["volume"].toDouble(0.8)));
         track.setMuted(tObj["muted"].toBool(false));
         track.setSolo(tObj["solo"].toBool(false));
+
+        if (isMidi) {
+            track.setMidiOutputDeviceId(tObj["midiOutputDeviceId"].toInt(-1));
+            track.setMidiOutputDeviceName(tObj["midiOutputDeviceName"].toString());
+            track.setInstrumentIndex(tObj["instrumentIndex"].toInt(-1));
+        }
 
         const QJsonArray eventsArr = tObj["events"].toArray();
         for (const auto& eVal : eventsArr) {
@@ -358,6 +454,37 @@ void Project::fromJson(const QJsonObject& obj) {
 
             track.addEvent(event);
         }
+
+        if (isMidi) {
+            const QJsonArray midiEventsArr = tObj["midiEvents"].toArray();
+            for (const auto& eVal : midiEventsArr) {
+                QJsonObject eObj = eVal.toObject();
+                MidiEvent event;
+                if (eObj.contains("clip")) {
+                    auto clip = std::make_shared<MidiClip>();
+                    clip->fromJson(eObj["clip"].toObject());
+                    event.setClip(clip);
+                }
+                event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
+                event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
+                event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
+
+                if (eObj.contains("takes")) {
+                    const QJsonArray takesArr = eObj["takes"].toArray();
+                    for (const auto& takeVal : takesArr) {
+                        auto takeClip = std::make_shared<MidiClip>();
+                        takeClip->fromJson(takeVal.toObject());
+                        event.takes().push_back(takeClip);
+                    }
+                    event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
+                    if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
+                        event.setClip(event.takes()[event.activeTakeIndex()]);
+                }
+
+                track.addMidiEvent(event);
+            }
+        }
+
         if (tObj.contains("plugins"))
             track.pluginChain().fromJson(tObj["plugins"].toObject(), m_pluginManager);
         m_tracks.push_back(std::move(track));
@@ -428,6 +555,27 @@ void Project::fromJson(const QJsonObject& obj) {
     m_buses[0].outputBusIndex = -1;
     if (static_cast<int>(m_buses.size()) > MetronomeBusIndex) {
         m_buses[MetronomeBusIndex].removable = false;
+    }
+
+    m_instruments.clear();
+    const QJsonArray instrumentsArr = obj["instruments"].toArray();
+    for (const auto& iVal : instrumentsArr) {
+        QJsonObject iObj = iVal.toObject();
+        Instrument instrument;
+        instrument.setName(iObj["name"].toString("Instrument"));
+        instrument.setPan(static_cast<float>(iObj["pan"].toDouble(0.0)));
+        instrument.setVolume(static_cast<float>(iObj["volume"].toDouble(1.0)));
+        instrument.setOutputBusIndex(iObj["outputBusIndex"].toInt(0));
+        instrument.setSolo(iObj["solo"].toBool(false));
+        instrument.setMuted(iObj["muted"].toBool(false));
+        if (iObj.contains("synth")) {
+            auto synth = PluginChain::createInstance(iObj["synth"].toObject(), m_pluginManager);
+            if (synth)
+                instrument.setSynth(std::move(synth));
+        }
+        if (iObj.contains("effects"))
+            instrument.effects().fromJson(iObj["effects"].toObject(), m_pluginManager);
+        m_instruments.push_back(std::move(instrument));
     }
 }
 

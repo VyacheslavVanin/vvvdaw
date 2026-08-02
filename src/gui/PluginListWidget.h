@@ -14,6 +14,7 @@ class PluginInstance;
 class PluginManager;
 class Track;
 struct AudioBus;
+class Instrument;
 
 class PluginListWidget : public QWidget {
     Q_OBJECT
@@ -22,8 +23,10 @@ public:
 
     void setTrack(Track* track);
     void setBus(AudioBus* bus);
+    void setInstrument(Instrument* instrument);
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
+    void setInstrumentsOnly(bool only) { m_instrumentsOnly = only; }
     void rebuild();
 
 signals:
@@ -52,6 +55,8 @@ private:
 
     Track* m_track = nullptr;
     AudioBus* m_bus = nullptr;
+    Instrument* m_instrument = nullptr;
+    bool m_instrumentsOnly = false;
     PluginManager* m_pluginManager = nullptr;
     double m_sampleRate = 48000;
     int m_bufferSize = 512;

@@ -14,6 +14,7 @@ pkg_check_modules(LILV REQUIRED IMPORTED_TARGET lilv-0)
 pkg_check_modules(SORD REQUIRED IMPORTED_TARGET sord-0)
 pkg_check_modules(SRATOM REQUIRED IMPORTED_TARGET sratom-0)
 pkg_check_modules(SOUNDTOUCH REQUIRED IMPORTED_TARGET soundtouch)
+pkg_check_modules(RTMIDI IMPORTED_TARGET rtmidi)
 find_package(X11 REQUIRED)
 
 add_executable(vvvdaw
@@ -25,6 +26,8 @@ add_executable(vvvdaw
     src/commands/BusCommands.cpp
     src/commands/ProjectCommands.cpp
     src/commands/EventCommands.cpp
+    src/commands/MidiCommands.cpp
+    src/commands/InstrumentCommands.cpp
     src/commands/PluginCommands.cpp
     src/commands/SnapshotCommand.cpp
     src/audio/AudioEngine.cpp
@@ -33,8 +36,11 @@ add_executable(vvvdaw
     src/audio/TimeStretch.cpp
     src/model/AudioClip.cpp
     src/model/AudioEvent.cpp
+    src/model/MidiClip.cpp
+    src/model/MidiEvent.cpp
     src/model/Track.cpp
     src/model/Project.cpp
+    src/midi/MidiOutputManager.cpp
     src/plugin/VST3Instance.cpp
     src/plugin/LV2Instance.cpp
     src/plugin/LV2UIHost.cpp
@@ -44,7 +50,10 @@ add_executable(vvvdaw
     src/gui/TransportPanel.cpp
     src/gui/TrackPanelWidget.cpp
     src/gui/BusPanelWidget.cpp
+    src/gui/InstrumentPanelWidget.cpp
     src/gui/TrackViewWidget.cpp
+    src/gui/PianoRollWidget.cpp
+    src/gui/PianoRollWindow.cpp
     src/gui/WaveformPainter.cpp
     src/gui/TimelineRuler.cpp
     src/gui/MeasureRuler.cpp
@@ -82,5 +91,10 @@ target_link_libraries(vvvdaw PRIVATE
     -Wl,--end-group
     dl
 )
+
+if(RTMIDI_FOUND)
+    target_compile_definitions(vvvdaw PRIVATE HAVE_RTMIDI=1)
+    target_link_libraries(vvvdaw PRIVATE PkgConfig::RTMIDI)
+endif()
 
 target_link_options(vvvdaw PRIVATE -rdynamic)

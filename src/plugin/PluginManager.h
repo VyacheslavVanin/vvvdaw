@@ -12,6 +12,7 @@ struct PluginInfo {
     QString pluginId;
     QString category;
     QString type;
+    bool isInstrument = false;
 };
 
 class PluginManager {
@@ -30,6 +31,7 @@ public:
 
 private:
     void scanLV2();
+    static constexpr int kCacheVersion = 2;
     std::vector<PluginInfo> m_plugins;
     LilvWorld* m_lilvWorld = nullptr;
     QString cachePath() const;

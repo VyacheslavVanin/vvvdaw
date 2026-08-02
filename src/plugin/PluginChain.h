@@ -29,6 +29,9 @@ public:
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& json, PluginManager* manager = nullptr);
 
+    static std::unique_ptr<PluginInstance> createInstance(
+        const QJsonObject& obj, PluginManager* manager = nullptr);
+
 private:
     std::vector<std::unique_ptr<PluginInstance>> m_plugins;
 };

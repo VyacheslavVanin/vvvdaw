@@ -1,4 +1,5 @@
 #include "VST3Instance.h"
+#include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 #include <pluginterfaces/vst/ivstparameterchanges.h>
@@ -156,6 +157,20 @@ tresult PLUGIN_API HostParameterChanges::queryInterface(const TUID _iid, void** 
 uint32 PLUGIN_API HostParameterChanges::addRef() { return 1; }
 uint32 PLUGIN_API HostParameterChanges::release() { return 0; }
 
+// HostEventList method implementations
+tresult PLUGIN_API HostEventList::queryInterface(const TUID _iid, void** obj) {
+    if (FUnknownPrivate::iidEqual(_iid, FUnknown::iid) ||
+        FUnknownPrivate::iidEqual(_iid, IEventList::iid)) {
+        *obj = static_cast<IEventList*>(this);
+        addRef();
+        return kResultTrue;
+    }
+    *obj = nullptr;
+    return kResultFalse;
+}
+uint32 PLUGIN_API HostEventList::addRef() { return 1; }
+uint32 PLUGIN_API HostEventList::release() { return 0; }
+
 // VST3Instance
 
 void VST3Instance::queueInputParamChange(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) {
@@ -245,14 +260,22 @@ bool VST3Instance::load(const QString& path) {
     Steinberg::IPtr<IPluginFactory> factory;
     factory = Steinberg::owned(rawFactory);
 
+    // NB: do NOT enumerate factory classes (getClassInfo/getClassInfo2) here.
+    // The installed plugins are built against older VST3 SDKs whose PClassInfo
+    // layout differs from the current SDK headers, so those calls crash inside
+    // the plugin. The binary memory-scan below is ABI-independent and proven.
     TUID compUID = {0};
     if (!findAudioProcessorUID(factory.get(), soPath, compUID)) return false;
 
     IComponent* comp = nullptr;
     factory->createInstance(compUID, IComponent::iid, (void**)&comp);
     if (!comp) return false;
-    m_component = Steinberg::owned(comp);
 
+    std::string stem = fs::path(soPath).parent_path().parent_path().parent_path().stem().string();
+    m_name = QString::fromStdString(stem);
+    m_pluginId = QString::fromStdString(stem);
+
+    m_component = Steinberg::owned(comp);
     m_component->initialize(&m_hostApp);
 
     IAudioProcessor* ap = nullptr;
@@ -263,10 +286,6 @@ bool VST3Instance::load(const QString& path) {
         return false;
     }
     m_audioProcessor = Steinberg::owned(ap);
-
-    std::string stem = fs::path(soPath).parent_path().parent_path().parent_path().stem().string();
-    m_name = QString::fromStdString(stem);
-    m_pluginId = QString::fromStdString(stem);
 
     Steinberg::TUID controllerTUID = {0};
     if (m_component->getControllerClassId(controllerTUID) == kResultTrue &&
@@ -324,6 +343,14 @@ bool VST3Instance::load(const QString& path) {
         for (int32 i = 0; i < nOut; ++i)
             m_component->activateBus(kAudio, kOutput, i, true);
 
+        int32 nEventIn = m_component->getBusCount(kEvent, kInput);
+        m_isInstrument = (nEventIn > 0);
+        for (int32 i = 0; i < nEventIn; ++i)
+            m_component->activateBus(kEvent, kInput, i, true);
+        int32 nEventOut = m_component->getBusCount(kEvent, kOutput);
+        for (int32 i = 0; i < nEventOut; ++i)
+            m_component->activateBus(kEvent, kOutput, i, true);
+
         m_inputBusChannels.clear();
         for (int32 i = 0; i < nIn; ++i) {
             BusInfo bi{};
@@ -375,7 +402,7 @@ bool VST3Instance::deactivate() {
 }
 
 bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
-                           int numSamples, int numChannels) {
+                           int numSamples, int numChannels, const MidiBuffer* midi) {
     if (!m_active || !m_audioProcessor || !m_enabled) {
         if (outputBuffers && inputBuffers) {
             for (int ch = 0; ch < numChannels; ++ch)
@@ -423,7 +450,8 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     }
     data.outputParameterChanges = &m_outputParamChanges;
     m_outputParamChanges.clear();
-    data.inputEvents = nullptr;
+    m_eventList.setFromMidi(midi);
+    data.inputEvents = midi && !midi->empty() ? &m_eventList : nullptr;
     data.outputEvents = nullptr;
     data.processContext = nullptr;
 
