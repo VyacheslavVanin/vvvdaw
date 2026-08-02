@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <cstring>
+#include <algorithm>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -383,24 +384,28 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
         return true;
     }
 
-    AudioBusBuffers inBus, outBus;
-    inBus.numChannels = numChannels;
-    inBus.silenceFlags = 0;
-    inBus.channelBuffers32 = inputBuffers;
-
-    outBus.numChannels = numChannels;
-    outBus.silenceFlags = 0;
-    outBus.channelBuffers32 = outputBuffers;
-
     int32 numInBuses = m_component ? m_component->getBusCount(kAudio, kInput) : 1;
     int32 numOutBuses = m_component ? m_component->getBusCount(kAudio, kOutput) : 1;
     if (numInBuses < 1) numInBuses = 1;
     if (numOutBuses < 1) numOutBuses = 1;
 
-    if (!m_outputBusChannels.empty())
-        outBus.numChannels = m_outputBusChannels[0];
-    if (!m_inputBusChannels.empty())
-        inBus.numChannels = m_inputBusChannels[0];
+    std::vector<AudioBusBuffers> inBuses(numInBuses);
+    for (int32 i = 0; i < numInBuses; ++i) {
+        int32 busChannels = (i < static_cast<int32>(m_inputBusChannels.size()))
+                                ? m_inputBusChannels[i] : numChannels;
+        inBuses[i].numChannels = std::min(busChannels, numChannels);
+        inBuses[i].silenceFlags = 0;
+        inBuses[i].channelBuffers32 = inputBuffers;
+    }
+
+    std::vector<AudioBusBuffers> outBuses(numOutBuses);
+    for (int32 i = 0; i < numOutBuses; ++i) {
+        int32 busChannels = (i < static_cast<int32>(m_outputBusChannels.size()))
+                                ? m_outputBusChannels[i] : numChannels;
+        outBuses[i].numChannels = std::min(busChannels, numChannels);
+        outBuses[i].silenceFlags = 0;
+        outBuses[i].channelBuffers32 = outputBuffers;
+    }
 
     ProcessData data;
     data.processMode = kRealtime;
@@ -408,8 +413,8 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     data.numSamples = numSamples;
     data.numInputs = numInBuses;
     data.numOutputs = numOutBuses;
-    data.inputs = &inBus;
-    data.outputs = &outBus;
+    data.inputs = inBuses.data();
+    data.outputs = outBuses.data();
     data.inputParameterChanges = nullptr;
     {
         std::lock_guard<std::mutex> lock(m_paramMutex);
