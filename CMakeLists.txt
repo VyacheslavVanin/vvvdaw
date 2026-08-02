@@ -13,6 +13,7 @@ pkg_check_modules(SNDFILE REQUIRED IMPORTED_TARGET sndfile)
 pkg_check_modules(LILV REQUIRED IMPORTED_TARGET lilv-0)
 pkg_check_modules(SORD REQUIRED IMPORTED_TARGET sord-0)
 pkg_check_modules(SRATOM REQUIRED IMPORTED_TARGET sratom-0)
+pkg_check_modules(SOUNDTOUCH REQUIRED IMPORTED_TARGET soundtouch)
 find_package(X11 REQUIRED)
 
 add_executable(vvvdaw
@@ -29,6 +30,7 @@ add_executable(vvvdaw
     src/audio/AudioEngine.cpp
     src/audio/RecordingManager.cpp
     src/audio/StreamingManager.cpp
+    src/audio/TimeStretch.cpp
     src/model/AudioClip.cpp
     src/model/AudioEvent.cpp
     src/model/Track.cpp
@@ -70,6 +72,7 @@ target_link_libraries(vvvdaw PRIVATE
     PkgConfig::LILV
     PkgConfig::SORD
     PkgConfig::SRATOM
+    PkgConfig::SOUNDTOUCH
     X11::X11
     -Wl,--start-group
     sdk_hosting

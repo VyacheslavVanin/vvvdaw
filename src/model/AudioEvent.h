@@ -31,6 +31,9 @@ public:
     int64_t durationSample() const { return m_durationSample; }
     void setDurationSample(int64_t s) { m_durationSample = s; }
 
+    int64_t sourceFrames() const { return m_sourceFrames; }
+    void setSourceFrames(int64_t s) { m_sourceFrames = s; }
+
     const std::vector<std::shared_ptr<AudioClip>>& takes() const { return m_takes; }
     std::vector<std::shared_ptr<AudioClip>>& takes() { return m_takes; }
 
@@ -43,6 +46,7 @@ private:
     int64_t m_startSample = 0;
     int64_t m_offsetSample = 0;
     int64_t m_durationSample = 0;
+    int64_t m_sourceFrames = 0;
 
     std::vector<std::shared_ptr<AudioClip>> m_takes;
     int m_activeTakeIndex = -1;

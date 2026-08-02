@@ -137,6 +137,7 @@ void RecordingManager::stop(Project* project) {
                 event.setStartSample(m_recordStartSample);
                 event.setOffsetSample(0);
                 event.setDurationSample(clip->frameCount());
+                event.setSourceFrames(clip->frameCount());
                 track.addEvent(event);
             }
         }
@@ -193,6 +194,7 @@ bool RecordingManager::processLoopRecordRegion(AudioClip& clip, const RecordingT
         newEvent.setStartSample(recordStartSample);
         newEvent.setOffsetSample(0);
         newEvent.setDurationSample(regionLen);
+        newEvent.setSourceFrames(regionLen);
         track.addEvent(newEvent);
         targetEvent = &track.events().back();
     }

@@ -194,6 +194,8 @@ void MainWindow::setupUi() {
     connect(m_tempoWidget, &TempoWidget::tempoChanged, this, [this, updateSnapUnit](double bpm) {
         executeCommand(std::make_unique<SetTempoCommand>(m_project, m_project.tempo(), bpm));
         updateSnapUnit();
+        if (m_engine.transportState() == TransportState::Playing)
+            m_engine.setPlayPosition(m_engine.playPosition());
     });
     connect(m_tempoWidget, &TempoWidget::timeSignatureChanged, this, [this, updateSnapUnit](int num, int den) {
         executeCommand(std::make_unique<SetTimeSigCommand>(m_project, m_project.timeSigNum(), m_project.timeSigDen(), num, den));

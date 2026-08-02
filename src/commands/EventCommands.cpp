@@ -13,6 +13,7 @@ static QJsonObject eventToJson(const AudioEvent& event) {
     eObj["startSample"] = static_cast<qint64>(event.startSample());
     eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
     eObj["durationSample"] = static_cast<qint64>(event.durationSample());
+    eObj["sourceFrames"] = static_cast<qint64>(event.sourceFrames());
     if (!event.takes().empty()) {
         QJsonArray takesArr;
         for (const auto& take : event.takes())
@@ -34,6 +35,9 @@ static AudioEvent eventFromJson(const QJsonObject& eObj) {
     event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
     event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
     event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
+    event.setSourceFrames(eObj.contains("sourceFrames")
+        ? static_cast<int64_t>(eObj["sourceFrames"].toVariant().toLongLong())
+        : event.durationSample());
     if (eObj.contains("takes")) {
         const QJsonArray takesArr = eObj["takes"].toArray();
         for (const auto& takeVal : takesArr) {

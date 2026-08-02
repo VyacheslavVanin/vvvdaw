@@ -3,6 +3,7 @@
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include "model/AudioClip.h"
+#include "model/AudioEvent.h"
 #include "plugin/PluginChain.h"
 #include "plugin/PluginInstance.h"
 #include "AudioUtils.h"
@@ -24,6 +25,7 @@ bool AudioEngine::init(const Settings& settings) {
     m_bufferSize = settings.bufferSize;
     m_stereoScratch.resize(static_cast<size_t>(m_bufferSize) * 4);
     m_trackScratch.resize(static_cast<size_t>(m_bufferSize) * 2, 0.0f);
+    m_sourceScratch.resize((static_cast<size_t>(m_bufferSize) * 4 + TimeStretch::kWindowSize) * 2, 0.0f);
     m_busDeinterleaveL.resize(static_cast<size_t>(m_bufferSize), 0.0f);
     m_busDeinterleaveR.resize(static_cast<size_t>(m_bufferSize), 0.0f);
     m_recordingManager.setScratchSize(static_cast<size_t>(m_bufferSize) * 2);
@@ -219,6 +221,7 @@ TransportState AudioEngine::transportState() const {
 void AudioEngine::setPlayPosition(int64_t pos) {
     m_playPosition.store(pos, std::memory_order_release);
     if (m_transportState.load(std::memory_order_acquire) == TransportState::Playing) {
+        clearStretchSlots();
         m_streamingManager.closeAll();
         auto* proj = m_project.load(std::memory_order_acquire);
         if (proj)
@@ -358,6 +361,112 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
     }
 }
 
+void AudioEngine::clearStretchSlots() {
+    m_stretchSlots.clear();
+}
+
+size_t AudioEngine::readEventBlock(const AudioEvent& event, int trackIndex,
+                                   int64_t pos, float* out, size_t outFrames) {
+    auto clip = event.activeClip();
+    if (!clip || !clip->isValid())
+        return 0;
+
+    const int64_t duration = event.durationSample();
+    int64_t srcFrames = event.sourceFrames();
+    if (srcFrames <= 0)
+        srcFrames = duration;
+    if (duration <= 0 || srcFrames <= 0)
+        return 0;
+
+    const int64_t offset = event.offsetSample();
+    const int64_t clipFrames = static_cast<int64_t>(clip->frameCount());
+    const int64_t availSource = std::max<int64_t>(
+        0, std::min<int64_t>(srcFrames, clipFrames - offset));
+
+    const int ch = clip->channels();
+    if (ch <= 0)
+        return 0;
+
+    const double rate = srcFrames / static_cast<double>(duration);
+
+    if (std::fabs(rate - 1.0) < 1e-3) {
+        if (clip->isStreaming()) {
+            size_t framesAvail = 0;
+            if (!m_streamingManager.readEvent(clip.get(), event.startSample(), duration,
+                                              out, outFrames, ch, framesAvail))
+                return 0;
+            return framesAvail;
+        }
+        int64_t localPos = pos - event.startSample() + offset;
+        if (localPos < offset)
+            localPos = offset;
+        int64_t limit = offset + availSource;
+        int64_t validFrames = std::min<int64_t>(clipFrames, limit) - localPos;
+        if (validFrames <= 0)
+            return 0;
+        size_t toCopy = static_cast<size_t>(std::min<int64_t>(
+            validFrames, static_cast<int64_t>(outFrames)));
+        std::memcpy(out, clip->data() + localPos * ch,
+                    toCopy * static_cast<size_t>(ch) * sizeof(float));
+        return toCopy;
+    }
+
+    const int64_t slotKey = (static_cast<int64_t>(trackIndex) << 32) |
+                            (event.id() & 0xFFFFFFFFLL);
+    auto& slot = m_stretchSlots[slotKey];
+    bool freshSlot = false;
+    if (slot.clip != clip.get() || slot.offset != offset || slot.srcFrames != srcFrames ||
+        slot.duration != duration) {
+        slot.clip = clip.get();
+        slot.offset = offset;
+        slot.srcFrames = srcFrames;
+        slot.duration = duration;
+        slot.ts.setChannels(ch);
+        slot.ts.setSampleRate(m_sampleRate);
+        slot.ts.reset();
+        slot.srcCursor = offset + static_cast<int64_t>(
+            std::llround(static_cast<double>(pos - event.startSample()) * rate));
+        if (slot.srcCursor < offset)
+            slot.srcCursor = offset;
+        freshSlot = true;
+    }
+
+    size_t needIn = static_cast<size_t>(
+        std::ceil(static_cast<double>(outFrames) * rate));
+    if (freshSlot)
+        needIn += TimeStretch::kWindowSize;
+    int64_t remaining = (offset + availSource) - slot.srcCursor;
+    if (remaining <= 0)
+        return 0;
+    size_t pushFrames = static_cast<size_t>(
+        std::min<int64_t>(static_cast<int64_t>(needIn), remaining));
+    size_t scratchFrames = m_sourceScratch.size() / static_cast<size_t>(ch);
+    if (pushFrames > scratchFrames)
+        pushFrames = scratchFrames;
+
+    size_t pushed = 0;
+    if (clip->isStreaming()) {
+        if (pushFrames > 0 &&
+            m_streamingManager.readEvent(clip.get(), event.startSample(), duration,
+                                         m_sourceScratch.data(), pushFrames, ch, pushed)) {
+            // pushed filled
+        }
+    } else {
+        if (pushFrames > 0) {
+            const float* src = clip->data() + slot.srcCursor * ch;
+            std::memcpy(m_sourceScratch.data(), src,
+                        pushFrames * static_cast<size_t>(ch) * sizeof(float));
+            pushed = pushFrames;
+        }
+    }
+
+    if (pushed > 0)
+        slot.ts.push(m_sourceScratch.data(), pushed);
+    slot.srcCursor += static_cast<int64_t>(pushed);
+
+    return slot.ts.pull(out, outFrames, rate);
+}
+
 void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long frameCount,
                                     int64_t pos, int outCh, const float* input, int inCh,
                                     bool monitoringOnly) {
@@ -375,9 +484,10 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         if (track.isSolo()) { anySolo = true; break; }
     }
 
+    int trackIndex = 0;
     for (const auto& track : proj->tracks()) {
-        if (track.isMuted()) continue;
-        if (anySolo && !track.isSolo()) continue;
+        if (track.isMuted()) { ++trackIndex; continue; }
+        if (anySolo && !track.isSolo()) { ++trackIndex; continue; }
 
         int busIdx = track.outputBusIndex();
         if (busIdx < 0 || busIdx >= busCount) busIdx = 0;
@@ -418,41 +528,17 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                     continue;
 
                 hasAnyEvent = true;
-                int64_t localPos = pos - event.startSample() + event.offsetSample();
-                if (localPos < event.offsetSample()) localPos = event.offsetSample();
-
-                if (activeClip->isStreaming()) {
+                size_t framesAvail = readEventBlock(event, trackIndex, pos,
+                                                    m_stereoScratch.data(),
+                                                    frameCount);
+                if (framesAvail > 0) {
                     int ch = activeClip->channels();
-                    size_t framesAvail = 0;
-                    if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
-                                                      event.durationSample(),
-                                                      m_stereoScratch.data(), frameCount, ch,
-                                                      framesAvail)) {
-                        if (hasPlugins) {
-                            addSourceToTrack(trackL, trackR, m_stereoScratch.data(), ch,
-                                             framesAvail, isMono);
-                        } else {
-                            addSourceToBus(busBuf, m_stereoScratch.data(), ch,
-                                           framesAvail, trackVol, leftGain, rightGain, isMono);
-                        }
-                    }
-                } else {
-                    const float* clipData = activeClip->data();
-                    int ch = activeClip->channels();
-                    int64_t limit = event.offsetSample() + event.durationSample();
-                    int64_t validFrames = std::min<int64_t>(
-                        static_cast<int64_t>(activeClip->frameCount()), limit) - localPos;
-                    if (validFrames <= 0) continue;
-
-                    size_t toCopy = static_cast<size_t>(
-                        std::min<int64_t>(validFrames, static_cast<int64_t>(frameCount)));
-                    const float* src = clipData + localPos * ch;
-
                     if (hasPlugins) {
-                        addSourceToTrack(trackL, trackR, src, ch, toCopy, isMono);
+                        addSourceToTrack(trackL, trackR, m_stereoScratch.data(), ch,
+                                         framesAvail, isMono);
                     } else {
-                        addSourceToBus(busBuf, src, ch, toCopy, trackVol,
-                                       leftGain, rightGain, isMono);
+                        addSourceToBus(busBuf, m_stereoScratch.data(), ch,
+                                       framesAvail, trackVol, leftGain, rightGain, isMono);
                     }
                 }
             }
@@ -467,6 +553,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             writeTrackToBus(busBuf, trackL, trackR, frameCount, trackVol,
                             leftGain, rightGain, isMono);
         }
+        ++trackIndex;
     }
 
     if (m_metronomeEnabled && !monitoringOnly) {
@@ -538,9 +625,10 @@ void AudioEngine::mixPlayback(Project* proj, float* output, unsigned long frameC
         if (track.isSolo()) { anySolo = true; break; }
     }
 
+    int trackIndex = 0;
     for (const auto& track : proj->tracks()) {
-        if (track.isMuted()) continue;
-        if (anySolo && !track.isSolo()) continue;
+        if (track.isMuted()) { ++trackIndex; continue; }
+        if (anySolo && !track.isSolo()) { ++trackIndex; continue; }
         float trackVol = track.volume();
         float pan = track.pan();
         auto [leftGain, rightGain] = panGains(pan);
@@ -553,50 +641,22 @@ void AudioEngine::mixPlayback(Project* proj, float* output, unsigned long frameC
             if (pos >= eventEnd || pos + frameCount <= event.startSample())
                 continue;
 
-            int64_t localPos = pos - event.startSample() + event.offsetSample();
-            if (localPos < event.offsetSample()) localPos = event.offsetSample();
-
-            if (activeClip->isStreaming()) {
-                int ch = activeClip->channels();
-                size_t framesAvail = 0;
-                if (m_streamingManager.readEvent(activeClip.get(), event.startSample(),
-                                                  event.durationSample(),
-                                                  m_stereoScratch.data(), frameCount, ch,
-                                                  framesAvail)) {
-                    for (unsigned long f = 0; f < framesAvail; ++f) {
-                        float sL = m_stereoScratch[f * ch];
-                        float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                        if (outCh >= 2) {
-                            output[f * 2]     += sL * trackVol * leftGain;
-                            output[f * 2 + 1] += sR * trackVol * rightGain;
-                        } else {
-                            output[f] += (sL + sR) * 0.5f * trackVol;
-                        }
-                    }
-                }
-            } else {
-                const float* clipData = activeClip->data();
-                int ch = activeClip->channels();
-                size_t clipFrames = activeClip->frameCount();
-
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    int64_t clipFrame = localPos + f;
-                    if (clipFrame >= static_cast<int64_t>(clipFrames) ||
-                        clipFrame >= event.offsetSample() + event.durationSample())
-                        continue;
-
-                    float sL = ch >= 1 ? clipData[clipFrame * ch] : 0.0f;
-                    float sR = ch >= 2 ? clipData[clipFrame * ch + 1] : sL;
-
-                    if (outCh >= 2) {
-                        output[f * 2]     += sL * trackVol * leftGain;
-                        output[f * 2 + 1] += sR * trackVol * rightGain;
-                    } else {
-                        output[f] += (sL + sR) * 0.5f * trackVol;
-                    }
+            int ch = activeClip->channels();
+            size_t framesAvail = readEventBlock(event, trackIndex, pos,
+                                                m_stereoScratch.data(),
+                                                frameCount);
+            for (unsigned long f = 0; f < framesAvail; ++f) {
+                float sL = m_stereoScratch[f * ch];
+                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
+                if (outCh >= 2) {
+                    output[f * 2]     += sL * trackVol * leftGain;
+                    output[f * 2 + 1] += sR * trackVol * rightGain;
+                } else {
+                    output[f] += (sL + sR) * 0.5f * trackVol;
                 }
             }
         }
+        ++trackIndex;
     }
 }
 
@@ -615,8 +675,10 @@ int64_t AudioEngine::advancePlayhead(Project* proj, int64_t pos, unsigned long f
         }
     }
 
-    if (newPos != pos + frameCount)
+    if (newPos != pos + frameCount) {
+        clearStretchSlots();
         m_streamingManager.signalReset(newPos);
+    }
 
     if (state == TransportState::Recording && proj->hasRecordRegion()) {
         int64_t rrStart = proj->recordRegionStart();
@@ -634,12 +696,14 @@ int64_t AudioEngine::advancePlayhead(Project* proj, int64_t pos, unsigned long f
 void AudioEngine::startPlayback() {
     auto* proj = m_project.load(std::memory_order_acquire);
     if (!proj) return;
+    clearStretchSlots();
     activateAllPlugins();
     m_streamingManager.start(proj, m_playPosition.load(std::memory_order_acquire));
 }
 
 void AudioEngine::stopPlayback() {
     m_streamingManager.stop();
+    clearStretchSlots();
 }
 
 void AudioEngine::generateClick(Project* proj, float* buffer, unsigned long frameCount,

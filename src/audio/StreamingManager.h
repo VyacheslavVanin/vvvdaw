@@ -21,6 +21,8 @@ struct PlaybackStream {
     int64_t eventStartSample = 0;
     int64_t eventOffsetSample = 0;
     int64_t eventDurationSample = 0;
+    int64_t eventSourceFrames = 0;
+    double eventRate = 1.0;
     int64_t endFrame = 0;
     bool readerFinished = false;
     bool finished = false;

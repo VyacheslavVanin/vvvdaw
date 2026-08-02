@@ -70,6 +70,8 @@ public:
     double samplesPerBar() const { return samplesPerBeat() * m_timeSigNum; }
     int64_t snapSample(int64_t sample, int beatDivision = 4) const;
 
+    void rescaleTimeline(double factor);
+
     int64_t loopStart() const { return m_loopStart; }
     int64_t loopEnd() const { return m_loopEnd; }
     void setLoop(int64_t start, int64_t end) { m_loopStart = start; m_loopEnd = end; }

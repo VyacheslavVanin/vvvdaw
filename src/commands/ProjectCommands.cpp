@@ -4,14 +4,18 @@
 // --- SetTempoCommand ---
 
 SetTempoCommand::SetTempoCommand(Project& project, double oldValue, double newValue)
-    : m_project(project), m_oldValue(oldValue), m_newValue(newValue) {}
+    : m_project(project), m_oldValue(oldValue), m_newValue(newValue), m_appliedTempo(oldValue) {}
 
 void SetTempoCommand::execute() {
+    m_project.rescaleTimeline(m_appliedTempo / m_newValue);
     m_project.setTempo(m_newValue);
+    m_appliedTempo = m_newValue;
 }
 
 void SetTempoCommand::undo() {
+    m_project.rescaleTimeline(m_newValue / m_oldValue);
     m_project.setTempo(m_oldValue);
+    m_appliedTempo = m_oldValue;
 }
 
 bool SetTempoCommand::mergeWith(const UndoCommand* other) {

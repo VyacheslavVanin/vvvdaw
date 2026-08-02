@@ -173,6 +173,27 @@ static QString relativePath(const QString& filePath, const QString& projectDir) 
     return absPath;
 }
 
+void Project::rescaleTimeline(double factor) {
+    if (factor <= 0.0 || factor == 1.0)
+        return;
+    if (hasLoop()) {
+        m_loopStart = static_cast<int64_t>(std::llround(static_cast<double>(m_loopStart) * factor));
+        m_loopEnd = static_cast<int64_t>(std::llround(static_cast<double>(m_loopEnd) * factor));
+    }
+    if (hasRecordRegion()) {
+        m_recordRegionStart = static_cast<int64_t>(std::llround(static_cast<double>(m_recordRegionStart) * factor));
+        m_recordRegionEnd = static_cast<int64_t>(std::llround(static_cast<double>(m_recordRegionEnd) * factor));
+    }
+    for (auto& track : m_tracks) {
+        for (auto& event : track.events()) {
+            event.setStartSample(static_cast<int64_t>(
+                std::llround(static_cast<double>(event.startSample()) * factor)));
+            event.setDurationSample(static_cast<int64_t>(
+                std::llround(static_cast<double>(event.durationSample()) * factor)));
+        }
+    }
+}
+
 QJsonObject Project::toJson() const {
     QJsonObject obj;
     obj["formatVersion"] = 3;
@@ -221,6 +242,7 @@ QJsonObject Project::toJson() const {
             eObj["startSample"] = static_cast<qint64>(event.startSample());
             eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
             eObj["durationSample"] = static_cast<qint64>(event.durationSample());
+            eObj["sourceFrames"] = static_cast<qint64>(event.sourceFrames());
 
             if (!event.takes().empty()) {
                 QJsonArray takesArr;
@@ -312,6 +334,9 @@ void Project::fromJson(const QJsonObject& obj) {
             event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
             event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
             event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
+            event.setSourceFrames(eObj.contains("sourceFrames")
+                ? static_cast<int64_t>(eObj["sourceFrames"].toVariant().toLongLong())
+                : event.durationSample());
 
             if (eObj.contains("takes")) {
                 const QJsonArray takesArr = eObj["takes"].toArray();

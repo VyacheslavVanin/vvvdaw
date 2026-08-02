@@ -5,6 +5,7 @@
 #include "core/Constants.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <QDebug>
 #include <QFileInfo>
@@ -104,7 +105,14 @@ void StreamingManager::createStreams(Project* project, int64_t playPosition) {
             if (playPosition >= eventEnd)
                 continue;
 
-            int64_t localPos = playPosition - event.startSample() + event.offsetSample();
+            int64_t sourceFrames = event.sourceFrames() > 0
+                ? event.sourceFrames() : event.durationSample();
+            double rate = sourceFrames / static_cast<double>(event.durationSample());
+            if (rate <= 0.0) rate = 1.0;
+
+            int64_t localPos = static_cast<int64_t>(
+                std::llround(event.offsetSample() +
+                             (playPosition - event.startSample()) * rate));
             if (localPos < event.offsetSample()) localPos = event.offsetSample();
 
             PlaybackStream stream;
@@ -112,7 +120,9 @@ void StreamingManager::createStreams(Project* project, int64_t playPosition) {
             stream.eventStartSample = event.startSample();
             stream.eventOffsetSample = event.offsetSample();
             stream.eventDurationSample = event.durationSample();
-            int64_t endFrame = std::min<int64_t>(event.offsetSample() + event.durationSample(),
+            stream.eventSourceFrames = sourceFrames;
+            stream.eventRate = rate;
+            int64_t endFrame = std::min<int64_t>(event.offsetSample() + sourceFrames,
                                                   activeClip->frameCount());
 
             if (stream.open(activeClip->filePath(), localPos, endFrame)) {
@@ -208,7 +218,9 @@ void StreamingManager::readerThreadFunc() {
             {
                 std::lock_guard<std::mutex> lock(m_streamMutex);
                 for (auto& stream : m_playbackStreams) {
-                    int64_t newLocalPos = resetPos - stream.eventStartSample + stream.eventOffsetSample;
+                    int64_t newLocalPos = static_cast<int64_t>(
+                        std::llround(stream.eventOffsetSample +
+                                     (resetPos - stream.eventStartSample) * stream.eventRate));
                     if (newLocalPos < stream.eventOffsetSample)
                         newLocalPos = stream.eventOffsetSample;
                     stream.resetPosition(newLocalPos);

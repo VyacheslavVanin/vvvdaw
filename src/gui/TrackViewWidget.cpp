@@ -342,6 +342,7 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
 
             ev.setOffsetSample(newOffset);
             ev.setDurationSample(newDuration);
+            ev.setSourceFrames(newDuration);
             ev.setStartSample(newStart);
         } else {
             int64_t maxDelta = clipFrames - m_edgeDragStartOffset - m_edgeDragStartDuration;
@@ -361,6 +362,7 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
             }
 
             ev.setDurationSample(newDuration);
+            ev.setSourceFrames(newDuration);
         }
         update();
         return;
