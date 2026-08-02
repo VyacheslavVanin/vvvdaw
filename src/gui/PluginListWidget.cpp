@@ -11,6 +11,7 @@
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QListWidget>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QDrag>
 #include <QMimeData>
@@ -132,6 +133,11 @@ void PluginListWidget::onAddClicked() {
     dialog.setMinimumSize(400, 300);
 
     auto* layout = new QVBoxLayout(&dialog);
+    auto* searchEdit = new QLineEdit(&dialog);
+    searchEdit->setPlaceholderText("Search plugins...");
+    searchEdit->setFocus();
+    layout->addWidget(searchEdit);
+
     auto* listWidget = new QListWidget(&dialog);
 
     for (const auto& pi : m_pluginManager->plugins()) {
@@ -154,6 +160,14 @@ void PluginListWidget::onAddClicked() {
     connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
     connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
     connect(listWidget, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+
+    connect(searchEdit, &QLineEdit::textChanged, listWidget, [listWidget](const QString& text) {
+        for (int i = 0; i < listWidget->count(); ++i) {
+            auto* item = listWidget->item(i);
+            item->setHidden(!item->text().contains(text, Qt::CaseInsensitive));
+        }
+    });
+    connect(searchEdit, &QLineEdit::returnPressed, &dialog, &QDialog::accept);
 
     if (dialog.exec() == QDialog::Accepted && listWidget->currentItem()) {
         auto* item = listWidget->currentItem();
