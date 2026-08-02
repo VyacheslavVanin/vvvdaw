@@ -279,27 +279,27 @@ void MainWindow::setupUi() {
 
     connect(m_busPanel, &BusPanelWidget::busVolumeWillChange, this,
             [this](int busIndex, float oldVal, float newVal) {
-        executeCommand(std::make_unique<SetBusVolumeCommand>(m_project, busIndex, oldVal, newVal));
+        pushCommand(std::make_unique<SetBusVolumeCommand>(m_project, busIndex, oldVal, newVal));
     });
     connect(m_busPanel, &BusPanelWidget::busPanWillChange, this,
             [this](int busIndex, float oldVal, float newVal) {
-        executeCommand(std::make_unique<SetBusPanCommand>(m_project, busIndex, oldVal, newVal));
+        pushCommand(std::make_unique<SetBusPanCommand>(m_project, busIndex, oldVal, newVal));
     });
     connect(m_busPanel, &BusPanelWidget::busSoloWillChange, this,
             [this](int busIndex, bool oldVal, bool newVal) {
-        executeCommand(std::make_unique<SetBusSoloCommand>(m_project, busIndex, oldVal, newVal));
+        pushCommand(std::make_unique<SetBusSoloCommand>(m_project, busIndex, oldVal, newVal));
     });
     connect(m_busPanel, &BusPanelWidget::busMuteWillChange, this,
             [this](int busIndex, bool oldVal, bool newVal) {
-        executeCommand(std::make_unique<SetBusMuteCommand>(m_project, busIndex, oldVal, newVal));
+        pushCommand(std::make_unique<SetBusMuteCommand>(m_project, busIndex, oldVal, newVal));
     });
     connect(m_busPanel, &BusPanelWidget::busNameWillChange, this,
             [this](int busIndex, const QString& oldName, const QString& newName) {
-        executeCommand(std::make_unique<SetBusNameCommand>(m_project, busIndex, oldName, newName));
+        pushCommand(std::make_unique<SetBusNameCommand>(m_project, busIndex, oldName, newName));
     });
     connect(m_busPanel, &BusPanelWidget::busOutputWillChange, this,
             [this](int busIndex, int oldVal, int newVal) {
-        executeCommand(std::make_unique<SetBusOutputCommand>(m_project, busIndex, oldVal, newVal));
+        pushCommand(std::make_unique<SetBusOutputCommand>(m_project, busIndex, oldVal, newVal));
     });
 
     connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
