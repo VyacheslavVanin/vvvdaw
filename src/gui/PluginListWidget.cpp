@@ -17,8 +17,31 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QApplication>
+#include <algorithm>
 
 static const char* const kMimePluginIndex = "application/x-vvvdaw-plugin-index";
+
+static int fuzzyScore(const QString& query, const QString& target) {
+    if (query.isEmpty()) return 0;
+    int qi = 0, score = 0, run = 0;
+    for (int ti = 0; ti < target.size(); ++ti) {
+        if (target[ti].toLower() == query[qi].toLower()) {
+            score += (run > 0) ? 8 + run : 12;
+            if (ti == 0) score += 6;
+            else {
+                QChar prev = target[ti - 1];
+                if (!prev.isLetterOrNumber() || prev.isUpper() != target[ti].isUpper())
+                    score += 4;
+            }
+            score += 20 - ti / 2;
+            if (++qi == query.size()) return score;
+            ++run;
+        } else {
+            run = 0;
+        }
+    }
+    return -1;
+}
 
 PluginListWidget::PluginListWidget(QWidget* parent)
     : QWidget(parent) {
@@ -140,13 +163,32 @@ void PluginListWidget::onAddClicked() {
 
     auto* listWidget = new QListWidget(&dialog);
 
-    for (const auto& pi : m_pluginManager->plugins()) {
-        auto* item = new QListWidgetItem(QString("[%1] %2").arg(pi.type.toUpper(), pi.name));
-        item->setData(Qt::UserRole, pi.pluginId);
-        item->setData(Qt::UserRole + 1, pi.type);
-        item->setData(Qt::UserRole + 2, pi.path);
-        listWidget->addItem(item);
-    }
+    auto populateList = [this, listWidget](const QString& text) {
+        QVector<QPair<int, const PluginInfo*>> scored;
+        for (const auto& pi : m_pluginManager->plugins()) {
+            const QString display = QString("[%1] %2").arg(pi.type.toUpper(), pi.name);
+            const int score = fuzzyScore(text, display);
+            if (score >= 0)
+                scored.append({score, &pi});
+        }
+        std::stable_sort(scored.begin(), scored.end(),
+                         [](const QPair<int, const PluginInfo*>& a,
+                            const QPair<int, const PluginInfo*>& b) {
+                             return a.first > b.first;
+                         });
+        listWidget->clear();
+        for (const auto& entry : scored) {
+            const PluginInfo* pi = entry.second;
+            auto* item = new QListWidgetItem(QString("[%1] %2").arg(pi->type.toUpper(), pi->name));
+            item->setData(Qt::UserRole, pi->pluginId);
+            item->setData(Qt::UserRole + 1, pi->type);
+            item->setData(Qt::UserRole + 2, pi->path);
+            listWidget->addItem(item);
+        }
+        if (listWidget->count() > 0)
+            listWidget->setCurrentItem(listWidget->item(0));
+    };
+    populateList(QString());
 
     layout->addWidget(listWidget);
 
@@ -161,13 +203,11 @@ void PluginListWidget::onAddClicked() {
     connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
     connect(listWidget, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
 
-    connect(searchEdit, &QLineEdit::textChanged, listWidget, [listWidget](const QString& text) {
-        for (int i = 0; i < listWidget->count(); ++i) {
-            auto* item = listWidget->item(i);
-            item->setHidden(!item->text().contains(text, Qt::CaseInsensitive));
-        }
+    connect(searchEdit, &QLineEdit::textChanged, listWidget, populateList);
+    connect(searchEdit, &QLineEdit::returnPressed, &dialog, [listWidget, &dialog] {
+        if (listWidget->count() > 0)
+            dialog.accept();
     });
-    connect(searchEdit, &QLineEdit::returnPressed, &dialog, &QDialog::accept);
 
     if (dialog.exec() == QDialog::Accepted && listWidget->currentItem()) {
         auto* item = listWidget->currentItem();
