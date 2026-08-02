@@ -144,7 +144,7 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         {
             int th = eventRect.height() - 2;
             renderThumbnail(painter, event.clip(),
-                            event.offsetSample(), event.durationSample(),
+                            event.offsetSample(), event.sourceFrames(),
                             eventRect.x() + 1, eventRect.y() + 1, w, th);
         }
 
@@ -192,7 +192,7 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                 auto clip = m_dragPreview.event->clip();
                 int th = eventRect.height() - 2;
                 renderThumbnail(painter, clip,
-                                m_dragPreview.event->offsetSample(), m_dragPreview.event->durationSample(),
+                                m_dragPreview.event->offsetSample(), m_dragPreview.event->sourceFrames(),
                                 eventRect.x() + 1, eventRect.y() + 1, w, th);
             }
 
