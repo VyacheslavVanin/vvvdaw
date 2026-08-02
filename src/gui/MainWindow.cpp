@@ -552,6 +552,7 @@ void MainWindow::setupMenus() {
         m_project = Project();
         m_project.addTrack("Track 1");
         m_engine.setProject(&m_project);
+        m_engine.activateAllPlugins();
         m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
@@ -574,6 +575,7 @@ void MainWindow::setupMenus() {
         }
         m_project = std::move(newProject);
         m_engine.setProject(&m_project);
+        m_engine.activateAllPlugins();
         m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
