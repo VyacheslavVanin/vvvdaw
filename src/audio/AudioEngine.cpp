@@ -467,7 +467,10 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                 if (noteEnd > eventEnd)
                     noteEnd = eventEnd;
 
-                if (noteEnd <= pos || noteStart >= pos + static_cast<int64_t>(frameCount))
+                // Allow noteEnd == pos: a note ending exactly on a block
+                // boundary must still receive its note-off (at offset 0 of
+                // this block), otherwise it would ring forever.
+                if (noteEnd < pos || noteStart >= pos + static_cast<int64_t>(frameCount))
                     continue;
 
                 bool alreadyActive = false;
