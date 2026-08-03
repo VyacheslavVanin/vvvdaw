@@ -179,6 +179,9 @@ void AudioEngine::setTransportState(TransportState state) {
             stopRecording();
         if (prev == TransportState::Playing || prev == TransportState::Recording || prev == TransportState::Paused || prev == TransportState::Precounting)
             stopPlayback();
+        // Force the next playback block to flush notes still held by
+        // instruments (their note-offs cannot be delivered while stopped).
+        m_midiTransportActive = false;
         m_transportState.store(TransportState::Stopped, std::memory_order_release);
         return;
     }
@@ -188,6 +191,10 @@ void AudioEngine::setTransportState(TransportState state) {
             stopRecording();
         if (prev == TransportState::Playing || prev == TransportState::Recording)
             stopPlayback();
+        // Any interruption (pause or stop) clears sounding notes: the next
+        // playback block flushes notes still held by instruments. Only notes
+        // whose onset the playhead reaches will sound.
+        m_midiTransportActive = false;
         m_transportState.store(TransportState::Paused, std::memory_order_release);
         return;
     }
@@ -431,7 +438,14 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                 }
 
                 if (!alreadyActive) {
-                    int off = static_cast<int>(std::max<int64_t>(0, noteStart - pos));
+                    // A note whose onset lies before the current playback
+                    // position and which is not already sounding was missed
+                    // (seek / stop / loop wrap). Do not catch it up: it should
+                    // not play, and no note-off is needed since the synth never
+                    // received its note-on.
+                    if (noteStart < pos)
+                        continue;
+                    int off = static_cast<int>(noteStart - pos);
                     if (off < static_cast<int>(frameCount)) {
                         if (toInstrument) {
                             MidiMessage m;
@@ -648,7 +662,12 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         (pos < m_lastMidiPos || pos - m_lastMidiPos > static_cast<int64_t>(frameCount) * 2);
     if ((firstActiveBlock && !m_activeMidiNotes.empty()) || midiJumped)
         flushActiveMidiNotes(proj, frameCount);
-    m_midiTransportActive = !monitoringOnly;
+    // Mark active transport once playback blocks start so the discontinuity
+    // flush only runs on real jumps. The flag is reset to false on any
+    // explicit Stop or Pause (see setTransportState), which makes the next
+    // playback block flush notes still held by instruments.
+    if (!monitoringOnly)
+        m_midiTransportActive = true;
     m_lastMidiPos = pos;
 
     bool anySolo = false;
@@ -884,6 +903,77 @@ void AudioEngine::stopPlayback() {
     m_streamingManager.stop();
     clearStretchSlots();
     panicMidi();
+    // Release notes still held by instrument synths right now (under a project
+    // write lock the audio thread drops blocks, so this is race-free). Doing it
+    // at stop time means a later play after seeking the playhead starts clean:
+    // no leftover note and no release-tail blip from the previous session.
+    releaseInstruments();
+}
+
+void AudioEngine::releaseInstruments() {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj) return;
+    if (m_activeMidiNotes.empty()) return;
+
+    int instCount = static_cast<int>(proj->instruments().size());
+    if (instCount == 0 || m_instrumentScratchL.empty()) {
+        m_activeMidiNotes.clear();
+        return;
+    }
+
+    std::unique_lock projectLock(proj->mutex());
+
+    if (static_cast<int>(m_instrumentMidi.size()) != instCount) {
+        m_instrumentMidi.resize(static_cast<size_t>(instCount));
+        for (auto& b : m_instrumentMidi)
+            b.reserve(256);
+    }
+    for (int i = 0; i < instCount; ++i)
+        m_instrumentMidi[i].clear();
+
+    // Build one note-off per active note targeting each instrument.
+    for (auto& an : m_activeMidiNotes) {
+        if (an.toInstrument && an.destIndex >= 0 && an.destIndex < instCount) {
+            MidiMessage m;
+            m.sampleOffset = 0;
+            m.status = static_cast<uint8_t>(0x80 | an.channel);
+            m.data1 = an.pitch;
+            m.data2 = 0;
+            m_instrumentMidi[an.destIndex].push_back(m);
+        }
+    }
+
+    // Render the release tails to silence so nothing is left ringing when
+    // playback later resumes. Only run for instruments that actually held notes.
+    constexpr float kSilenceThreshold = 1e-5f;
+    const int maxReleaseBlocks = std::max(1, m_sampleRate / std::max(1, m_bufferSize));
+    float* inBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
+    float* outBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
+    MidiBuffer emptyBuf;
+
+    for (int i = 0; i < instCount; ++i) {
+        auto& inst = proj->instruments()[i];
+        if (m_instrumentMidi[i].empty()) continue;
+        if (!inst.synth() || !inst.synth()->isActive()) continue;
+
+        for (int b = 0; b < maxReleaseBlocks; ++b) {
+            std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.end(), 0.0f);
+            std::fill(m_instrumentScratchR.begin(), m_instrumentScratchR.end(), 0.0f);
+            const MidiBuffer* buf = (b == 0) ? &m_instrumentMidi[i] : &emptyBuf;
+            inst.synth()->process(inBufs, outBufs, m_bufferSize, 2, buf);
+            if (inst.effects().count() > 0)
+                inst.effects().process(inBufs, outBufs, m_bufferSize, 2);
+
+            float peak = 0.0f;
+            for (int s = 0; s < m_bufferSize; ++s) {
+                peak = std::max(peak, std::abs(m_instrumentScratchL[s]));
+                peak = std::max(peak, std::abs(m_instrumentScratchR[s]));
+            }
+            if (peak < kSilenceThreshold)
+                break;
+        }
+    }
+
     m_activeMidiNotes.clear();
 }
 

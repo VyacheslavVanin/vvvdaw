@@ -102,6 +102,7 @@ private:
     void scheduleMidiTracks(Project* proj, unsigned long frameCount, int64_t pos);
     void processInstruments(Project* proj, unsigned long frameCount);
     void flushActiveMidiNotes(Project* proj, unsigned long frameCount);
+    void releaseInstruments();
 
     void startPlayback();
     void stopPlayback();
