@@ -4,21 +4,34 @@
 #include "model/Track.h"
 #include "model/MidiEvent.h"
 #include "core/UndoStack.h"
+#include "audio/AudioEngine.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QComboBox>
 #include <QScrollArea>
 #include <QCloseEvent>
+#include <QShortcut>
 
-PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, int trackIndex, int64_t eventId,
-                                 QWidget* parent)
+PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine& engine,
+                                 int trackIndex, int64_t eventId, QWidget* parent)
     : QWidget(parent, Qt::Window)
     , m_project(project)
+    , m_engine(engine)
     , m_trackIndex(trackIndex)
     , m_eventId(eventId)
 {
     setWindowTitle("Piano Roll");
+
+    // Space toggles play/pause (window-scoped, so it works with any child focused).
+    auto* playShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
+    connect(playShortcut, &QShortcut::activated, this, [this] {
+        vvvdaw::TransportState s = m_engine.transportState();
+        if (s == vvvdaw::TransportState::Playing || s == vvvdaw::TransportState::Recording)
+            m_engine.setTransportState(vvvdaw::TransportState::Paused);
+        else
+            m_engine.setTransportState(vvvdaw::TransportState::Playing);
+    });
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -52,6 +65,11 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, int trackInd
     m_widget = new PianoRollWidget(m_project, undo, m_trackIndex, m_eventId, scrollArea);
     scrollArea->setWidget(m_widget);
     layout->addWidget(scrollArea, 1);
+
+    connect(m_widget, &PianoRollWidget::playheadSetRequested, this, [this](int64_t sample) {
+        m_engine.setPlayPosition(sample);
+        m_widget->setPlayheadSample(sample);
+    });
 
     connect(snapCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this, snapCombo](int) {

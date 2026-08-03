@@ -30,6 +30,10 @@ public:
         }
     }
 
+signals:
+    void playheadSetRequested(int64_t sample);
+
+public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -65,6 +69,7 @@ private:
 
     MidiClip* clip() const;
     MidiEvent* currentEvent() const;
+    int64_t clickToTimelineSample(int x) const;
     int64_t xToTick(int x) const;
     int tickToX(int64_t tick) const;
     int pitchToY(int pitch) const;

@@ -76,6 +76,15 @@ int64_t PianoRollWidget::xToTick(int x) const {
     return static_cast<int64_t>((x - kKeysWidth) / m_pixelsPerTick);
 }
 
+int64_t PianoRollWidget::clickToTimelineSample(int x) const {
+    MidiEvent* ev = currentEvent();
+    if (!ev) return -1;
+    int64_t tick = xToTick(x);
+    int64_t offsetTicks = m_project.samplesToTicks(ev->offsetSample());
+    int64_t sample = ev->startSample() + m_project.ticksToSamples(tick - offsetTicks);
+    return std::max<int64_t>(0, sample);
+}
+
 int PianoRollWidget::tickToX(int64_t tick) const {
     return kKeysWidth + static_cast<int>(tick * m_pixelsPerTick);
 }
@@ -479,9 +488,16 @@ void PianoRollWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         if (m_rubberBanding) {
             m_rubberBanding = false;
-            QRect selRect = QRect(m_rubberStart, m_rubberCurrent).normalized();
-            bool shift = (event->modifiers() & Qt::ShiftModifier);
-            selectNotesInRect(selRect, shift);
+            // A click without movement sets the playhead; a drag selects.
+            if ((m_rubberCurrent - m_rubberStart).manhattanLength() < 3) {
+                int64_t sample = clickToTimelineSample(m_rubberStart.x());
+                if (sample >= 0)
+                    emit playheadSetRequested(sample);
+            } else {
+                QRect selRect = QRect(m_rubberStart, m_rubberCurrent).normalized();
+                bool shift = (event->modifiers() & Qt::ShiftModifier);
+                selectNotesInRect(selRect, shift);
+            }
         }
         clearDragState();
         unsetCursor();

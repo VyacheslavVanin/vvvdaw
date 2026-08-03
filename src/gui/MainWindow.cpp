@@ -1420,7 +1420,7 @@ void MainWindow::openPianoRoll(int trackIndex, int64_t eventId) {
         }
     }
 
-    auto* window = new PianoRollWindow(m_project, m_undoStack, trackIndex, eventId, this);
+    auto* window = new PianoRollWindow(m_project, m_undoStack, m_engine, trackIndex, eventId, this);
     m_pianoRollWindows.push_back(window);
     connect(window, &PianoRollWindow::windowClosed, this, [this, window]() {
         m_pianoRollWindows.erase(
