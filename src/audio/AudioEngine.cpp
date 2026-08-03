@@ -907,11 +907,11 @@ int64_t AudioEngine::advancePlayhead(Project* proj, int64_t pos, unsigned long f
     if (proj->hasLoop()) {
         int64_t loopEnd = proj->loopEnd();
         if (newPos >= loopEnd) {
-            int64_t loopStart = proj->loopStart();
-            int64_t excess = newPos - loopEnd;
-            newPos = loopStart + excess;
-            if (newPos >= loopEnd)
-                newPos = loopStart;
+            // Wrap exactly to the loop start. Keeping the block overshoot
+            // (loopStart + excess) would permanently skip the first `excess`
+            // samples of the loop on every pass, so a note starting at
+            // loopStart would never re-trigger after the first pass.
+            newPos = proj->loopStart();
         }
     }
 
