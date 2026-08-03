@@ -411,12 +411,43 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
         int destIdx = toInstrument ? instIdx : deviceId;
         uint8_t channel = static_cast<uint8_t>(trackIndex % 16);
 
+        auto sendNoteOffFor = [&](const ActiveMidiNote& an, int sampleOffset) {
+            if (an.toInstrument && an.destIndex >= 0 &&
+                an.destIndex < static_cast<int>(proj->instruments().size())) {
+                MidiMessage m;
+                m.sampleOffset = sampleOffset;
+                m.status = static_cast<uint8_t>(0x80 | an.channel);
+                m.data1 = an.pitch;
+                m.data2 = 0;
+                m_instrumentMidi[an.destIndex].push_back(m);
+            } else if (!an.toInstrument && an.destIndex >= 0) {
+                m_midiOutput.send(an.destIndex, static_cast<uint8_t>(0x80 | an.channel),
+                                  an.pitch, 0);
+            }
+        };
+
         for (const auto& event : track.midiEvents()) {
             auto clip = event.activeClip();
             if (!clip) continue;
 
             int64_t eventEnd = event.startSample() + event.durationSample();
-            if (pos >= eventEnd || pos + static_cast<int64_t>(frameCount) <= event.startSample())
+
+            // The event has ended: cut off every note from it that is still
+            // sounding. Notes drawn past the clip boundary have their own
+            // note-off beyond the event end, so without this they would ring
+            // forever once the event stops being processed.
+            if (pos >= eventEnd) {
+                for (auto it = m_activeMidiNotes.begin(); it != m_activeMidiNotes.end();) {
+                    if (it->trackIndex == trackIndex && it->eventId == event.id()) {
+                        sendNoteOffFor(*it, 0);
+                        it = m_activeMidiNotes.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                continue;
+            }
+            if (pos + static_cast<int64_t>(frameCount) <= event.startSample())
                 continue;
 
             int64_t offsetTicks = proj->samplesToTicks(event.offsetSample());
@@ -425,6 +456,17 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                     + proj->ticksToSamples(note.startTick - offsetTicks);
                 int64_t noteEnd = event.startSample()
                     + proj->ticksToSamples(note.endTick() - offsetTicks);
+
+                // Note onset at/after the event's end: never sound it (its
+                // onset would coincide with the cut point and it could never
+                // receive a note-off).
+                if (noteStart >= eventEnd)
+                    continue;
+                // Clamp the note to the event boundary so the note-off is
+                // scheduled while the event is still processed.
+                if (noteEnd > eventEnd)
+                    noteEnd = eventEnd;
+
                 if (noteEnd <= pos || noteStart >= pos + static_cast<int64_t>(frameCount))
                     continue;
 
@@ -473,17 +515,15 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
 
                 if (noteEnd >= pos && noteEnd < pos + static_cast<int64_t>(frameCount)) {
                     int off = static_cast<int>(noteEnd - pos);
-                    if (toInstrument) {
-                        MidiMessage m;
-                        m.sampleOffset = off;
-                        m.status = static_cast<uint8_t>(0x80 | channel);
-                        m.data1 = static_cast<uint8_t>(note.pitch);
-                        m.data2 = 0;
-                        m_instrumentMidi[instIdx].push_back(m);
-                    } else if (deviceId >= 0) {
-                        m_midiOutput.send(deviceId, static_cast<uint8_t>(0x80 | channel),
-                                          static_cast<uint8_t>(note.pitch), 0);
-                    }
+                    ActiveMidiNote an;
+                    an.trackIndex = trackIndex;
+                    an.eventId = event.id();
+                    an.noteId = note.id;
+                    an.destIndex = destIdx;
+                    an.toInstrument = toInstrument;
+                    an.channel = channel;
+                    an.pitch = static_cast<uint8_t>(note.pitch);
+                    sendNoteOffFor(an, off);
                     auto it = std::remove_if(m_activeMidiNotes.begin(), m_activeMidiNotes.end(),
                         [&](const ActiveMidiNote& a) {
                             return a.trackIndex == trackIndex && a.eventId == event.id()
