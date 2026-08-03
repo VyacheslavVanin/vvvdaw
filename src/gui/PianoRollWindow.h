@@ -18,6 +18,7 @@ public:
     int64_t eventId() const { return m_eventId; }
 
     bool reload();
+    void setPlayheadSample(int64_t sample);
     void closeEvent(QCloseEvent* event) override;
 
 signals:

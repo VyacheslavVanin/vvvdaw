@@ -67,6 +67,11 @@ bool PianoRollWindow::reload() {
     return m_widget && m_widget->reload();
 }
 
+void PianoRollWindow::setPlayheadSample(int64_t sample) {
+    if (m_widget)
+        m_widget->setPlayheadSample(sample);
+}
+
 void PianoRollWindow::closeEvent(QCloseEvent* event) {
     emit windowClosed();
     QWidget::closeEvent(event);

@@ -58,6 +58,26 @@ static MidiClip* activeClipForEvent(Project& project, int trackIndex, int64_t ev
     return event->activeClip().get();
 }
 
+static QJsonObject noteToJson(const MidiNote& note) {
+    QJsonObject obj;
+    obj["id"] = static_cast<qint64>(note.id);
+    obj["pitch"] = note.pitch;
+    obj["velocity"] = note.velocity;
+    obj["startTick"] = static_cast<qint64>(note.startTick);
+    obj["durationTicks"] = static_cast<qint64>(note.durationTicks);
+    return obj;
+}
+
+static MidiNote noteFromJson(const QJsonObject& obj) {
+    MidiNote note;
+    note.id = obj["id"].toVariant().toLongLong();
+    note.pitch = obj["pitch"].toInt(60);
+    note.velocity = obj["velocity"].toInt(100);
+    note.startTick = static_cast<int64_t>(obj["startTick"].toVariant().toLongLong());
+    note.durationTicks = static_cast<int64_t>(obj["durationTicks"].toVariant().toLongLong());
+    return note;
+}
+
 // --- AddMidiEventCommand ---
 
 AddMidiEventCommand::AddMidiEventCommand(Project& project, int trackIndex, QJsonObject eventJson)
@@ -185,13 +205,8 @@ RemoveNoteCommand::RemoveNoteCommand(Project& project, int trackIndex, int64_t e
     MidiClip* clip = activeClipForEvent(project, trackIndex, eventId);
     if (clip) {
         MidiNote* note = clip->findNote(noteId);
-        if (note) {
-            m_savedNote["id"] = static_cast<qint64>(note->id);
-            m_savedNote["pitch"] = note->pitch;
-            m_savedNote["velocity"] = note->velocity;
-            m_savedNote["startTick"] = static_cast<qint64>(note->startTick);
-            m_savedNote["durationTicks"] = static_cast<qint64>(note->durationTicks);
-        }
+        if (note)
+            m_savedNote = noteToJson(*note);
     }
 }
 
@@ -204,12 +219,7 @@ void RemoveNoteCommand::execute() {
 void RemoveNoteCommand::undo() {
     MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
     if (!clip) return;
-    MidiNote note;
-    note.id = m_savedNote["id"].toVariant().toLongLong();
-    note.pitch = m_savedNote["pitch"].toInt(60);
-    note.velocity = m_savedNote["velocity"].toInt(100);
-    note.startTick = m_savedNote["startTick"].toVariant().toLongLong();
-    note.durationTicks = m_savedNote["durationTicks"].toVariant().toLongLong();
+    MidiNote note = noteFromJson(m_savedNote);
     clip->importNote(note);
 }
 
@@ -330,4 +340,179 @@ bool SetNoteVelocityCommand::mergeWith(const UndoCommand* other) {
         return false;
     m_newVelocity = cmd->m_newVelocity;
     return true;
+}
+
+// --- MoveNotesCommand ---
+
+MoveNotesCommand::MoveNotesCommand(Project& project, int trackIndex, int64_t eventId,
+                                   std::vector<NoteMoveChange> changes)
+    : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
+      m_changes(std::move(changes)) {}
+
+void MoveNotesCommand::apply(bool useNew) {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    for (auto& ch : m_changes) {
+        MidiNote* note = clip->findNote(ch.noteId);
+        if (!note) continue;
+        note->pitch = useNew ? ch.newPitch : ch.oldPitch;
+        note->startTick = useNew ? ch.newStartTick : ch.oldStartTick;
+    }
+    clip->bumpRevision();
+}
+
+void MoveNotesCommand::execute() { apply(true); }
+void MoveNotesCommand::undo() { apply(false); }
+
+bool MoveNotesCommand::mergeWith(const UndoCommand* other) {
+    auto* cmd = static_cast<const MoveNotesCommand*>(other);
+    if (m_trackIndex != cmd->m_trackIndex || m_eventId != cmd->m_eventId)
+        return false;
+    for (auto& ch : cmd->m_changes) {
+        for (auto& mine : m_changes) {
+            if (mine.noteId == ch.noteId) {
+                mine.newPitch = ch.newPitch;
+                mine.newStartTick = ch.newStartTick;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+// --- ResizeNotesCommand ---
+
+ResizeNotesCommand::ResizeNotesCommand(Project& project, int trackIndex, int64_t eventId,
+                                       std::vector<NoteResizeChange> changes)
+    : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
+      m_changes(std::move(changes)) {}
+
+void ResizeNotesCommand::apply(bool useNew) {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    for (auto& ch : m_changes) {
+        MidiNote* note = clip->findNote(ch.noteId);
+        if (!note) continue;
+        note->durationTicks = useNew ? ch.newDuration : ch.oldDuration;
+    }
+    clip->bumpRevision();
+}
+
+void ResizeNotesCommand::execute() { apply(true); }
+void ResizeNotesCommand::undo() { apply(false); }
+
+bool ResizeNotesCommand::mergeWith(const UndoCommand* other) {
+    auto* cmd = static_cast<const ResizeNotesCommand*>(other);
+    if (m_trackIndex != cmd->m_trackIndex || m_eventId != cmd->m_eventId)
+        return false;
+    for (auto& ch : cmd->m_changes) {
+        for (auto& mine : m_changes) {
+            if (mine.noteId == ch.noteId) {
+                mine.newDuration = ch.newDuration;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+// --- SetNotesVelocityCommand ---
+
+SetNotesVelocityCommand::SetNotesVelocityCommand(Project& project, int trackIndex, int64_t eventId,
+                                                 std::vector<NoteVelocityChange> changes)
+    : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
+      m_changes(std::move(changes)) {}
+
+void SetNotesVelocityCommand::apply(bool useNew) {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    for (auto& ch : m_changes) {
+        MidiNote* note = clip->findNote(ch.noteId);
+        if (!note) continue;
+        note->velocity = useNew ? ch.newVelocity : ch.oldVelocity;
+    }
+    clip->bumpRevision();
+}
+
+void SetNotesVelocityCommand::execute() { apply(true); }
+void SetNotesVelocityCommand::undo() { apply(false); }
+
+bool SetNotesVelocityCommand::mergeWith(const UndoCommand* other) {
+    auto* cmd = static_cast<const SetNotesVelocityCommand*>(other);
+    if (m_trackIndex != cmd->m_trackIndex || m_eventId != cmd->m_eventId)
+        return false;
+    for (auto& ch : cmd->m_changes) {
+        for (auto& mine : m_changes) {
+            if (mine.noteId == ch.noteId) {
+                mine.newVelocity = ch.newVelocity;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+// --- RemoveNotesCommand ---
+
+RemoveNotesCommand::RemoveNotesCommand(Project& project, int trackIndex, int64_t eventId,
+                                       const std::vector<int64_t>& noteIds)
+    : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId) {
+    MidiClip* clip = activeClipForEvent(project, trackIndex, eventId);
+    if (!clip) return;
+    for (int64_t id : noteIds) {
+        MidiNote* note = clip->findNote(id);
+        if (note)
+            m_savedNotes.append(noteToJson(*note));
+    }
+}
+
+void RemoveNotesCommand::execute() {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    for (const auto& v : m_savedNotes) {
+        MidiNote note = noteFromJson(v.toObject());
+        clip->removeNote(note.id);
+    }
+}
+
+void RemoveNotesCommand::undo() {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    for (const auto& v : m_savedNotes) {
+        MidiNote note = noteFromJson(v.toObject());
+        clip->importNote(note);
+    }
+}
+
+// --- DuplicateNotesCommand ---
+
+DuplicateNotesCommand::DuplicateNotesCommand(Project& project, int trackIndex, int64_t eventId,
+                                             const std::vector<int64_t>& sourceNoteIds)
+    : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId) {
+    MidiClip* clip = activeClipForEvent(project, trackIndex, eventId);
+    if (!clip) return;
+    for (int64_t id : sourceNoteIds) {
+        MidiNote* note = clip->findNote(id);
+        if (note)
+            m_sourceNotes.append(noteToJson(*note));
+    }
+}
+
+void DuplicateNotesCommand::execute() {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    m_createdNoteIds.clear();
+    for (const auto& v : m_sourceNotes) {
+        MidiNote note = noteFromJson(v.toObject());
+        int64_t newId = clip->addNote(note.pitch, note.velocity, note.startTick, note.durationTicks);
+        m_createdNoteIds.push_back(newId);
+    }
+}
+
+void DuplicateNotesCommand::undo() {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+    for (int64_t id : m_createdNoteIds)
+        clip->removeNote(id);
+    m_createdNoteIds.clear();
 }

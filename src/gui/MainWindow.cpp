@@ -193,6 +193,7 @@ void MainWindow::setupUi() {
         for (auto& row : m_trackRows) {
             if (row.view) {
                 row.view->setSnapUnit(snapUnit);
+                row.view->setSamplesPerTick(m_project.samplesPerTick());
             }
         }
     };
@@ -642,6 +643,8 @@ void MainWindow::setupTimer() {
         m_measureRuler->setPlayheadPosition(pos);
         for (auto& row : m_trackRows)
             row.view->setPlayheadPosition(pos);
+        for (auto* pr : m_pianoRollWindows)
+            pr->setPlayheadSample(pos);
     });
     timer->start(40);
 }
@@ -1284,8 +1287,10 @@ void MainWindow::rebuildTracks() {
     m_timelineRuler->setSnapUnit(snapUnit);
     m_measureRuler->setSnapUnit(snapUnit);
     for (auto& row : m_trackRows) {
-        if (row.view)
+        if (row.view) {
             row.view->setSnapUnit(snapUnit);
+            row.view->setSamplesPerTick(m_project.samplesPerTick());
+        }
     }
 
     if (m_busPanel->isVisible())

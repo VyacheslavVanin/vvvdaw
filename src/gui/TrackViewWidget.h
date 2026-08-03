@@ -37,6 +37,7 @@ public:
 
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
     void setSnapUnit(double samples) { m_snapUnit = samples; }
+    void setSamplesPerTick(double samplesPerTick) { m_samplesPerTick = samplesPerTick; }
     void setMouseWheelScroll(bool enabled) { m_mouseWheelScroll = enabled; }
 
 signals:
@@ -104,6 +105,8 @@ private:
     struct MidiThumbCache {
         QImage image;
         int64_t revision = -1;
+        int64_t offsetSample = 0;
+        int64_t durationSample = 0;
     };
     QMap<std::shared_ptr<MidiClip>, MidiThumbCache> m_midiThumbCache;
 
@@ -141,5 +144,6 @@ private:
 
     bool m_snapToGrid = true;
     double m_snapUnit = vvvdaw::DefaultSnapUnitSamples;
+    double m_samplesPerTick = 25.0;
     bool m_mouseWheelScroll = false;
 };

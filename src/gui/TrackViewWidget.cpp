@@ -319,14 +319,25 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
                                         int64_t offsetSample, int64_t durationSample,
                                         int x, int y, int w, int h) {
-    if (!clip || clip->notes().empty()) return;
+    if (!clip || clip->notes().empty() || durationSample <= 0) return;
+    if (m_samplesPerTick <= 0) return;
+
+    // Visible tick window of the clip mapped onto the event's width.
+    double spt = m_samplesPerTick;
+    double startTick = static_cast<double>(offsetSample) / spt;
+    double endTick = static_cast<double>(offsetSample + durationSample) / spt;
+    double spanTicks = endTick - startTick;
+    if (spanTicks <= 0) return;
 
     auto& cache = m_midiThumbCache[clip];
-    if (cache.image.isNull() || cache.revision != clip->revision() || cache.image.width() != w
-        || cache.image.height() != h) {
+    if (cache.image.isNull() || cache.revision != clip->revision()
+        || cache.offsetSample != offsetSample || cache.durationSample != durationSample
+        || cache.image.width() != w || cache.image.height() != h) {
         cache.image = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
         cache.image.fill(Qt::transparent);
         cache.revision = clip->revision();
+        cache.offsetSample = offsetSample;
+        cache.durationSample = durationSample;
 
         QPainter p(&cache.image);
         p.setPen(Qt::NoPen);
@@ -334,21 +345,28 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
 
         constexpr double kMinPitch = 36.0;
         constexpr double kMaxPitch = 84.0;
+        const double pitchRange = kMaxPitch - kMinPitch;
         for (const auto& note : clip->notes()) {
-            double pitchFrac = (note.pitch - kMinPitch) / (kMaxPitch - kMinPitch);
+            double noteStart = static_cast<double>(note.startTick);
+            double noteEnd = static_cast<double>(note.endTick());
+            if (noteEnd <= startTick || noteStart >= endTick)
+                continue; // outside the visible window
+
+            double visStart = std::max(noteStart, startTick);
+            double visEnd = std::min(noteEnd, endTick);
+
+            double pitchFrac = (note.pitch - kMinPitch) / pitchRange;
             pitchFrac = std::clamp(pitchFrac, 0.0, 1.0);
             int ny = y + static_cast<int>((1.0 - pitchFrac) * (h - 2));
-            int nx = x + static_cast<int>((static_cast<double>(note.startTick) / MidiClip::kPPQ / 4.0) * w);
-            int nw = std::max(1, static_cast<int>(
-                (static_cast<double>(note.durationTicks) / MidiClip::kPPQ / 4.0) * w));
+
+            int nx = x + static_cast<int>((visStart - startTick) / spanTicks * w);
+            int nw = std::max(1, static_cast<int>((visEnd - visStart) / spanTicks * w));
             p.drawRect(nx, ny, nw, std::max(2, h / 16));
         }
     }
 
     if (!cache.image.isNull())
         painter.drawImage(x, y, cache.image);
-    (void)offsetSample;
-    (void)durationSample;
 }
 
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
