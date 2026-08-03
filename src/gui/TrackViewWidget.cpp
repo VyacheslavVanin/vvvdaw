@@ -332,12 +332,14 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
     auto& cache = m_midiThumbCache[clip];
     if (cache.image.isNull() || cache.revision != clip->revision()
         || cache.offsetSample != offsetSample || cache.durationSample != durationSample
+        || cache.samplesPerTick != spt
         || cache.image.width() != w || cache.image.height() != h) {
         cache.image = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
         cache.image.fill(Qt::transparent);
         cache.revision = clip->revision();
         cache.offsetSample = offsetSample;
         cache.durationSample = durationSample;
+        cache.samplesPerTick = spt;
 
         QPainter p(&cache.image);
         p.setPen(Qt::NoPen);
@@ -357,9 +359,9 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
 
             double pitchFrac = (note.pitch - kMinPitch) / pitchRange;
             pitchFrac = std::clamp(pitchFrac, 0.0, 1.0);
-            int ny = y + static_cast<int>((1.0 - pitchFrac) * (h - 2));
-
-            int nx = x + static_cast<int>((visStart - startTick) / spanTicks * w);
+            // Coordinates are relative to the cache image (drawn at (x,y) below).
+            int ny = static_cast<int>((1.0 - pitchFrac) * (h - 2));
+            int nx = static_cast<int>((visStart - startTick) / spanTicks * w);
             int nw = std::max(1, static_cast<int>((visEnd - visStart) / spanTicks * w));
             p.drawRect(nx, ny, nw, std::max(2, h / 16));
         }

@@ -107,6 +107,7 @@ private:
         int64_t revision = -1;
         int64_t offsetSample = 0;
         int64_t durationSample = 0;
+        double samplesPerTick = 0.0;
     };
     QMap<std::shared_ptr<MidiClip>, MidiThumbCache> m_midiThumbCache;
 
