@@ -488,8 +488,12 @@ void PianoRollWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         if (m_rubberBanding) {
             m_rubberBanding = false;
-            // A click without movement sets the playhead; a drag selects.
-            if ((m_rubberCurrent - m_rubberStart).manhattanLength() < 3) {
+            bool isClick = (m_rubberCurrent - m_rubberStart).manhattanLength() < 3;
+            bool ctrl = (event->modifiers() & Qt::ControlModifier);
+            if (isClick && ctrl) {
+                // Ctrl+click on empty area adds a note.
+                addNoteAt(m_rubberStart);
+            } else if (isClick) {
                 int64_t sample = clickToTimelineSample(m_rubberStart.x());
                 if (sample >= 0)
                     emit playheadSetRequested(sample);
@@ -505,27 +509,14 @@ void PianoRollWidget::mouseReleaseEvent(QMouseEvent* event) {
     QWidget::mouseReleaseEvent(event);
 }
 
-void PianoRollWidget::mouseDoubleClickEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton || event->position().x() < kKeysWidth) {
-        QWidget::mouseDoubleClickEvent(event);
-        return;
-    }
-
+void PianoRollWidget::addNoteAt(const QPoint& pos) {
     MidiClip* c = clip();
-    if (!c) return;
-
-    int mx = static_cast<int>(event->position().x());
-    int my = static_cast<int>(event->position().y());
-    if (noteRectAt(mx, my).noteId >= 0) {
-        QWidget::mouseDoubleClickEvent(event);
-        return;
-    }
+    if (!c || pos.x() < kKeysWidth) return;
 
     // Floor to the cell under the pointer; the note lands in the row the
-    // pointer is actually in (no vertical centering shift, which pushed it
-    // one row lower for clicks in the bottom half of a row).
-    int pitch = std::clamp(yToPitch(my), 0, 127);
-    int64_t start = snapTickFloor(xToTick(mx));
+    // pointer is actually in.
+    int pitch = std::clamp(yToPitch(pos.y()), 0, 127);
+    int64_t start = snapTickFloor(xToTick(pos.x()));
     if (start < 0) start = 0;
     int64_t dur = MidiClip::kPPQ / m_snapDiv;
     if (dur < kMinDurationTicks) dur = kMinDurationTicks;

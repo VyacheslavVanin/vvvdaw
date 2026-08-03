@@ -43,7 +43,6 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
-    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
@@ -82,6 +81,7 @@ private:
     void clearDragState();
     void beginNoteDrag(int noteId, const QPoint& pos, bool resize);
     void duplicateSelection();
+    void addNoteAt(const QPoint& pos);
 
     Project& m_project;
     UndoStack& m_undo;
