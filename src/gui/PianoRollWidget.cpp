@@ -185,7 +185,7 @@ void PianoRollWidget::paintEvent(QPaintEvent* /*event*/) {
         else
             rowColor = QColor("#2c2c2c");   // white keys
         painter.fillRect(kKeysWidth, y, width() - kKeysWidth, kRowHeight, rowColor);
-        painter.setPen(QPen(QColor("#3a3a3a"), 1));
+        painter.setPen(QPen(QColor("#4d4d4d"), 1));
         painter.drawLine(kKeysWidth, y, width(), y);
     }
 
@@ -200,8 +200,8 @@ void PianoRollWidget::paintEvent(QPaintEvent* /*event*/) {
         if (x < kKeysWidth) continue;
         bool isBar = (t % barTicks == 0);
         bool isBeat = (t % beatTicks == 0);
-        QColor color = isBar ? QColor("#4a4a5a")
-                     : (isBeat ? QColor("#3a3a3a") : QColor("#2d2d2d"));
+        QColor color = isBar ? QColor("#5c5c70")
+                     : (isBeat ? QColor("#4a4a4a") : QColor("#3a3a3a"));
         painter.setPen(QPen(color, isBar ? 2 : 1));
         painter.drawLine(x, 0, x, height());
     }
@@ -503,8 +503,10 @@ void PianoRollWidget::mouseDoubleClickEvent(QMouseEvent* event) {
         return;
     }
 
-    // Floor to the cell under the pointer and center the note vertically on it.
-    int pitch = std::clamp(yToPitch(my + kRowHeight / 2), 0, 127);
+    // Floor to the cell under the pointer; the note lands in the row the
+    // pointer is actually in (no vertical centering shift, which pushed it
+    // one row lower for clicks in the bottom half of a row).
+    int pitch = std::clamp(yToPitch(my), 0, 127);
     int64_t start = snapTickFloor(xToTick(mx));
     if (start < 0) start = 0;
     int64_t dur = MidiClip::kPPQ / m_snapDiv;
