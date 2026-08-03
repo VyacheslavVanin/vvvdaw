@@ -174,22 +174,24 @@ void PianoRollWidget::paintEvent(QPaintEvent* /*event*/) {
 
     int64_t clipLen = c->lengthTicks();
 
-    // Horizontal pitch rows: white keys lighter, black keys darker.
+    // Horizontal pitch rows: white keys lighter, black keys darker, but with
+    // muted contrast so the grid stays readable without visual noise.
     for (int pitch = 0; pitch <= 127; ++pitch) {
         int y = pitchToY(pitch);
         QColor rowColor;
         if (pitch % 12 == 0)
-            rowColor = QColor("#333a45");   // C / octave reference
+            rowColor = QColor("#3f4450");   // C / octave reference (tinted)
         else if (isBlackKey(pitch))
-            rowColor = QColor("#222222");   // black keys
+            rowColor = QColor("#262626");   // black keys
         else
-            rowColor = QColor("#2c2c2c");   // white keys
+            rowColor = QColor("#3a3a3a");   // white keys
         painter.fillRect(kKeysWidth, y, width() - kKeysWidth, kRowHeight, rowColor);
-        painter.setPen(QPen(QColor("#4d4d4d"), 1));
+        QColor lineColor = isBlackKey(pitch) ? QColor("#333333") : QColor("#4a4a4a");
+        painter.setPen(QPen(lineColor, 1));
         painter.drawLine(kKeysWidth, y, width(), y);
     }
 
-    // Vertical beat/bar grid
+    // Vertical beat/bar grid (subtle, visible on both row shades)
     int64_t beatTicks = MidiClip::kPPQ;
     int64_t barTicks = beatTicks * m_project.timeSigNum();
     int64_t snapTicks = std::max<int64_t>(1, beatTicks / m_snapDiv);
@@ -200,13 +202,13 @@ void PianoRollWidget::paintEvent(QPaintEvent* /*event*/) {
         if (x < kKeysWidth) continue;
         bool isBar = (t % barTicks == 0);
         bool isBeat = (t % beatTicks == 0);
-        QColor color = isBar ? QColor("#5c5c70")
-                     : (isBeat ? QColor("#4a4a4a") : QColor("#3a3a3a"));
+        QColor color = isBar ? QColor("#5a5a5a")
+                     : (isBeat ? QColor("#4a4a4a") : QColor("#3c3c3c"));
         painter.setPen(QPen(color, isBar ? 2 : 1));
         painter.drawLine(x, 0, x, height());
     }
 
-    // Piano keys
+    // Piano keys: white keys lighter, black keys darker (muted contrast)
     QFont keyFont = painter.font();
     keyFont.setPixelSize(7);
     painter.setFont(keyFont);
@@ -214,12 +216,12 @@ void PianoRollWidget::paintEvent(QPaintEvent* /*event*/) {
         int y = pitchToY(pitch);
         bool black = isBlackKey(pitch);
         painter.fillRect(0, y, kKeysWidth, kRowHeight,
-                         black ? QColor("#2a2a2a") : QColor("#3a3a3a"));
+                         black ? QColor("#282828") : QColor("#3f3f3f"));
         if (pitch % 12 == 0) {
-            painter.setPen(QColor("#888"));
+            painter.setPen(black ? QColor("#aaa") : QColor("#aaa"));
             painter.drawText(2, y + kRowHeight - 2, QString::number(pitch / 12 - 1));
         }
-        painter.setPen(QColor("#222"));
+        painter.setPen(QColor("#333"));
         painter.drawLine(0, y, kKeysWidth, y);
     }
     painter.fillRect(kKeysWidth - 2, 0, 2, height(), QColor("#444"));
