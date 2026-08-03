@@ -18,6 +18,9 @@ public:
     int snapDiv() const { return m_snapDiv; }
     void setSnapDiv(int div);
 
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;

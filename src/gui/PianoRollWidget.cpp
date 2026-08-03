@@ -22,7 +22,18 @@ PianoRollWidget::PianoRollWidget(Project& project, UndoStack& undo, int trackInd
 {
     setMouseTracking(true);
     setFocusPolicy(Qt::ClickFocus);
-    setMinimumSize(kKeysWidth + 200, 128 * kRowHeight + 4);
+    setMinimumSize(kKeysWidth + 60, 128 * kRowHeight + 4);
+}
+
+QSize PianoRollWidget::sizeHint() const {
+    MidiClip* c = clip();
+    int64_t len = c ? c->lengthTicks() : 0;
+    int contentW = kKeysWidth + 40 + static_cast<int>(std::max<int64_t>(len, MidiClip::kPPQ * 4) * m_pixelsPerTick);
+    return QSize(contentW, 128 * kRowHeight + 4);
+}
+
+QSize PianoRollWidget::minimumSizeHint() const {
+    return QSize(kKeysWidth + 60, 128 * kRowHeight + 4);
 }
 
 MidiClip* PianoRollWidget::clip() const {
@@ -40,6 +51,7 @@ bool PianoRollWidget::reload() {
         return false;
     }
     m_selectedNoteId = -1;
+    updateGeometry();
     update();
     return true;
 }
@@ -173,6 +185,7 @@ void PianoRollWidget::wheelEvent(QWheelEvent* event) {
     if (event->modifiers() & Qt::ControlModifier && delta != 0) {
         double factor = (delta > 0) ? 1.2 : 1.0 / 1.2;
         m_pixelsPerTick = std::clamp(m_pixelsPerTick * factor, 0.004, 2.0);
+        updateGeometry();
         update();
     } else if ((event->modifiers() & Qt::ShiftModifier) && delta != 0) {
         if (m_selectedNoteId >= 0) {
@@ -186,6 +199,7 @@ void PianoRollWidget::wheelEvent(QWheelEvent* event) {
                     c->bumpRevision();
                     m_undo.execute(std::make_unique<SetNoteVelocityCommand>(
                         m_project, m_trackIndex, m_eventId, note->id, oldVel, newVel));
+                    updateGeometry();
                     update();
                 }
             }
@@ -248,6 +262,7 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
                 m_undo.execute(std::make_unique<MoveNoteCommand>(
                     m_project, m_trackIndex, m_eventId, note->id,
                     m_dragOrigPitch, m_dragOrigStartTick, newPitch, newStart));
+                updateGeometry();
                 update();
             }
         } else if (m_dragMode == DragMode::Resize) {
@@ -260,6 +275,7 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
                 m_undo.execute(std::make_unique<ResizeNoteCommand>(
                     m_project, m_trackIndex, m_eventId, note->id,
                     m_dragOrigDuration, newDur));
+                updateGeometry();
                 update();
             }
         }
@@ -308,6 +324,7 @@ void PianoRollWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     m_undo.execute(std::move(cmd));
     if (auto* added = dynamic_cast<AddNoteCommand*>(m_undo.topCommand()))
         m_selectedNoteId = added->createdNoteId();
+    updateGeometry();
     update();
 }
 
@@ -319,6 +336,7 @@ void PianoRollWidget::keyPressEvent(QKeyEvent* event) {
             m_undo.execute(std::make_unique<RemoveNoteCommand>(
                 m_project, m_trackIndex, m_eventId, m_selectedNoteId));
             m_selectedNoteId = -1;
+            updateGeometry();
             update();
         }
         return;

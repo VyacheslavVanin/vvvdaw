@@ -45,7 +45,7 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, int trackInd
     layout->addLayout(toolbar);
 
     auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(false);
+    scrollArea->setWidgetResizable(true);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
