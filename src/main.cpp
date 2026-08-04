@@ -80,6 +80,10 @@ int main(int argc, char* argv[]) {
         t.pluginChain().clear();
     for (auto& b : project.buses())
         b.pluginChain.clear();
+    for (auto& inst : project.instruments()) {
+        inst.setSynth(nullptr);
+        inst.effects().clear();
+    }
 
     settings.save();
     Pa_Terminate();
