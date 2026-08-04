@@ -19,7 +19,9 @@ private:
 
 class RemoveInstrumentCommand : public UndoCommand {
 public:
-    RemoveInstrumentCommand(Project& project, int index);
+    RemoveInstrumentCommand(Project& project, int index,
+                            PluginManager* manager = nullptr,
+                            double sampleRate = 48000, int bufferSize = 512);
     void execute() override;
     void undo() override;
     int id() const override { return 71; }
@@ -28,6 +30,8 @@ private:
     int m_index;
     QJsonObject m_savedInstrument;
     PluginManager* m_manager = nullptr;
+    double m_sampleRate;
+    int m_bufferSize;
 };
 
 class SetInstrumentVolumeCommand : public UndoCommand {
@@ -118,7 +122,8 @@ private:
 class SetInstrumentSynthCommand : public UndoCommand {
 public:
     SetInstrumentSynthCommand(Project& project, int index, QJsonObject oldSynthJson, QJsonObject newSynthJson,
-                              PluginManager* manager = nullptr);
+                              PluginManager* manager = nullptr,
+                              double sampleRate = 48000, int bufferSize = 512);
     void execute() override;
     void undo() override;
     int id() const override { return 78; }
@@ -128,4 +133,6 @@ private:
     QJsonObject m_oldSynthJson;
     QJsonObject m_newSynthJson;
     PluginManager* m_manager = nullptr;
+    double m_sampleRate;
+    int m_bufferSize;
 };

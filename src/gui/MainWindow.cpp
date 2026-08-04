@@ -399,7 +399,8 @@ void MainWindow::setupUi() {
         for (int j = 0; j < inst.effects().count(); ++j)
             plugins.push_back(inst.effects().plugin(j));
         closePluginWindowsFor(plugins);
-        executeCommand(std::make_unique<RemoveInstrumentCommand>(m_project, index));
+        executeCommand(std::make_unique<RemoveInstrumentCommand>(
+            m_project, index, &m_pluginManager, m_engine.sampleRate(), m_engine.bufferSize()));
     });
 
     connect(m_instrumentPanel, &InstrumentPanelWidget::volumeWillChange, this,
@@ -437,7 +438,8 @@ void MainWindow::setupUi() {
         synthJson["type"] = type;
         synthJson["path"] = path;
         auto cmd = std::make_unique<SetInstrumentSynthCommand>(
-            m_project, index, QJsonObject(), synthJson, &m_pluginManager);
+            m_project, index, QJsonObject(), synthJson, &m_pluginManager,
+            m_engine.sampleRate(), m_engine.bufferSize());
         executeCommand(std::move(cmd));
         resyncPianoRollWindows();
         if (m_instrumentPanel->isVisible())
@@ -459,7 +461,8 @@ void MainWindow::setupUi() {
         for (auto* w : toClose)
             w->close();
         auto cmd = std::make_unique<SetInstrumentSynthCommand>(
-            m_project, index, inst.synth()->stateToJson(), QJsonObject(), &m_pluginManager);
+            m_project, index, inst.synth()->stateToJson(), QJsonObject(), &m_pluginManager,
+            m_engine.sampleRate(), m_engine.bufferSize());
         executeCommand(std::move(cmd));
         resyncPianoRollWindows();
         if (m_instrumentPanel->isVisible())

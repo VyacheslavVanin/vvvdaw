@@ -56,8 +56,11 @@ void AddInstrumentCommand::undo() {
 
 // --- RemoveInstrumentCommand ---
 
-RemoveInstrumentCommand::RemoveInstrumentCommand(Project& project, int index)
-    : m_project(project), m_index(index) {
+RemoveInstrumentCommand::RemoveInstrumentCommand(Project& project, int index,
+                                                 PluginManager* manager,
+                                                 double sampleRate, int bufferSize)
+    : m_project(project), m_index(index), m_manager(manager),
+      m_sampleRate(sampleRate), m_bufferSize(bufferSize) {
     if (index >= 0 && index < static_cast<int>(m_project.instruments().size()))
         m_savedInstrument = instrumentToJson(m_project.instruments()[index]);
 }
@@ -68,6 +71,9 @@ void RemoveInstrumentCommand::execute() {
 
 void RemoveInstrumentCommand::undo() {
     Instrument inst = instrumentFromJson(m_savedInstrument, m_manager);
+    if (inst.synth())
+        inst.synth()->activate(m_sampleRate, m_bufferSize);
+    inst.effects().activate(m_sampleRate, m_bufferSize);
     if (m_index >= 0 && m_index <= static_cast<int>(m_project.instruments().size()))
         m_project.instruments().insert(m_project.instruments().begin() + m_index, std::move(inst));
     else
@@ -188,14 +194,17 @@ void SetInstrumentNameCommand::undo() {
 
 SetInstrumentSynthCommand::SetInstrumentSynthCommand(Project& project, int index,
                                                      QJsonObject oldSynthJson, QJsonObject newSynthJson,
-                                                     PluginManager* manager)
+                                                     PluginManager* manager,
+                                                     double sampleRate, int bufferSize)
     : m_project(project), m_index(index),
-      m_oldSynthJson(oldSynthJson), m_newSynthJson(newSynthJson), m_manager(manager) {}
+      m_oldSynthJson(oldSynthJson), m_newSynthJson(newSynthJson), m_manager(manager),
+      m_sampleRate(sampleRate), m_bufferSize(bufferSize) {}
 
 void SetInstrumentSynthCommand::execute() {
     if (m_index < 0 || m_index >= static_cast<int>(m_project.instruments().size()))
         return;
     auto synth = PluginChain::createInstance(m_newSynthJson, m_manager);
+    if (synth) synth->activate(m_sampleRate, m_bufferSize);
     m_project.instruments()[m_index].setSynth(std::move(synth));
 }
 
@@ -203,5 +212,6 @@ void SetInstrumentSynthCommand::undo() {
     if (m_index < 0 || m_index >= static_cast<int>(m_project.instruments().size()))
         return;
     auto synth = PluginChain::createInstance(m_oldSynthJson, m_manager);
+    if (synth) synth->activate(m_sampleRate, m_bufferSize);
     m_project.instruments()[m_index].setSynth(std::move(synth));
 }
