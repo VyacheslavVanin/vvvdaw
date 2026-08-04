@@ -55,6 +55,7 @@ private:
     void resyncPianoRollWindows();
     class PluginChain* findChainForPlugin(PluginInstance* plugin);
     void closeAllPluginWindows();
+    void closePluginWindowsFor(const std::vector<PluginInstance*>& plugins);
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);
 

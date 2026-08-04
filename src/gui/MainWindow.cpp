@@ -282,6 +282,11 @@ void MainWindow::setupUi() {
             return;
         if (!m_project.buses()[index].removable)
             return;
+        std::vector<PluginInstance*> plugins;
+        auto& chain = m_project.buses()[index].pluginChain;
+        for (int j = 0; j < chain.count(); ++j)
+            plugins.push_back(chain.plugin(j));
+        closePluginWindowsFor(plugins);
         executeCommand(std::make_unique<RemoveBusCommand>(m_project, index));
     });
 
@@ -387,6 +392,13 @@ void MainWindow::setupUi() {
             [this](int index) {
         if (index < 0 || index >= static_cast<int>(m_project.instruments().size()))
             return;
+        auto& inst = m_project.instruments()[index];
+        std::vector<PluginInstance*> plugins;
+        if (inst.synth())
+            plugins.push_back(inst.synth());
+        for (int j = 0; j < inst.effects().count(); ++j)
+            plugins.push_back(inst.effects().plugin(j));
+        closePluginWindowsFor(plugins);
         executeCommand(std::make_unique<RemoveInstrumentCommand>(m_project, index));
     });
 
@@ -418,6 +430,9 @@ void MainWindow::setupUi() {
     connect(m_instrumentPanel, &InstrumentPanelWidget::synthAddRequested, this,
             [this](int index, const QString& type, const QString& path) {
         if (index < 0 || index >= static_cast<int>(m_project.instruments().size())) return;
+        // Close the old synth's editor before it is destroyed by the replace.
+        if (auto* oldSynth = m_project.instruments()[index].synth())
+            closePluginWindowsFor({oldSynth});
         QJsonObject synthJson;
         synthJson["type"] = type;
         synthJson["path"] = path;
@@ -697,6 +712,20 @@ void MainWindow::closeAllPluginWindows() {
         w->close();
 }
 
+void MainWindow::closePluginWindowsFor(const std::vector<PluginInstance*>& plugins) {
+    std::vector<PluginWindow*> toClose;
+    for (auto* w : m_pluginWindows) {
+        for (auto* p : plugins) {
+            if (w->plugin() == p) {
+                toClose.push_back(w);
+                break;
+            }
+        }
+    }
+    for (auto* w : toClose)
+        w->close();
+}
+
 void MainWindow::setupMenus() {
     auto* fileMenu = menuBar()->addMenu("&File");
 
@@ -842,6 +871,11 @@ void MainWindow::setupMenus() {
         for (size_t i = 0; i < m_project.tracks().size(); ++i) {
             if (m_trackRows[i].panel->hasFocus() || m_trackRows[i].view->hasFocus()) {
                 int idx = static_cast<int>(i);
+                std::vector<PluginInstance*> plugins;
+                auto& chain = m_project.tracks()[idx].pluginChain();
+                for (int j = 0; j < chain.count(); ++j)
+                    plugins.push_back(chain.plugin(j));
+                closePluginWindowsFor(plugins);
                 executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
                 return;
             }
@@ -849,6 +883,11 @@ void MainWindow::setupMenus() {
         for (size_t i = m_project.tracks().size(); i > 0; --i) {
             if (m_trackRows[i - 1].view->selectedEventIndex() >= 0) {
                 int idx = static_cast<int>(i - 1);
+                std::vector<PluginInstance*> plugins;
+                auto& chain = m_project.tracks()[idx].pluginChain();
+                for (int j = 0; j < chain.count(); ++j)
+                    plugins.push_back(chain.plugin(j));
+                closePluginWindowsFor(plugins);
                 executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
                 return;
             }
@@ -1020,6 +1059,11 @@ void MainWindow::rebuildTracks() {
 
         connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
             if (idx < static_cast<int>(m_project.tracks().size())) {
+                std::vector<PluginInstance*> plugins;
+                auto& chain = m_project.tracks()[idx].pluginChain();
+                for (int j = 0; j < chain.count(); ++j)
+                    plugins.push_back(chain.plugin(j));
+                closePluginWindowsFor(plugins);
                 executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
             }
         });
