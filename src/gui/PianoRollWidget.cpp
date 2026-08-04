@@ -79,7 +79,7 @@ int64_t PianoRollWidget::xToTick(int x) const {
 int64_t PianoRollWidget::clickToTimelineSample(int x) const {
     MidiEvent* ev = currentEvent();
     if (!ev) return -1;
-    int64_t tick = xToTick(x);
+    int64_t tick = snapEnabled() ? snapTick(xToTick(x)) : xToTick(x);
     int64_t offsetTicks = m_project.samplesToTicks(ev->offsetSample());
     int64_t sample = ev->startSample() + m_project.ticksToSamples(tick - offsetTicks);
     return std::max<int64_t>(0, sample);
@@ -97,13 +97,19 @@ int PianoRollWidget::yToPitch(int y) const {
     return 127 - y / kRowHeight;
 }
 
+bool PianoRollWidget::snapEnabled() const {
+    return m_project.snapToGrid();
+}
+
 int64_t PianoRollWidget::snapTick(int64_t tick) const {
+    if (!snapEnabled()) return tick;
     int64_t unit = MidiClip::kPPQ / m_snapDiv;
     if (unit < 1) unit = 1;
     return static_cast<int64_t>(std::round(static_cast<double>(tick) / unit) * unit);
 }
 
 int64_t PianoRollWidget::snapTickFloor(int64_t tick) const {
+    if (!snapEnabled()) return tick;
     int64_t unit = MidiClip::kPPQ / m_snapDiv;
     if (unit < 1) unit = 1;
     return static_cast<int64_t>(std::floor(static_cast<double>(tick) / unit) * unit);

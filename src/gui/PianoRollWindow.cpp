@@ -33,13 +33,19 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine&
             m_engine.setTransportState(vvvdaw::TransportState::Playing);
     });
 
+    // Undo/redo request the main window to perform them (it also refreshes UI).
+    auto* undoShortcut = new QShortcut(QKeySequence::Undo, this);
+    connect(undoShortcut, &QShortcut::activated, this, [this] { emit undoRequested(); });
+    auto* redoShortcut = new QShortcut(QKeySequence::Redo, this);
+    connect(redoShortcut, &QShortcut::activated, this, [this] { emit redoRequested(); });
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
     auto* toolbar = new QHBoxLayout;
     toolbar->setContentsMargins(6, 4, 6, 4);
-    auto* snapLabel = new QLabel("Snap:", this);
+    auto* snapLabel = new QLabel("Note Length:", this);
     snapLabel->setStyleSheet("color: #aaa; font-size: 11px;");
     toolbar->addWidget(snapLabel);
     auto* snapCombo = new QComboBox(this);

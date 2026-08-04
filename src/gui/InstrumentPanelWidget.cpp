@@ -251,7 +251,11 @@ void InstrumentPanelWidget::rebuild() {
         });
 
         connect(row.synthButton, &QPushButton::clicked, this, [this, instIndex] {
-            openSynthDialog(instIndex);
+            auto* synth = m_project.instruments()[instIndex].synth();
+            if (synth)
+                emit openSynthEditorRequested(instIndex, synth);
+            else
+                openSynthDialog(instIndex);
         });
         connect(row.synthRemoveButton, &QPushButton::clicked, this, [this, instIndex] {
             emit synthRemoveRequested(instIndex);
@@ -407,6 +411,23 @@ bool InstrumentPanelWidget::eventFilter(QObject* obj, QEvent* event) {
         for (int i = 0; i < static_cast<int>(m_instrumentRows.size()); ++i) {
             if (m_instrumentRows[i].widget == obj) {
                 QMenu menu(m_instrumentRows[i].widget);
+                auto* synth = m_project.instruments()[i].synth();
+                if (synth) {
+                    QAction* openAction = menu.addAction("Open Synth Editor");
+                    connect(openAction, &QAction::triggered, this, [this, i, synth] {
+                        emit openSynthEditorRequested(i, synth);
+                    });
+                    menu.addSeparator();
+                }
+                QAction* replaceAction = menu.addAction("Replace Synth...");
+                connect(replaceAction, &QAction::triggered, this, [this, i] {
+                    openSynthDialog(i);
+                });
+                QAction* removeSynthAction = menu.addAction("Remove Synth");
+                connect(removeSynthAction, &QAction::triggered, this, [this, i] {
+                    emit synthRemoveRequested(i);
+                });
+                menu.addSeparator();
                 QAction* deleteAction = menu.addAction("Delete Instrument");
                 connect(deleteAction, &QAction::triggered, this, [this, i] {
                     emit removeInstrumentRequested(i);

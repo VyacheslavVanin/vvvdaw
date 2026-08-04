@@ -75,6 +75,7 @@ private:
     int yToPitch(int y) const;
     int64_t snapTick(int64_t tick) const;
     int64_t snapTickFloor(int64_t tick) const;
+    bool snapEnabled() const;
     NoteRect noteRectAt(int x, int y) const;
     void collectNoteRects(std::vector<NoteRect>& out) const;
     void selectNotesInRect(const QRect& rect, bool add);

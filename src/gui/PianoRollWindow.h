@@ -24,6 +24,8 @@ public:
 
 signals:
     void windowClosed();
+    void undoRequested();
+    void redoRequested();
 
 private:
     Project& m_project;

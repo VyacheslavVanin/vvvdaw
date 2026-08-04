@@ -1427,6 +1427,8 @@ void MainWindow::openPianoRoll(int trackIndex, int64_t eventId) {
             std::remove(m_pianoRollWindows.begin(), m_pianoRollWindows.end(), window),
             m_pianoRollWindows.end());
     });
+    connect(window, &PianoRollWindow::undoRequested, this, &MainWindow::performUndo);
+    connect(window, &PianoRollWindow::redoRequested, this, &MainWindow::performRedo);
     window->show();
 }
 
