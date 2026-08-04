@@ -431,14 +431,18 @@ void MainWindow::setupUi() {
     connect(m_instrumentPanel, &InstrumentPanelWidget::synthAddRequested, this,
             [this](int index, const QString& type, const QString& path) {
         if (index < 0 || index >= static_cast<int>(m_project.instruments().size())) return;
-        // Close the old synth's editor before it is destroyed by the replace.
-        if (auto* oldSynth = m_project.instruments()[index].synth())
+        // Capture the old synth's state for undo before it is destroyed by the replace.
+        QJsonObject oldSynthJson;
+        if (auto* oldSynth = m_project.instruments()[index].synth()) {
+            oldSynthJson = oldSynth->stateToJson();
+            // Close the old synth's editor before it is destroyed by the replace.
             closePluginWindowsFor({oldSynth});
+        }
         QJsonObject synthJson;
         synthJson["type"] = type;
         synthJson["path"] = path;
         auto cmd = std::make_unique<SetInstrumentSynthCommand>(
-            m_project, index, QJsonObject(), synthJson, &m_pluginManager,
+            m_project, index, oldSynthJson, synthJson, &m_pluginManager,
             m_engine.sampleRate(), m_engine.bufferSize());
         executeCommand(std::move(cmd));
         resyncPianoRollWindows();
