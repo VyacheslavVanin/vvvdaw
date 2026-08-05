@@ -21,6 +21,7 @@ public:
     bool hasIdleInterface() const;
     void idle();
     void sendPortEvent(int portIndex, float value);
+    void sendAtomEvent(int portIndex, uint32_t bufferSize, uint32_t format, const void* buffer);
 
     bool getChildSize(int& width, int& height) const;
 

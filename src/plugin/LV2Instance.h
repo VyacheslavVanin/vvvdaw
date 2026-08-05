@@ -18,8 +18,11 @@ class QTimer;
 #include <vector>
 #include <string>
 #include <map>
+#include <deque>
+#include <mutex>
 #include <cstdarg>
 #include <utility>
+#include <QByteArray>
 
 class LV2Instance : public PluginInstance {
 public:
@@ -149,6 +152,8 @@ private:
     // Patch/atom URIDs
     LV2_URID m_uridAtomPath = 0;
     LV2_URID m_uridAtomString = 0;
+    LV2_URID m_uridAtomBlank = 0;
+    LV2_URID m_uridEventTransfer = 0;
     LV2_URID m_uridPatchGet = 0;
     LV2_URID m_uridPatchSet = 0;
     LV2_URID m_uridPatchProperty = 0;
@@ -174,6 +179,16 @@ private:
     };
     std::vector<WorkItem> m_workQueue;
     std::vector<WorkItem> m_responseQueue;
+
+    // UI <-> plugin atom messaging (e.g. analyser plugins like SiSco).
+    struct UiMessage {
+        uint32_t portIndex = 0;
+        QByteArray data;
+    };
+    std::mutex m_uiMutex;
+    std::deque<UiMessage> m_uiToPlugin;
+    std::deque<UiMessage> m_pluginToUi;
+    void drainUiEvents();
 
     // UI
     QString m_uiUri;

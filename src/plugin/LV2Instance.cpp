@@ -138,6 +138,8 @@ bool LV2Instance::load(const QString& path) {
 
     m_uridAtomPath = uridMapCallback(this, LV2_ATOM__Path);
     m_uridAtomString = uridMapCallback(this, LV2_ATOM__String);
+    m_uridAtomBlank = uridMapCallback(this, LV2_ATOM__Blank);
+    m_uridEventTransfer = uridMapCallback(this, LV2_ATOM__eventTransfer);
     m_uridPatchGet = uridMapCallback(this, LV2_PATCH__Get);
     m_uridPatchSet = uridMapCallback(this, LV2_PATCH__Set);
     m_uridPatchProperty = uridMapCallback(this, LV2_PATCH__property);
@@ -462,16 +464,30 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
     for (size_t i = 0; i < m_ctrlPorts.size(); ++i)
         lilv_instance_connect_port(m_instance, m_ctrlPortIndices[i], m_ctrlPorts[i]);
 
-    // Reset all atom buffers to empty sequences before run()
+    // Reset all atom buffers before run(). For output ports the atom size
+    // advertises the buffer capacity (the plugin overwrites it), otherwise
+    // the plugin cannot know how much it may write (e.g. SiSco's notify port).
     for (size_t j = 0; j < m_atomPorts.size(); ++j) {
         auto* seq = reinterpret_cast<LV2_Atom_Sequence*>(m_atomBuffers[j].data());
-        seq->atom.size = sizeof(LV2_Atom_Sequence_Body);
         seq->atom.type = m_uridAtomSequence;
         seq->body.unit = 0;
         seq->body.pad = 0;
+        if (m_atomPorts[j].isInput) {
+            seq->atom.size = sizeof(LV2_Atom_Sequence_Body);
+        } else {
+            seq->atom.size = static_cast<uint32_t>(m_atomBuffers[j].size());
+        }
     }
 
-    // Forge pending patch messages and MIDI events into input atom buffers just before run()
+    // Drain UI -> plugin atom messages (queued on the GUI thread).
+    std::deque<UiMessage> uiMessages;
+    {
+        std::lock_guard<std::mutex> lock(m_uiMutex);
+        uiMessages.swap(m_uiToPlugin);
+    }
+
+    // Forge pending patch messages, UI messages and MIDI events into input atom
+    // buffers just before run()
     for (size_t j = 0; j < m_atomPorts.size(); ++j) {
         if (!m_atomPorts[j].isInput) continue;
         int portIdx = static_cast<int>(m_atomPorts[j].index);
@@ -480,7 +496,12 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
         bool doGet = m_pendingPatchGet && m_pendingPortIndex == portIdx;
         bool doSet = m_pendingPatchSet && m_pendingPortIndex == portIdx;
         bool hasMidi = m_atomPorts[j].isMidi && midi && !midi->empty();
-        if (!doGet && !doSet && !hasMidi) continue;
+        std::vector<UiMessage> portUiMsgs;
+        for (auto& msg : uiMessages) {
+            if (static_cast<int>(msg.portIndex) == portIdx)
+                portUiMsgs.push_back(std::move(msg));
+        }
+        if (!doGet && !doSet && !hasMidi && portUiMsgs.empty()) continue;
 
         if (buf.size() < sizeof(LV2_Atom_Sequence) + 256) continue;
 
@@ -521,6 +542,17 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
                 lv2_atom_forge_pop(&forge, &obj_frame);
             }
+        }
+
+        for (auto& msg : portUiMsgs) {
+            const auto* atom = reinterpret_cast<const LV2_Atom*>(msg.data.constData());
+            uint32_t total = lv2_atom_total_size(atom);
+            if (total < sizeof(LV2_Atom) ||
+                forge.offset + total + 8 > forge.size)
+                continue;
+            lv2_atom_forge_frame_time(&forge, 0);
+            lv2_atom_forge_raw(&forge, atom, total);
+            lv2_atom_forge_pad(&forge, total);
         }
 
         if (hasMidi) {
@@ -583,6 +615,22 @@ void LV2Instance::readOutputAtoms() {
         auto* seq = reinterpret_cast<LV2_Atom_Sequence*>(m_atomBuffers[j].data());
 
         LV2_ATOM_SEQUENCE_FOREACH(seq, ev) {
+            // Forward analyser/notify messages (atom Object/Blank events) to
+            // the UI on the GUI thread; the UI expects one port_event per
+            // message. patching/string-param handling below is unchanged.
+            if (m_uiHost &&
+                (ev->body.type == m_uridAtomObject || ev->body.type == m_uridAtomBlank)) {
+                uint32_t total = sizeof(LV2_Atom) + ev->body.size;
+                std::lock_guard<std::mutex> lock(m_uiMutex);
+                if (m_pluginToUi.size() < 512) {
+                    UiMessage msg;
+                    msg.portIndex = m_atomPorts[j].index;
+                    msg.data = QByteArray(reinterpret_cast<const char*>(&ev->body),
+                                          static_cast<int>(total));
+                    m_pluginToUi.push_back(std::move(msg));
+                }
+            }
+
             if (ev->body.type == m_uridAtomObject) {
                 auto* obj = reinterpret_cast<LV2_Atom_Object*>(&ev->body);
                 if (obj->body.otype != m_uridPatchSet) continue;
@@ -629,6 +677,22 @@ void LV2Instance::readOutputAtoms() {
                 }
             }
         }
+    }
+}
+
+void LV2Instance::drainUiEvents() {
+    if (!m_uiHost) return;
+    std::deque<UiMessage> msgs;
+    {
+        std::lock_guard<std::mutex> lock(m_uiMutex);
+        msgs.swap(m_pluginToUi);
+    }
+    for (auto& msg : msgs) {
+        if (msg.data.size() >= static_cast<int>(sizeof(LV2_Atom)))
+            m_uiHost->sendAtomEvent(static_cast<int>(msg.portIndex),
+                                    static_cast<uint32_t>(msg.data.size()),
+                                    m_uridEventTransfer,
+                                    msg.data.constData());
     }
 }
 
@@ -742,6 +806,21 @@ void* LV2Instance::createEditor(void* parentWindow) {
                                           uint32_t protocol, const void* buffer) {
         if (protocol == 0) return;
         const LV2_Atom* atom = static_cast<const LV2_Atom*>(buffer);
+        if (!atom) return;
+
+        // Forward the message to the plugin's input atom port (e.g. SiSco's
+        // ui_on/ui_state/ui_off) on the next process cycle.
+        uint32_t total = lv2_atom_total_size(atom);
+        if (total >= sizeof(LV2_Atom)) {
+            std::lock_guard<std::mutex> lock(m_uiMutex);
+            if (m_uiToPlugin.size() < 128) {
+                UiMessage msg;
+                msg.portIndex = static_cast<uint32_t>(portIndex);
+                msg.data = QByteArray(reinterpret_cast<const char*>(atom), static_cast<int>(total));
+                m_uiToPlugin.push_back(std::move(msg));
+            }
+        }
+
         if (atom->type == m_uridAtomObject) {
             auto* obj = reinterpret_cast<const LV2_Atom_Object*>(atom);
             if (obj->body.otype != m_uridPatchSet) return;
@@ -797,14 +876,14 @@ void* LV2Instance::createEditor(void* parentWindow) {
         return nullptr;
     }
 
-    if (m_uiHost->hasIdleInterface()) {
-        m_idleTimer = new QTimer;
-        QObject::connect(m_idleTimer, &QTimer::timeout, m_idleTimer, [this]() {
-            if (m_uiHost)
-                m_uiHost->idle();
-        });
-        m_idleTimer->start(16);
-    }
+    m_idleTimer = new QTimer;
+    QObject::connect(m_idleTimer, &QTimer::timeout, m_idleTimer, [this]() {
+        if (!m_uiHost) return;
+        if (m_uiHost->hasIdleInterface())
+            m_uiHost->idle();
+        drainUiEvents();
+    });
+    m_idleTimer->start(16);
 
     // Sync current parameter values to the freshly-created UI
     for (int idx : m_ctrlPortIndices)

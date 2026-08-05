@@ -408,6 +408,12 @@ void LV2UIHost::sendPortEvent(int portIndex, float value) {
         m_impl->descriptor->port_event(m_impl->uiHandle, portIndex, sizeof(float), 0, &value);
 }
 
+void LV2UIHost::sendAtomEvent(int portIndex, uint32_t bufferSize, uint32_t format, const void* buffer) {
+    if (!m_impl || !m_impl->descriptor || !m_impl->uiHandle) return;
+    if (m_impl->descriptor->port_event)
+        m_impl->descriptor->port_event(m_impl->uiHandle, portIndex, bufferSize, format, buffer);
+}
+
 
 void LV2UIHost::idle() {
     if (!m_impl || !m_impl->descriptor || !m_impl->descriptor->extension_data || !m_impl->uiHandle)
