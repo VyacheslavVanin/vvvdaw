@@ -226,4 +226,5 @@ private:
 
     std::vector<Steinberg::int32> m_inputBusChannels;
     std::vector<Steinberg::int32> m_outputBusChannels;
+    std::vector<float> m_monoScratch;
 };

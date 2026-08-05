@@ -558,7 +558,6 @@ void AudioEngine::processInstruments(Project* proj, unsigned long frameCount) {
         int busIdx = inst.outputBusIndex();
         if (busIdx < 0 || busIdx >= busCount) busIdx = 0;
         float* busBuf = m_busBuffers[busIdx].data();
-        auto [lGain, rGain] = panGains(inst.pan());
 
         std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.begin() + frameCount, 0.0f);
         std::fill(m_instrumentScratchR.begin(), m_instrumentScratchR.begin() + frameCount, 0.0f);
@@ -570,8 +569,10 @@ void AudioEngine::processInstruments(Project* proj, unsigned long frameCount) {
             inst.effects().process(inBufs, outBufs, frameCount, 2);
 
         for (unsigned long f = 0; f < frameCount; ++f) {
-            busBuf[f * 2]     += m_instrumentScratchL[f] * inst.volume() * lGain;
-            busBuf[f * 2 + 1] += m_instrumentScratchR[f] * inst.volume() * rGain;
+            float lo, ro;
+            panStereo(m_instrumentScratchL[f], m_instrumentScratchR[f], inst.pan(), lo, ro);
+            busBuf[f * 2]     += lo * inst.volume();
+            busBuf[f * 2 + 1] += ro * inst.volume();
         }
     }
 }
@@ -728,7 +729,6 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
 
         float trackVol = track.volume();
         float pan = track.pan();
-        auto [leftGain, rightGain] = panGains(pan);
 
         bool isMono = track.channels() < 2;
         bool hasPlugins = track.pluginChain().count() > 0;
@@ -748,7 +748,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                 hasAnyEvent = true;
             } else {
                 addSourceToBus(busBuf, input, inCh, frameCount, trackVol,
-                               leftGain, rightGain, isMono);
+                               pan, isMono);
             }
         }
 
@@ -772,7 +772,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
                                          framesAvail, isMono);
                     } else {
                         addSourceToBus(busBuf, m_stereoScratch.data(), ch,
-                                       framesAvail, trackVol, leftGain, rightGain, isMono);
+                                       framesAvail, trackVol, pan, isMono);
                     }
                 }
             }
@@ -785,7 +785,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             track.pluginChain().process(inBufs, outBufs, frameCount, pluginChannels);
 
             writeTrackToBus(busBuf, trackL, trackR, frameCount, trackVol,
-                            leftGain, rightGain, isMono);
+                            pan, isMono);
         }
         ++trackIndex;
     }
@@ -829,7 +829,6 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         if (bus.muted) continue;
         if (anyBusSolo && !bus.solo) continue;
 
-        auto [bLeftGain, bRightGain] = panGains(bus.pan);
         float bVol = bus.volume;
 
         int parentIdx = bus.outputBusIndex;
@@ -839,8 +838,10 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             float* buf = m_busBuffers[idx].data();
             if (outCh >= 2) {
                 for (unsigned long f = 0; f < frameCount; ++f) {
-                    output[f * 2]     += buf[f * 2]     * bVol * bLeftGain;
-                    output[f * 2 + 1] += buf[f * 2 + 1] * bVol * bRightGain;
+                    float lo, ro;
+                    panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan, lo, ro);
+                    output[f * 2]     += lo * bVol;
+                    output[f * 2 + 1] += ro * bVol;
                 }
             } else {
                 for (unsigned long f = 0; f < frameCount; ++f) {
@@ -851,8 +852,10 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             float* srcBuf = m_busBuffers[idx].data();
             float* dstBuf = m_busBuffers[parentIdx].data();
             for (unsigned long f = 0; f < frameCount; ++f) {
-                dstBuf[f * 2]     += srcBuf[f * 2]     * bVol * bLeftGain;
-                dstBuf[f * 2 + 1] += srcBuf[f * 2 + 1] * bVol * bRightGain;
+                float lo, ro;
+                panStereo(srcBuf[f * 2], srcBuf[f * 2 + 1], bus.pan, lo, ro);
+                dstBuf[f * 2]     += lo * bVol;
+                dstBuf[f * 2 + 1] += ro * bVol;
             }
         }
     }

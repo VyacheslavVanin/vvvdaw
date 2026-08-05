@@ -378,6 +378,7 @@ bool VST3Instance::activate(double sampleRate, int maxBlockSize) {
 
     m_sampleRate = sampleRate;
     m_maxBlockSize = maxBlockSize;
+    m_monoScratch.resize(static_cast<size_t>(maxBlockSize));
 
     ProcessSetup setup;
     setup.processMode = kRealtime;
@@ -417,12 +418,22 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     if (numOutBuses < 1) numOutBuses = 1;
 
     std::vector<AudioBusBuffers> inBuses(numInBuses);
+    float* monoInChannels[1] = { m_monoScratch.data() };
     for (int32 i = 0; i < numInBuses; ++i) {
         int32 busChannels = (i < static_cast<int32>(m_inputBusChannels.size()))
                                 ? m_inputBusChannels[i] : numChannels;
         inBuses[i].numChannels = std::min(busChannels, numChannels);
         inBuses[i].silenceFlags = 0;
-        inBuses[i].channelBuffers32 = inputBuffers;
+        if (busChannels == 1 && numChannels >= 2 && inputBuffers) {
+            if (m_monoScratch.size() < static_cast<size_t>(numSamples))
+                m_monoScratch.resize(static_cast<size_t>(numSamples));
+            for (int s = 0; s < numSamples; ++s)
+                m_monoScratch[static_cast<size_t>(s)] =
+                    (inputBuffers[0][s] + inputBuffers[1][s]) * 0.5f;
+            inBuses[i].channelBuffers32 = monoInChannels;
+        } else {
+            inBuses[i].channelBuffers32 = inputBuffers;
+        }
     }
 
     std::vector<AudioBusBuffers> outBuses(numOutBuses);
@@ -456,6 +467,15 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     data.processContext = nullptr;
 
     tresult result = m_audioProcessor->process(data);
+
+    // Mono plugin: duplicate the single output channel so downstream mixing
+    // sees a centered stereo signal instead of a hard-panned-left one.
+    bool monoOut = m_outputBusChannels.size() == 1 && m_outputBusChannels[0] == 1;
+    if (monoOut && result == kResultTrue && outputBuffers && numChannels >= 2) {
+        const float* src = outputBuffers[0];
+        float* dst = outputBuffers[1];
+        std::memcpy(dst, src, static_cast<size_t>(numSamples) * sizeof(float));
+    }
 
     {
         std::lock_guard<std::mutex> lock(m_paramMutex);

@@ -437,6 +437,15 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     for (size_t i = 0; i < m_audioInPorts.size(); ++i) {
         int ch = static_cast<int>(i);
+        if (m_audioInPorts.size() == 1 && numChannels >= 2 && inputBuffers &&
+            !m_audioInBuffers.empty()) {
+            for (int s = 0; s < samples; ++s)
+                m_audioInBuffers[0][static_cast<size_t>(s)] =
+                    (inputBuffers[0][s] + inputBuffers[1][s]) * 0.5f;
+            m_audioInPorts[0] = m_audioInBuffers[0].data();
+            lilv_instance_connect_port(m_instance, m_audioInPortIndices[0], m_audioInPorts[0]);
+            continue;
+        }
         bool mapped = (ch < numChannels && inputBuffers);
         m_audioInPorts[i] = mapped ? inputBuffers[ch] : m_audioInBuffers[i].data();
         if (!mapped)
@@ -534,6 +543,16 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
     m_pendingPatchSet = false;
 
     lilv_instance_run(m_instance, samples);
+
+    // Mono plugin: duplicate the single output channel so downstream mixing
+    // sees a centered stereo signal instead of a hard-panned-left one.
+    if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2) {
+        const float* src = m_audioOutPorts[0];
+        if (src) {
+            float* dst = outputBuffers[1];
+            std::memcpy(dst, src, static_cast<size_t>(samples) * sizeof(float));
+        }
+    }
 
     processWorkQueue();
 
