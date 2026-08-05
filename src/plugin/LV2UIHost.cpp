@@ -41,6 +41,7 @@ struct LV2UIHost::Impl {
     LV2_Feature portMapFeature = {};
     LV2UI_Resize resizeData = {};
     LV2_Feature resizeFeature = {};
+    LV2UI_Touch touchData = {};
     LV2_Feature touchFeature = {};
     LV2_Feature parentFeature = {};
     LV2_Feature optionsFeature = {};
@@ -74,7 +75,8 @@ int LV2UIHost::Impl::uiResize(LV2UI_Feature_Handle handle, int width, int height
     return 0;
 }
 
-void LV2UIHost::Impl::uiTouch(LV2UI_Feature_Handle, uint32_t, bool) {}
+void LV2UIHost::Impl::uiTouch(LV2UI_Feature_Handle, uint32_t, bool) {
+}
 
 void LV2UIHost::Impl::uiWriteFunction(LV2UI_Controller controller, uint32_t portIndex,
                                        uint32_t bufferSize, uint32_t format, const void* buffer) {
@@ -227,8 +229,11 @@ bool LV2UIHost::open(const char* pluginUri, const char* bundlePath, const char* 
     m_impl->resizeFeature.URI = LV2_UI__resize;
     m_impl->resizeFeature.data = &m_impl->resizeData;
 
+    m_impl->touchData.handle = m_impl;
+    m_impl->touchData.touch = Impl::uiTouch;
+
     m_impl->touchFeature.URI = LV2_UI__touch;
-    m_impl->touchFeature.data = m_impl;
+    m_impl->touchFeature.data = &m_impl->touchData;
 
     m_impl->parentFeature.URI = LV2_UI__parent;
     m_impl->parentFeature.data = (void*)(uintptr_t)m_impl->parentWindow;
