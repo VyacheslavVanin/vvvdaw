@@ -402,14 +402,10 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
     int trackIndex = 0;
     for (const auto& track : proj->tracks()) {
         if (track.type() != Track::Type::Midi) { ++trackIndex; continue; }
-        if (track.isMuted()) { ++trackIndex; continue; }
-        if (anySolo && !track.isSolo()) { ++trackIndex; continue; }
 
         int instIdx = track.instrumentIndex();
         bool toInstrument = (instIdx >= 0 && instIdx < static_cast<int>(proj->instruments().size()));
-        int deviceId = track.midiOutputDeviceId();
-        int destIdx = toInstrument ? instIdx : deviceId;
-        uint8_t channel = static_cast<uint8_t>(trackIndex % 16);
+        bool targetMuted = toInstrument && proj->instruments()[instIdx].isMuted();
 
         auto sendNoteOffFor = [&](const ActiveMidiNote& an, int sampleOffset) {
             if (an.toInstrument && an.destIndex >= 0 &&
@@ -425,6 +421,30 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                                   an.pitch, 0);
             }
         };
+
+        auto flushTrackNotes = [&](int tIndex) {
+            for (auto it = m_activeMidiNotes.begin(); it != m_activeMidiNotes.end();) {
+                if (it->trackIndex == tIndex) {
+                    sendNoteOffFor(*it, 0);
+                    it = m_activeMidiNotes.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        };
+
+        // Muted track, muted target instrument, or track skipped by solo: release
+        // notes still held by the destination so they do not keep ringing (and do
+        // not resume sounding after unmute).
+        if (track.isMuted() || targetMuted || (anySolo && !track.isSolo())) {
+            flushTrackNotes(trackIndex);
+            ++trackIndex;
+            continue;
+        }
+
+        int deviceId = track.midiOutputDeviceId();
+        int destIdx = toInstrument ? instIdx : deviceId;
+        uint8_t channel = static_cast<uint8_t>(trackIndex % 16);
 
         for (const auto& event : track.midiEvents()) {
             auto clip = event.activeClip();
@@ -552,7 +572,19 @@ void AudioEngine::processInstruments(Project* proj, unsigned long frameCount) {
     int busCount = static_cast<int>(proj->buses().size());
     for (int i = 0; i < instCount; ++i) {
         auto& inst = proj->instruments()[i];
-        if (inst.isMuted() || !inst.synth()) continue;
+        if (inst.isMuted() || !inst.synth()) {
+            // Deliver pending note-offs (queued when the instrument or its
+            // feeding track got muted) so held notes are released instead of
+            // resuming after unmute. Output is discarded.
+            if (inst.synth() && !m_instrumentMidi[i].empty()) {
+                std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.begin() + frameCount, 0.0f);
+                std::fill(m_instrumentScratchR.begin(), m_instrumentScratchR.begin() + frameCount, 0.0f);
+                float* inBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
+                float* outBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
+                inst.synth()->process(inBufs, outBufs, frameCount, 2, &m_instrumentMidi[i]);
+            }
+            continue;
+        }
         if (anySolo && !inst.isSolo()) continue;
 
         int busIdx = inst.outputBusIndex();
