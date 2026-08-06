@@ -64,9 +64,9 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
 
     m_pluginManager.loadCache();
     m_pluginManager.scanDirectories(
-        Settings().pluginScanPaths.empty()
+        m_settings.pluginScanPaths.empty()
             ? PluginManager::defaultScanPaths()
-            : Settings().pluginScanPaths);
+            : m_settings.pluginScanPaths);
     m_project.setPluginManager(&m_pluginManager);
 
     setupUi();

@@ -217,6 +217,7 @@ private:
     Steinberg::IPlugView* m_editorView = nullptr;
     Steinberg::IPlugFrame* m_frame = nullptr;
     void* m_frameImpl = nullptr;
+    bool m_editorCrashed = false;
 
     HostComponentHandler m_componentHandler;
     HostParameterChanges m_outputParamChanges;

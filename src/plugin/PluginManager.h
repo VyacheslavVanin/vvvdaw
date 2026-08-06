@@ -31,7 +31,7 @@ public:
 
 private:
     void scanLV2();
-    static constexpr int kCacheVersion = 2;
+    static constexpr int kCacheVersion = 3;
     std::vector<PluginInfo> m_plugins;
     LilvWorld* m_lilvWorld = nullptr;
     QString cachePath() const;

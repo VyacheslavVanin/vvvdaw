@@ -1,4 +1,5 @@
 #include "VST3Instance.h"
+#include "VST3Scan.h"
 #include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
@@ -7,13 +8,11 @@
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 #include <dlfcn.h>
 #include <filesystem>
-#include <fstream>
 #include <vector>
 #include <QWidget>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <cstring>
 #include <algorithm>
 
 using namespace Steinberg;
@@ -22,6 +21,8 @@ using vvvdaw::StateStream;
 
 #include <QTimer>
 #include <QSocketNotifier>
+#include <csignal>
+#include <csetjmp>
 #include <unordered_map>
 
 namespace {
@@ -106,6 +107,17 @@ uint32 PLUGIN_API PluginFrame::addRef() { return 1; }
 uint32 PLUGIN_API PluginFrame::release() { return 0; }
 
 } // anonymous namespace
+
+// Crash guard for third-party editors (e.g. MT-PowerDrumKit's VSTGUI editor)
+// that can segfault inside createView. If the plugin crashes while building its
+// editor, we recover and fall back to the parameter UI instead of dying.
+static sigjmp_buf s_editorJmpBuf;
+static volatile sig_atomic_t s_editorCrashed = 0;
+
+static void editorCrashHandler(int) {
+    s_editorCrashed = 1;
+    siglongjmp(s_editorJmpBuf, 1);
+}
 
 // HostComponentHandler method implementations
 tresult PLUGIN_API HostComponentHandler::queryInterface(const TUID _iid, void** obj) {
@@ -198,38 +210,6 @@ VST3Instance::~VST3Instance() {
     m_component = nullptr;
 }
 
-static bool findAudioProcessorUID(IPluginFactory* factory, const std::string& soPath, TUID outUID) {
-    memset(outUID, 0, 16);
-    std::ifstream file(soPath, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
-    auto sz = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<unsigned char> buf(sz);
-    file.read(reinterpret_cast<char*>(buf.data()), sz);
-
-    const char compIID[] = "\xE8\x31\xFF\x31\xF2\xD5\x43\x01\x92\x8E\xBB\xEE\x25\x69\x78\x02";
-
-    for (size_t i = 0; i + 16 <= buf.size(); i += 4) {
-        bool allZero = true;
-        for (int j = 0; j < 16; ++j) if (buf[i+j] != 0) { allZero = false; break; }
-        if (allZero) continue;
-
-        TUID tuid;
-        memcpy(tuid, buf.data() + i, 16);
-
-        void* obj = nullptr;
-        factory->createInstance(tuid, compIID, &obj);
-        if (obj) {
-            memcpy(outUID, tuid, 16);
-            IPluginBase* base = nullptr;
-            ((FUnknown*)obj)->queryInterface(IPluginBase::iid, (void**)&base);
-            if (base) base->release();
-            return true;
-        }
-    }
-    return false;
-}
-
 bool VST3Instance::load(const QString& path) {
     std::string soPath;
     namespace fs = std::filesystem;
@@ -260,12 +240,11 @@ bool VST3Instance::load(const QString& path) {
     Steinberg::IPtr<IPluginFactory> factory;
     factory = Steinberg::owned(rawFactory);
 
-    // NB: do NOT enumerate factory classes (getClassInfo/getClassInfo2) here.
-    // The installed plugins are built against older VST3 SDKs whose PClassInfo
-    // layout differs from the current SDK headers, so those calls crash inside
-    // the plugin. The binary memory-scan below is ABI-independent and proven.
+    // UID discovery: binary memory-scan first (ABI-independent, works for
+    // DPF-based plugins), then crash-guarded getClassInfo fallback for plugins
+    // that store their GUID as instruction immediates (e.g. MT-PowerDrumKit).
     TUID compUID = {0};
-    if (!findAudioProcessorUID(factory.get(), soPath, compUID)) return false;
+    if (!VST3Scan::findComponentUID(factory.get(), soPath, compUID)) return false;
 
     IComponent* comp = nullptr;
     factory->createInstance(compUID, IComponent::iid, (void**)&comp);
@@ -582,32 +561,80 @@ bool VST3Instance::hasEditor() const {
 }
 
 void* VST3Instance::createEditor(void* parentWindow) {
+    if (m_editorCrashed) {
+        qWarning() << m_name << ": native editor disabled after previous crash";
+        return nullptr;
+    }
     if (!m_controller) { qWarning() << m_name << ": no controller"; return nullptr; }
     if (m_editorView) return parentWindow;
 
     auto* parentWidget = reinterpret_cast<QWidget*>(parentWindow);
     auto x11WindowId = reinterpret_cast<void*>(parentWidget->winId());
 
-    auto* view = m_controller->createView(ViewType::kEditor);
-    if (!view) { qWarning() << m_name << ": createView returned nullptr"; return nullptr; }
+    Steinberg::IPlugView* view = nullptr;
+
+    struct sigaction oldSa, sa{};
+    sa.sa_handler = editorCrashHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGSEGV, &sa, &oldSa);
+    s_editorCrashed = 0;
+
+    if (sigsetjmp(s_editorJmpBuf, 1) == 0) {
+        view = m_controller->createView(ViewType::kEditor);
+        if (!view) qWarning() << m_name << ": createView returned nullptr";
+    }
+
+    sigaction(SIGSEGV, &oldSa, nullptr);
+
+    if (s_editorCrashed) {
+        qWarning() << m_name << ": editor crashed (SEGV) in createView — disabling native editor";
+        m_editorCrashed = true;
+        return nullptr;
+    }
+    if (!view) return nullptr;
 
     auto x11support = view->isPlatformTypeSupported(kPlatformTypeX11EmbedWindowID);
     qInfo() << m_name << ": isPlatformTypeSupported(X11) =" << x11support;
 
     if (x11support == kResultTrue) {
-        if (!m_frame) {
-            auto* frame = new PluginFrame();
-            frame->setHostWindow(parentWidget);
-            m_frameImpl = frame;
-            m_frame = frame;
+        struct sigaction oldSa2, sa2{};
+        sa2.sa_handler = editorCrashHandler;
+        sigemptyset(&sa2.sa_mask);
+        sa2.sa_flags = 0;
+        sigaction(SIGSEGV, &sa2, &oldSa2);
+        s_editorCrashed = 0;
+
+        if (sigsetjmp(s_editorJmpBuf, 1) == 0) {
+            if (!m_frame) {
+                auto* frame = new PluginFrame();
+                frame->setHostWindow(parentWidget);
+                m_frameImpl = frame;
+                m_frame = frame;
+            }
+            m_frame->addRef();
+            view->setFrame(m_frame);
+            m_frame->release();
+            m_editorView = view;
+            m_editorView->attached(x11WindowId, kPlatformTypeX11EmbedWindowID);
+            ViewRect rect;
+            m_editorView->getSize(&rect);
         }
-        m_frame->addRef();
-        view->setFrame(m_frame);
-        m_frame->release();
-        m_editorView = view;
-        m_editorView->attached(x11WindowId, kPlatformTypeX11EmbedWindowID);
-        ViewRect rect;
-        m_editorView->getSize(&rect);
+
+        sigaction(SIGSEGV, &oldSa2, nullptr);
+
+        if (s_editorCrashed) {
+            qWarning() << m_name << ": editor crashed (SEGV) during attach — disabling native editor";
+            m_editorCrashed = true;
+            // The view may be partially initialized; do not touch it.
+            m_editorView = nullptr;
+            if (m_frameImpl) {
+                delete static_cast<PluginFrame*>(m_frameImpl);
+                m_frameImpl = nullptr;
+                m_frame = nullptr;
+            }
+            return nullptr;
+        }
         return parentWindow;
     }
 

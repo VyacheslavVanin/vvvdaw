@@ -1,15 +1,9 @@
 #include "PluginManager.h"
+#include "VST3Scan.h"
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
-#include <pluginterfaces/vst/ivstcomponent.h>
-#include <pluginterfaces/base/ipluginbase.h>
-#include <public.sdk/source/vst/hosting/hostclasses.h>
 #include <lilv/lilv.h>
 #include <lv2/core/lv2.h>
 #include <filesystem>
-#include <fstream>
-#include <vector>
-#include <dlfcn.h>
-#include <cstring>
 #include <QDir>
 #include <QStandardPaths>
 #include <QFile>
@@ -18,78 +12,6 @@
 #include <QJsonObject>
 
 using namespace Steinberg;
-
-namespace {
-
-using namespace Steinberg::Vst;
-
-// ABI-independent UID discovery: scans the .so for a 16-byte chunk that
-// createInstance accepts as an IComponent. Used instead of getClassInfo*
-// because the installed plugins were built against older VST3 SDKs whose
-// PClassInfo layout mismatches the current headers (getClassInfo crashes).
-bool findVst3AudioProcessorUID(IPluginFactory* factory, const std::string& soPath, TUID outUID) {
-    memset(outUID, 0, 16);
-    std::ifstream file(soPath, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
-    auto sz = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<unsigned char> buf(sz);
-    file.read(reinterpret_cast<char*>(buf.data()), sz);
-
-    const char compIID[] = "\xE8\x31\xFF\x31\xF2\xD5\x43\x01\x92\x8E\xBB\xEE\x25\x69\x78\x02";
-
-    for (size_t i = 0; i + 16 <= buf.size(); i += 4) {
-        bool allZero = true;
-        for (int j = 0; j < 16; ++j) if (buf[i+j] != 0) { allZero = false; break; }
-        if (allZero) continue;
-
-        TUID tuid;
-        memcpy(tuid, buf.data() + i, 16);
-
-        void* obj = nullptr;
-        factory->createInstance(tuid, compIID, &obj);
-        if (obj) {
-            memcpy(outUID, tuid, 16);
-            IPluginBase* base = nullptr;
-            ((FUnknown*)obj)->queryInterface(IPluginBase::iid, (void**)&base);
-            if (base) base->release();
-            return true;
-        }
-    }
-    return false;
-}
-
-// Detects whether a VST3 bundle contains an instrument (a component with a
-// MIDI/event input bus) without relying on getClassInfo (ABI hazard).
-bool vst3BundleHasEventInput(const std::string& soPath) {
-    void* handle = dlopen(soPath.c_str(), RTLD_NOW | RTLD_LOCAL);
-    if (!handle) return false;
-    using GetFactoryFunc = Steinberg::IPluginFactory* (*)();
-    auto getFactory = reinterpret_cast<GetFactoryFunc>(dlsym(handle, "GetPluginFactory"));
-    IPluginFactory* factory = getFactory ? getFactory() : nullptr;
-    if (!factory) {
-        dlclose(handle);
-        return false;
-    }
-
-    bool isInstrument = false;
-    TUID uid;
-    if (findVst3AudioProcessorUID(factory, soPath, uid)) {
-        IComponent* comp = nullptr;
-        factory->createInstance(uid, IComponent::iid, (void**)&comp);
-        if (comp) {
-            Steinberg::Vst::HostApplication hostApp;
-            comp->initialize(&hostApp);
-            isInstrument = comp->getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kInput) > 0;
-            comp->terminate();
-            comp->release();
-        }
-    }
-    dlclose(handle);
-    return isInstrument;
-}
-
-} // namespace
 
 PluginManager::PluginManager() {
     m_lilvWorld = lilv_world_new();
@@ -115,15 +37,24 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
         fs::path fsDir(dir.toStdString());
         if (!fs::exists(fsDir)) continue;
 
-        for (auto& entry : fs::directory_iterator(fsDir)) {
+        std::vector<fs::path> bundles;
+        std::error_code ec;
+        for (auto it = fs::recursive_directory_iterator(fsDir, ec);
+             !ec && it != fs::recursive_directory_iterator();
+             it.increment(ec)) {
+            const auto& entry = *it;
             if (!entry.is_directory()) continue;
             if (entry.path().extension() != ".vst3") continue;
+            bundles.push_back(entry.path());
+            it.disable_recursion_pending();
+        }
 
-            QString bundlePath = QString::fromStdString(entry.path().string());
+        for (auto& bundle : bundles) {
+            QString bundlePath = QString::fromStdString(bundle.string());
             if (knownPaths.contains(bundlePath)) continue;
 
             fs::path soPath;
-            for (auto& sub : fs::recursive_directory_iterator(entry.path())) {
+            for (auto& sub : fs::recursive_directory_iterator(bundle)) {
                 if (sub.path().extension() == ".so") {
                     soPath = sub.path();
                     break;
@@ -141,9 +72,9 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
             dlclose(handle);
             if (!factory) continue;
 
-            bool isInstrument = vst3BundleHasEventInput(soPath.string());
+            bool isInstrument = VST3Scan::bundleHasEventInput(soPath.string());
 
-            std::string stem = entry.path().stem().string();
+            std::string stem = bundle.stem().string();
             PluginInfo pi;
             pi.name = QString::fromStdString(stem);
             pi.vendor = QString();
