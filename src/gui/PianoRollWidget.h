@@ -5,6 +5,9 @@
 #include <set>
 #include <vector>
 
+class QFocusEvent;
+class QHideEvent;
+
 class Project;
 class MidiClip;
 class MidiEvent;
@@ -22,6 +25,7 @@ public:
     int snapDiv() const { return m_snapDiv; }
     void setSnapDiv(int div);
     int selectedCount() const { return static_cast<int>(m_selectedNoteIds.size()); }
+    const std::set<int64_t>& selectedNotes() const { return m_selectedNoteIds; }
 
     void setPlayheadSample(int64_t sample) {
         if (m_playheadSample != sample) {
@@ -30,8 +34,16 @@ public:
         }
     }
 
+    void setDefaultVelocity(int v) { m_lastVelocity = v; }
+    int defaultVelocity() const { return m_lastVelocity; }
+
 signals:
     void playheadSetRequested(int64_t sample);
+    void notePreviewOn(int pitch, int velocity);
+    void notePreviewOff(int pitch);
+    void notesChanged();
+    void selectionChanged();
+    void zoomChanged(double pixelsPerTick);
 
 public:
     QSize sizeHint() const override;
@@ -44,10 +56,13 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     static constexpr int kKeysWidth = 56;
-    static constexpr int kRowHeight = 8;
+    static constexpr int kRowHeight = 12;
     static constexpr int kEdgeWidth = 6;
 
     struct NoteRect {
@@ -84,6 +99,11 @@ private:
     void duplicateSelection();
     void addNoteAt(const QPoint& pos);
 
+    // Piano-key note preview
+    void beginKeyPreview(const QPoint& pos);
+    void updateKeyPreview(int y);
+    void endKeyPreview();
+
     Project& m_project;
     UndoStack& m_undo;
     int m_trackIndex;
@@ -105,4 +125,7 @@ private:
     bool m_rubberBanding = false;
     QPoint m_rubberStart;
     QPoint m_rubberCurrent;
+
+    // Piano-key note preview
+    int m_keyPreviewPitch = -1;
 };

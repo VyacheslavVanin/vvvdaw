@@ -54,6 +54,7 @@ add_executable(vvvdaw
     src/gui/TrackViewWidget.cpp
     src/gui/PianoRollWidget.cpp
     src/gui/PianoRollWindow.cpp
+    src/gui/VelocityEditorWidget.cpp
     src/gui/WaveformPainter.cpp
     src/gui/TimelineRuler.cpp
     src/gui/MeasureRuler.cpp

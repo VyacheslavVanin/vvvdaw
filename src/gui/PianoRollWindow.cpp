@@ -1,5 +1,6 @@
 #include "PianoRollWindow.h"
 #include "PianoRollWidget.h"
+#include "VelocityEditorWidget.h"
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/MidiEvent.h"
@@ -9,7 +10,9 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QComboBox>
+#include <QSpinBox>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QCloseEvent>
 #include <QShortcut>
 
@@ -60,8 +63,25 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine&
         "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
     );
     toolbar->addWidget(snapCombo);
+
+    auto* velLabel = new QLabel("Velocity:", this);
+    velLabel->setStyleSheet("color: #aaa; font-size: 11px;");
+    toolbar->addWidget(velLabel);
+    auto* velSpin = new QSpinBox(this);
+    velSpin->setRange(1, 127);
+    velSpin->setValue(m_widget ? m_widget->defaultVelocity() : 100);
+    velSpin->setStyleSheet(
+        "QSpinBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 11px; padding: 1px 4px; }"
+        "QSpinBox::up-button, QSpinBox::down-button { width: 14px; background: #444; border: none; }"
+    );
+    toolbar->addWidget(velSpin);
     toolbar->addStretch();
     layout->addLayout(toolbar);
+
+    connect(velSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int v) {
+        if (m_widget) m_widget->setDefaultVelocity(v);
+    });
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -72,9 +92,50 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine&
     scrollArea->setWidget(m_widget);
     layout->addWidget(scrollArea, 1);
 
+    // Always-visible velocity editor, horizontally synced with the grid.
+    auto* velScroll = new QScrollArea(this);
+    velScroll->setWidgetResizable(true);
+    velScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    velScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_velocityEditor = new VelocityEditorWidget(m_project, undo, m_trackIndex, m_eventId, velScroll);
+    velScroll->setWidget(m_velocityEditor);
+    layout->addWidget(velScroll);
+
     connect(m_widget, &PianoRollWidget::playheadSetRequested, this, [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
         m_widget->setPlayheadSample(sample);
+    });
+
+    connect(m_widget, &PianoRollWidget::notePreviewOn, this,
+            [this](int pitch, int velocity) {
+        m_engine.previewNoteOn(m_trackIndex, pitch, velocity);
+    });
+    connect(m_widget, &PianoRollWidget::notePreviewOff, this,
+            [this](int pitch) {
+        m_engine.previewNoteOff(m_trackIndex, pitch);
+    });
+
+    // Keep the velocity editor in lockstep with the note grid.
+    connect(m_widget, &PianoRollWidget::notesChanged, this,
+            [this] { m_velocityEditor->reload(); });
+    connect(m_widget, &PianoRollWidget::selectionChanged, this,
+            [this] { m_velocityEditor->setSelection(m_widget->selectedNotes()); });
+    connect(m_widget, &PianoRollWidget::zoomChanged, this,
+            [this](double p) { m_velocityEditor->setPixelsPerTick(p); });
+
+    auto syncScroll = [this](QScrollBar* target, int value) {
+        if (m_syncingScroll) return;
+        m_syncingScroll = true;
+        target->setValue(value);
+        m_syncingScroll = false;
+    };
+    connect(scrollArea->horizontalScrollBar(), &QScrollBar::valueChanged, this,
+            [syncScroll, velScroll](int v) {
+        syncScroll(velScroll->horizontalScrollBar(), v);
+    });
+    connect(velScroll->horizontalScrollBar(), &QScrollBar::valueChanged, this,
+            [syncScroll, scrollArea](int v) {
+        syncScroll(scrollArea->horizontalScrollBar(), v);
     });
 
     connect(snapCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -85,10 +146,17 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine&
     resize(900, 720);
 }
 
-PianoRollWindow::~PianoRollWindow() = default;
+PianoRollWindow::~PianoRollWindow() {
+    // Release any preview note still held when the window is destroyed (e.g.
+    // app shutdown) so no note rings forever.
+    m_engine.cancelPreviewNotes(m_trackIndex);
+}
 
 bool PianoRollWindow::reload() {
-    return m_widget && m_widget->reload();
+    bool ok = m_widget && m_widget->reload();
+    if (m_velocityEditor)
+        m_velocityEditor->reload();
+    return ok;
 }
 
 void PianoRollWindow::setPlayheadSample(int64_t sample) {
@@ -97,6 +165,7 @@ void PianoRollWindow::setPlayheadSample(int64_t sample) {
 }
 
 void PianoRollWindow::closeEvent(QCloseEvent* event) {
+    m_engine.cancelPreviewNotes(m_trackIndex);
     emit windowClosed();
     QWidget::closeEvent(event);
 }

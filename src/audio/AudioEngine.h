@@ -38,7 +38,7 @@ public:
     static std::vector<DeviceInfo> enumerateOutputDevices() { return enumerateDevices(false); }
     static std::vector<DeviceInfo> enumerateDevices(bool input);
 
-    void setProject(Project* project) { m_project.store(project, std::memory_order_release); }
+    void setProject(Project* project);
 
     void setTransportState(vvvdaw::TransportState state);
     vvvdaw::TransportState transportState() const;
@@ -64,6 +64,13 @@ public:
 
     void refreshMidiOutputs();
     void panicMidi();
+
+    // Piano-roll key preview: note-ons are injected into the instrument / MIDI
+    // device the track routes to and sustained until the matching note-off
+    // (or cancelPreviewNotes) is delivered on the audio thread.
+    void previewNoteOn(int trackIndex, int pitch, int velocity);
+    void previewNoteOff(int trackIndex, int pitch);
+    void cancelPreviewNotes(int trackIndex = -1);
 
     static std::vector<MidiOutputManager::Device> enumerateMidiOutputDevices() {
         return MidiOutputManager::enumerateOutputDevices();
@@ -103,6 +110,7 @@ private:
     void processInstruments(Project* proj, unsigned long frameCount);
     void flushActiveMidiNotes(Project* proj, unsigned long frameCount);
     void releaseInstruments();
+    void injectPreviewMidi(Project* proj);
 
     void startPlayback();
     void stopPlayback();
@@ -132,6 +140,22 @@ private:
     std::vector<float> m_instrumentScratchR;
     MidiOutputManager m_midiOutput;
     std::set<int> m_openMidiDevices;
+
+    // Held piano-roll preview notes (GUI thread queues them, audio thread
+    // injects note-ons once and delivers note-offs).
+    struct PreviewHeldNote {
+        int trackIndex = -1;
+        uint8_t channel = 0;
+        uint8_t pitch = 0;
+        uint8_t velocity = 100;
+        int target = -1;
+        bool toInstrument = false;
+        bool noteOnSent = false;
+        bool offPending = false;
+    };
+    std::mutex m_previewMutex;
+    std::vector<PreviewHeldNote> m_previewHeld;
+    std::atomic<int> m_previewCount{0};
 
     struct ActiveMidiNote {
         int trackIndex = 0;

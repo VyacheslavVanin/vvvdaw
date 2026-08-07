@@ -63,12 +63,15 @@ bool PianoRollWidget::reload() {
     if (!clip()) {
         clearDragState();
         m_selectedNoteIds.clear();
+        emit selectionChanged();
         return false;
     }
     clearDragState();
     m_selectedNoteIds.clear();
     updateGeometry();
     update();
+    emit notesChanged();
+    emit selectionChanged();
     return true;
 }
 
@@ -162,6 +165,7 @@ void PianoRollWidget::selectNotesInRect(const QRect& rect, bool add) {
             m_selectedNoteIds.insert(nr.noteId);
     }
     update();
+    emit selectionChanged();
 }
 
 void PianoRollWidget::clearDragState() {
@@ -290,6 +294,7 @@ void PianoRollWidget::wheelEvent(QWheelEvent* event) {
         m_pixelsPerTick = std::clamp(m_pixelsPerTick * factor, 0.004, 2.0);
         updateGeometry();
         update();
+        emit zoomChanged(m_pixelsPerTick);
     } else if ((event->modifiers() & Qt::ShiftModifier) && delta != 0
                && !m_selectedNoteIds.empty()) {
         MidiClip* c = clip();
@@ -314,6 +319,7 @@ void PianoRollWidget::wheelEvent(QWheelEvent* event) {
                 m_project, m_trackIndex, m_eventId, std::move(changes)));
             updateGeometry();
             update();
+            emit notesChanged();
         }
     }
     event->accept();
@@ -332,6 +338,8 @@ void PianoRollWidget::duplicateSelection() {
             m_selectedNoteIds.insert(id);
     updateGeometry();
     update();
+    emit notesChanged();
+    emit selectionChanged();
 }
 
 void PianoRollWidget::beginNoteDrag(int noteId, const QPoint& pos, bool resize) {
@@ -354,12 +362,18 @@ void PianoRollWidget::beginNoteDrag(int noteId, const QPoint& pos, bool resize) 
 }
 
 void PianoRollWidget::mousePressEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton || event->position().x() < kKeysWidth) {
+    if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
     }
 
     QPoint pos(static_cast<int>(event->position().x()), static_cast<int>(event->position().y()));
+
+    if (pos.x() < kKeysWidth && pos.y() < 128 * kRowHeight + 4) {
+        beginKeyPreview(pos);
+        return;
+    }
+
     NoteRect nr = noteRectAt(pos.x(), pos.y());
     bool ctrl = (event->modifiers() & Qt::ControlModifier);
     bool shift = (event->modifiers() & Qt::ShiftModifier);
@@ -389,6 +403,7 @@ void PianoRollWidget::mousePressEvent(QMouseEvent* event) {
                 beginNoteDrag(nr.noteId, pos, nr.rightEdge);
             }
             update();
+            emit selectionChanged();
             return;
         }
 
@@ -398,6 +413,7 @@ void PianoRollWidget::mousePressEvent(QMouseEvent* event) {
         }
         beginNoteDrag(nr.noteId, pos, nr.rightEdge);
         update();
+        emit selectionChanged();
         return;
     }
 
@@ -408,11 +424,42 @@ void PianoRollWidget::mousePressEvent(QMouseEvent* event) {
     if (!shift)
         m_selectedNoteIds.clear();
     update();
+    emit selectionChanged();
+}
+
+void PianoRollWidget::beginKeyPreview(const QPoint& pos) {
+    m_keyPreviewPitch = std::clamp(yToPitch(pos.y()), 0, 127);
+    emit notePreviewOn(m_keyPreviewPitch, m_lastVelocity);
+    grabMouse();
+    setCursor(Qt::SizeVerCursor);
+}
+
+void PianoRollWidget::updateKeyPreview(int y) {
+    if (m_keyPreviewPitch < 0) return;
+    int newPitch = std::clamp(yToPitch(y), 0, 127);
+    if (newPitch == m_keyPreviewPitch) return;
+    emit notePreviewOff(m_keyPreviewPitch);
+    m_keyPreviewPitch = newPitch;
+    emit notePreviewOn(m_keyPreviewPitch, m_lastVelocity);
+}
+
+void PianoRollWidget::endKeyPreview() {
+    if (m_keyPreviewPitch >= 0) {
+        emit notePreviewOff(m_keyPreviewPitch);
+        m_keyPreviewPitch = -1;
+    }
+    releaseMouse(); // no-op when no grab is held
+    unsetCursor();
 }
 
 void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
     int mx = static_cast<int>(event->position().x());
     int my = static_cast<int>(event->position().y());
+
+    if (m_keyPreviewPitch >= 0) {
+        updateKeyPreview(my);
+        return;
+    }
 
     if (m_rubberBanding) {
         m_rubberCurrent = QPoint(mx, my);
@@ -455,6 +502,7 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
                     m_project, m_trackIndex, m_eventId, std::move(changes)));
                 updateGeometry();
                 update();
+                emit notesChanged();
             }
         } else { // Resize
             std::vector<NoteResizeChange> changes;
@@ -478,6 +526,7 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
                     m_project, m_trackIndex, m_eventId, std::move(changes)));
                 updateGeometry();
                 update();
+                emit notesChanged();
             }
         }
         return;
@@ -492,6 +541,10 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
 
 void PianoRollWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        if (m_keyPreviewPitch >= 0) {
+            endKeyPreview();
+            return;
+        }
         if (m_rubberBanding) {
             m_rubberBanding = false;
             bool isClick = (m_rubberCurrent - m_rubberStart).manhattanLength() < 3;
@@ -515,6 +568,21 @@ void PianoRollWidget::mouseReleaseEvent(QMouseEvent* event) {
     QWidget::mouseReleaseEvent(event);
 }
 
+void PianoRollWidget::leaveEvent(QEvent* event) {
+    endKeyPreview();
+    QWidget::leaveEvent(event);
+}
+
+void PianoRollWidget::focusOutEvent(QFocusEvent* event) {
+    endKeyPreview();
+    QWidget::focusOutEvent(event);
+}
+
+void PianoRollWidget::hideEvent(QHideEvent* event) {
+    endKeyPreview();
+    QWidget::hideEvent(event);
+}
+
 void PianoRollWidget::addNoteAt(const QPoint& pos) {
     MidiClip* c = clip();
     if (!c || pos.x() < kKeysWidth) return;
@@ -536,6 +604,8 @@ void PianoRollWidget::addNoteAt(const QPoint& pos) {
     }
     updateGeometry();
     update();
+    emit notesChanged();
+    emit selectionChanged();
 }
 
 void PianoRollWidget::keyPressEvent(QKeyEvent* event) {
@@ -549,6 +619,8 @@ void PianoRollWidget::keyPressEvent(QKeyEvent* event) {
             m_selectedNoteIds.clear();
             updateGeometry();
             update();
+            emit notesChanged();
+            emit selectionChanged();
         }
         return;
     }

@@ -128,6 +128,7 @@ bool AudioEngine::init(const Settings& settings) {
 void AudioEngine::shutdown() {
     stopRecording();
     stopPlayback();
+    cancelPreviewNotes();
     if (m_stream) {
         if (Pa_IsStreamActive(m_stream))
             Pa_StopStream(m_stream);
@@ -316,7 +317,7 @@ void AudioEngine::processAudio(const float* input, float* output,
     }
 
     if ((state == TransportState::Stopped || state == TransportState::Paused)
-        && input && inCh > 0) {
+        && ((input && inCh > 0) || m_previewCount.load(std::memory_order_acquire) > 0)) {
         auto* proj = m_project.load(std::memory_order_acquire);
         if (!proj) return;
         std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
@@ -822,11 +823,14 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         ++trackIndex;
     }
 
-    if (!monitoringOnly)
+    if (!monitoringOnly) {
         scheduleMidiTracks(proj, frameCount, pos);
-
-    if (!monitoringOnly)
+        injectPreviewMidi(proj);
         processInstruments(proj, frameCount);
+    } else if (m_previewCount.load(std::memory_order_acquire) > 0) {
+        injectPreviewMidi(proj);
+        processInstruments(proj, frameCount);
+    }
 
     if (m_metronomeEnabled && !monitoringOnly) {
         int metroIdx = 1;
@@ -1079,6 +1083,115 @@ void AudioEngine::refreshMidiOutputs() {
 void AudioEngine::panicMidi() {
     for (int id : m_openMidiDevices)
         m_midiOutput.sendAllNotesOff(id);
+}
+
+void AudioEngine::setProject(Project* project) {
+    // Held preview notes target indices into the previous project; deliver
+    // their note-offs (or drop them) before switching.
+    cancelPreviewNotes();
+    m_project.store(project, std::memory_order_release);
+}
+
+void AudioEngine::previewNoteOn(int trackIndex, int pitch, int velocity) {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj || trackIndex < 0 || trackIndex >= static_cast<int>(proj->tracks().size()))
+        return;
+    const auto& track = proj->tracks()[trackIndex];
+    if (track.type() != Track::Type::Midi) return;
+
+    int instIdx = track.instrumentIndex();
+    bool toInstrument = instIdx >= 0 && instIdx < static_cast<int>(proj->instruments().size());
+    int target = toInstrument ? instIdx : track.midiOutputDeviceId();
+    if (!toInstrument && target < 0) return;
+
+    std::lock_guard<std::mutex> lock(m_previewMutex);
+    for (auto& n : m_previewHeld) {
+        if (n.trackIndex == trackIndex && n.pitch == static_cast<uint8_t>(pitch)) {
+            n.velocity = static_cast<uint8_t>(velocity);
+            return;
+        }
+    }
+    PreviewHeldNote n;
+    n.trackIndex = trackIndex;
+    n.channel = static_cast<uint8_t>(trackIndex % 16);
+    n.pitch = static_cast<uint8_t>(pitch);
+    n.velocity = static_cast<uint8_t>(velocity);
+    n.target = target;
+    n.toInstrument = toInstrument;
+    m_previewHeld.push_back(n);
+    ++m_previewCount;
+}
+
+void AudioEngine::previewNoteOff(int trackIndex, int pitch) {
+    std::lock_guard<std::mutex> lock(m_previewMutex);
+    for (auto& n : m_previewHeld) {
+        if (n.trackIndex == trackIndex && n.pitch == static_cast<uint8_t>(pitch)
+            && !n.offPending) {
+            n.offPending = true;
+            return;
+        }
+    }
+}
+
+void AudioEngine::cancelPreviewNotes(int trackIndex) {
+    std::lock_guard<std::mutex> lock(m_previewMutex);
+    for (auto& n : m_previewHeld) {
+        if (trackIndex < 0 || n.trackIndex == trackIndex)
+            n.offPending = true;
+    }
+}
+
+void AudioEngine::injectPreviewMidi(Project* proj) {
+    std::lock_guard<std::mutex> lock(m_previewMutex);
+    if (m_previewHeld.empty()) return;
+
+    int instCount = static_cast<int>(proj->instruments().size());
+    for (auto& n : m_previewHeld) {
+        if (n.offPending) {
+            if (n.toInstrument) {
+                if (n.target >= 0 && n.target < instCount
+                    && n.target < static_cast<int>(m_instrumentMidi.size())) {
+                    MidiMessage m;
+                    m.sampleOffset = 0;
+                    m.status = static_cast<uint8_t>(0x80 | n.channel);
+                    m.data1 = n.pitch;
+                    m.data2 = 0;
+                    m_instrumentMidi[n.target].push_back(m);
+                }
+            } else if (n.target >= 0) {
+                m_midiOutput.send(n.target, static_cast<uint8_t>(0x80 | n.channel),
+                                  n.pitch, 0);
+            }
+            continue;
+        }
+        if (n.noteOnSent) continue;
+
+        if (n.toInstrument) {
+            if (n.target >= 0 && n.target < instCount
+                && n.target < static_cast<int>(m_instrumentMidi.size())) {
+                MidiMessage m;
+                m.sampleOffset = 0;
+                m.status = static_cast<uint8_t>(0x90 | n.channel);
+                m.data1 = n.pitch;
+                m.data2 = n.velocity;
+                m_instrumentMidi[n.target].push_back(m);
+                n.noteOnSent = true;
+            }
+        } else if (n.target >= 0) {
+            m_midiOutput.send(n.target, static_cast<uint8_t>(0x90 | n.channel),
+                              n.pitch, n.velocity);
+            n.noteOnSent = true;
+        } else {
+            n.offPending = true; // nowhere to play it: drop
+        }
+    }
+
+    m_previewHeld.erase(
+        std::remove_if(m_previewHeld.begin(), m_previewHeld.end(),
+                       [](const PreviewHeldNote& n) { return n.offPending; }),
+        m_previewHeld.end());
+    if (m_previewHeld.empty())
+        m_previewCount.store(0);
 }
 
 void AudioEngine::generateClick(Project* proj, float* buffer, unsigned long frameCount,

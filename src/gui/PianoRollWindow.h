@@ -6,6 +6,7 @@
 class Project;
 class UndoStack;
 class PianoRollWidget;
+class VelocityEditorWidget;
 class AudioEngine;
 
 class PianoRollWindow : public QWidget {
@@ -33,4 +34,6 @@ private:
     int m_trackIndex;
     int64_t m_eventId;
     PianoRollWidget* m_widget = nullptr;
+    VelocityEditorWidget* m_velocityEditor = nullptr;
+    bool m_syncingScroll = false;
 };
