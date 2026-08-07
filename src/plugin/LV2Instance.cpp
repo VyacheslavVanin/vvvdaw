@@ -869,7 +869,8 @@ void* LV2Instance::createEditor(void* parentWindow) {
     if (!m_uiHost->open(pluginUri.toUtf8().constData(),
                         m_uiBundlePath.toUtf8().constData(),
                         m_uiBinaryPath.toUtf8().constData(),
-                        &m_uridMap, m_options, m_instance, parentXid)) {
+                        &m_uridMap, m_options,
+                        lilv_instance_get_handle(m_instance), parentXid)) {
         qWarning() << m_name << ": LV2UIHost::open failed";
         m_uiHost.reset();
         m_uiContainer = nullptr;

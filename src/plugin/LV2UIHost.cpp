@@ -2,6 +2,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+#include <lv2/instance-access/instance-access.h>
 #include <dlfcn.h>
 #include <cstring>
 #include <cstdio>
@@ -46,7 +47,8 @@ struct LV2UIHost::Impl {
     LV2_Feature parentFeature = {};
     LV2_Feature optionsFeature = {};
     LV2_Feature uridMapFeature = {};
-    const LV2_Feature* features[7] = {};
+    LV2_Feature instanceAccessFeature = {};
+    const LV2_Feature* features[8] = {};
 
     LV2UIHost* owner = nullptr;
 
@@ -244,6 +246,9 @@ bool LV2UIHost::open(const char* pluginUri, const char* bundlePath, const char* 
     m_impl->uridMapFeature.URI = LV2_URID__map;
     m_impl->uridMapFeature.data = uridMap;
 
+    m_impl->instanceAccessFeature.URI = LV2_INSTANCE_ACCESS_URI;
+    m_impl->instanceAccessFeature.data = pluginHandle;
+
     int idx = 0;
     m_impl->features[idx++] = &m_impl->parentFeature;
     m_impl->features[idx++] = &m_impl->portMapFeature;
@@ -251,6 +256,7 @@ bool LV2UIHost::open(const char* pluginUri, const char* bundlePath, const char* 
     m_impl->features[idx++] = &m_impl->touchFeature;
     m_impl->features[idx++] = &m_impl->optionsFeature;
     m_impl->features[idx++] = &m_impl->uridMapFeature;
+    m_impl->features[idx++] = &m_impl->instanceAccessFeature;
     m_impl->features[idx] = nullptr;
 
     m_impl->widget = nullptr;
