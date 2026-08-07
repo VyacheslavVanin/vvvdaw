@@ -15,6 +15,27 @@
 #include <QScrollBar>
 #include <QCloseEvent>
 #include <QShortcut>
+#include <QWheelEvent>
+
+namespace {
+// Forwards wheel events that hit the (non-vertically-scrollable) velocity
+// lane to the note grid's scroll area so the whole piano roll scrolls.
+class WheelForwardFilter : public QObject {
+public:
+    WheelForwardFilter(QObject* target, QObject* parent)
+        : QObject(parent), m_target(target) {}
+protected:
+    bool eventFilter(QObject* obj, QEvent* ev) override {
+        if (ev->type() == QEvent::Wheel && !ev->isAccepted()) {
+            QCoreApplication::sendEvent(m_target, ev);
+            return true;
+        }
+        return QObject::eventFilter(obj, ev);
+    }
+private:
+    QObject* m_target;
+};
+} // namespace
 
 PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine& engine,
                                  int trackIndex, int64_t eventId, QWidget* parent)
@@ -100,6 +121,10 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine&
     m_velocityEditor = new VelocityEditorWidget(m_project, undo, m_trackIndex, m_eventId, velScroll);
     velScroll->setWidget(m_velocityEditor);
     layout->addWidget(velScroll);
+
+    // Scroll the grid when the wheel is used over the velocity lane.
+    velScroll->viewport()->installEventFilter(
+        new WheelForwardFilter(scrollArea->viewport(), this));
 
     connect(m_widget, &PianoRollWidget::playheadSetRequested, this, [this](int64_t sample) {
         m_engine.setPlayPosition(sample);

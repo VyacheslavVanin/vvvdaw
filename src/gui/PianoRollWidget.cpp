@@ -295,34 +295,42 @@ void PianoRollWidget::wheelEvent(QWheelEvent* event) {
         updateGeometry();
         update();
         emit zoomChanged(m_pixelsPerTick);
-    } else if ((event->modifiers() & Qt::ShiftModifier) && delta != 0
-               && !m_selectedNoteIds.empty()) {
+        event->accept();
+        return;
+    }
+    if ((event->modifiers() & Qt::ShiftModifier) && delta != 0
+        && !m_selectedNoteIds.empty()) {
         MidiClip* c = clip();
-        if (!c) return;
-        int step = (delta > 0) ? kVelocityStep : -kVelocityStep;
-        std::vector<NoteVelocityChange> changes;
-        for (int64_t id : m_selectedNoteIds) {
-            MidiNote* note = c->findNote(id);
-            if (!note) continue;
-            NoteVelocityChange ch;
-            ch.noteId = id;
-            ch.oldVelocity = note->velocity;
-            ch.newVelocity = std::clamp(note->velocity + step, 1, 127);
-            if (ch.newVelocity != ch.oldVelocity) {
-                note->velocity = ch.newVelocity;
-                changes.push_back(ch);
+        if (c) {
+            int step = (delta > 0) ? kVelocityStep : -kVelocityStep;
+            std::vector<NoteVelocityChange> changes;
+            for (int64_t id : m_selectedNoteIds) {
+                MidiNote* note = c->findNote(id);
+                if (!note) continue;
+                NoteVelocityChange ch;
+                ch.noteId = id;
+                ch.oldVelocity = note->velocity;
+                ch.newVelocity = std::clamp(note->velocity + step, 1, 127);
+                if (ch.newVelocity != ch.oldVelocity) {
+                    note->velocity = ch.newVelocity;
+                    changes.push_back(ch);
+                }
+            }
+            if (!changes.empty()) {
+                c->bumpRevision();
+                m_undo.execute(std::make_unique<SetNotesVelocityCommand>(
+                    m_project, m_trackIndex, m_eventId, std::move(changes)));
+                updateGeometry();
+                update();
+                emit notesChanged();
             }
         }
-        if (!changes.empty()) {
-            c->bumpRevision();
-            m_undo.execute(std::make_unique<SetNotesVelocityCommand>(
-                m_project, m_trackIndex, m_eventId, std::move(changes)));
-            updateGeometry();
-            update();
-            emit notesChanged();
-        }
+        event->accept();
+        return;
     }
-    event->accept();
+    // Plain wheel: let the enclosing scroll area scroll (vertically, or
+    // horizontally with Shift when nothing is selected).
+    event->ignore();
 }
 
 void PianoRollWidget::duplicateSelection() {
