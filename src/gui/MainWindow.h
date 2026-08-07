@@ -50,6 +50,7 @@ private:
     void pushCommand(std::unique_ptr<class UndoCommand> cmd);
     void performUndo();
     void performRedo();
+    void toggleSnapToGrid();
     void openPluginEditor(PluginInstance* plugin);
     void openPianoRoll(int trackIndex, int64_t eventId);
     void resyncPianoRollWindows();

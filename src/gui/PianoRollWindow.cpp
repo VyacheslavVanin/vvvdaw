@@ -63,6 +63,11 @@ PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine&
     auto* redoShortcut = new QShortcut(QKeySequence::Redo, this);
     connect(redoShortcut, &QShortcut::activated, this, [this] { emit redoRequested(); });
 
+    // S toggles snap-to-grid (routed through the main window to keep all UIs in sync).
+    auto* snapShortcut = new QShortcut(QKeySequence(Qt::Key_S), this);
+    connect(snapShortcut, &QShortcut::activated, this,
+            [this] { emit toggleSnapRequested(); });
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);

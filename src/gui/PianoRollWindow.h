@@ -27,6 +27,7 @@ signals:
     void windowClosed();
     void undoRequested();
     void redoRequested();
+    void toggleSnapRequested();
 
 private:
     Project& m_project;

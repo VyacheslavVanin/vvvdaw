@@ -621,6 +621,9 @@ void MainWindow::setupTransportConnections() {
         refreshTrackViews();
     });
 
+    auto* snapShortcut = new QShortcut(QKeySequence(Qt::Key_S), this);
+    connect(snapShortcut, &QShortcut::activated, this, &MainWindow::toggleSnapToGrid);
+
     connect(m_transportPanel, &TransportPanel::forwardClicked, this, [this] {
         int64_t maxEnd = 0;
         for (const auto& track : m_project.tracks()) {
@@ -711,6 +714,12 @@ void MainWindow::performRedo() {
         if (m_instrumentPanel->isVisible())
             m_instrumentPanel->rebuild();
     }
+}
+
+void MainWindow::toggleSnapToGrid() {
+    // Route through the transport panel so the button state, the project
+    // flag, track views and rulers all stay in sync.
+    m_transportPanel->setSnapToGrid(!m_project.snapToGrid());
 }
 
 void MainWindow::closeAllPluginWindows() {
@@ -1480,6 +1489,7 @@ void MainWindow::openPianoRoll(int trackIndex, int64_t eventId) {
     });
     connect(window, &PianoRollWindow::undoRequested, this, &MainWindow::performUndo);
     connect(window, &PianoRollWindow::redoRequested, this, &MainWindow::performRedo);
+    connect(window, &PianoRollWindow::toggleSnapRequested, this, &MainWindow::toggleSnapToGrid);
     window->show();
 }
 
