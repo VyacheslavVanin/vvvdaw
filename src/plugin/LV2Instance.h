@@ -11,6 +11,7 @@
 #include <lv2/log/log.h>
 #include <lv2/ui/ui.h>
 #include <lv2/midi/midi.h>
+#include <lv2/state/state.h>
 #include <lv2/core/lv2.h>
 #include <memory>
 class LV2UIHost;
@@ -56,6 +57,9 @@ public:
     void setStringParameter(int index, const QString& value) override;
     QString parameterPropertyUri(int index) const override;
 
+    QString uriForUrid(uint32_t urid) const;
+    void applyStateRestore();
+
     bool hasEditor() const override;
     void* createEditor(void* parentWindow) override;
     void destroyEditor() override;
@@ -72,6 +76,21 @@ public:
 
 private:
     static LV2_URID uridMapCallback(LV2_URID_Map_Handle handle, const char* uri);
+
+    struct StateStoreCtx {
+        const LV2Instance* inst;
+        QJsonArray* arr;
+    };
+    struct StateRetrieveCtx {
+        LV2Instance* inst;
+    };
+    static LV2_State_Status stateStoreCallback(LV2_State_Handle handle,
+                                               uint32_t key, const void* value,
+                                               size_t size, uint32_t type,
+                                               uint32_t flags);
+    static const void* stateRetrieveCallback(LV2_State_Handle handle,
+                                             uint32_t key, size_t* size,
+                                             uint32_t* type, uint32_t* flags);
 
     bool m_enabled = true;
     bool m_active = false;
@@ -148,6 +167,7 @@ private:
     const LV2_Feature* m_features[5] = { &m_uridMapFeature, &m_optionsFeature, &m_workerScheduleFeature, &m_logFeature, nullptr };
 
     std::vector<std::pair<std::string, LV2_URID>> m_uridCache;
+    mutable std::mutex m_uridMutex;
 
     // Patch/atom URIDs
     LV2_URID m_uridAtomPath = 0;
@@ -164,6 +184,18 @@ private:
     // String/path parameter storage
     std::map<int, QString> m_stringParams;
     std::map<int, LV2_URID> m_portPropertyURIDs;
+
+    // LV2 state extension (http://lv2plug.in/ns/ext/state): per-instance
+    // plugin state (e.g. drumgizmo stores its full config as an atom:Chunk).
+    struct StoredStateProperty {
+        QString keyUri;
+        QByteArray value;
+        QString typeUri;
+        uint32_t flags = 0;
+    };
+    std::vector<StoredStateProperty> m_pendingRestore;
+    bool m_hasPendingRestore = false;
+    mutable std::mutex m_restoreMutex;
 
     // Pending patch operations (forged in process() just before run())
     bool m_pendingPatchGet = false;

@@ -47,6 +47,10 @@ void LV2Instance::buildPortSymbolMap() {
 
 LV2_URID LV2Instance::uridMapCallback(LV2_URID_Map_Handle handle, const char* uri) {
     auto* inst = static_cast<LV2Instance*>(handle);
+    // m_uridCache is touched both by the audio thread (LV2_Atom_Forge in
+    // process()) and the GUI thread (state save/restore, UI), so it must be
+    // protected against concurrent push/iterate heap corruption.
+    std::lock_guard<std::mutex> lock(inst->m_uridMutex);
     for (auto& [u, id] : inst->m_uridCache) {
         if (u == uri) return id;
     }
@@ -574,6 +578,13 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
     m_pendingPatchGet = false;
     m_pendingPatchSet = false;
 
+    // Apply a queued state restore (set on the GUI thread while the plugin
+    // was running) on the audio thread, before run(). LV2 state restore is in
+    // the "Instantiation" threading class and must not run concurrently with
+    // run(), so this must happen here rather than on the GUI thread.
+    if (m_hasPendingRestore)
+        applyStateRestore();
+
     lilv_instance_run(m_instance, samples);
 
     // Mono plugin: duplicate the single output channel so downstream mixing
@@ -772,6 +783,7 @@ QString LV2Instance::parameterPropertyUri(int index) const {
     auto it = m_portPropertyURIDs.find(index);
     if (it == m_portPropertyURIDs.end()) return {};
     // Reverse-lookup the URID to URI string
+    std::lock_guard<std::mutex> lock(m_uridMutex);
     for (auto& [uri, id] : m_uridCache) {
         if (id == it->second)
             return QString::fromStdString(uri);
@@ -944,6 +956,23 @@ QJsonObject LV2Instance::stateToJson() const {
     }
     json["stringParams"] = strParams;
 
+    // Capture plugin state through the LV2 State extension. Some plugins
+    // (e.g. DrumGizmo) keep all of their settings internally and only expose
+    // them via state:interface (stored as atom:Chunk), not through control
+    // ports or patch messages.
+    QJsonArray stateArr;
+    if (m_instance) {
+        const LV2_Descriptor* desc = lilv_instance_get_descriptor(m_instance);
+        auto* stateIface = static_cast<const LV2_State_Interface*>(
+            desc->extension_data(LV2_STATE__interface));
+        if (stateIface && stateIface->save) {
+            StateStoreCtx ctx{ this, &stateArr };
+            stateIface->save(lilv_instance_get_handle(m_instance),
+                             stateStoreCallback, &ctx, 0, nullptr);
+        }
+    }
+    json["lv2State"] = stateArr;
+
     return json;
 }
 
@@ -972,4 +1001,102 @@ void LV2Instance::stateFromJson(const QJsonObject& json) {
             sendPatchSet(idx, val, true);
         }
     }
+
+    if (json.contains("lv2State")) {
+        QJsonArray stateArr = json["lv2State"].toArray();
+        {
+            std::lock_guard<std::mutex> lock(m_restoreMutex);
+            m_pendingRestore.clear();
+            for (auto v : stateArr) {
+                QJsonObject obj = v.toObject();
+                StoredStateProperty prop;
+                prop.keyUri = obj["key"].toString();
+                prop.typeUri = obj["type"].toString();
+                prop.flags = static_cast<uint32_t>(obj["flags"].toInt(0));
+                prop.value = QByteArray::fromBase64(obj["value"].toString().toLatin1());
+                if (!prop.keyUri.isEmpty() && !prop.value.isEmpty())
+                    m_pendingRestore.push_back(std::move(prop));
+            }
+            m_hasPendingRestore = !m_pendingRestore.empty();
+        }
+    }
+
+    // restore() is in the LV2 "Instantiation" threading class and must not
+    // run concurrently with run() on the audio thread. Apply directly when
+    // the plugin is not running; otherwise the audio thread picks it up in
+    // process() just before run().
+    if (m_hasPendingRestore && !m_active)
+        applyStateRestore();
+}
+
+QString LV2Instance::uriForUrid(uint32_t urid) const {
+    std::lock_guard<std::mutex> lock(m_uridMutex);
+    for (auto& [uri, id] : m_uridCache)
+        if (id == urid)
+            return QString::fromStdString(uri);
+    return {};
+}
+
+LV2_State_Status LV2Instance::stateStoreCallback(LV2_State_Handle handle,
+                                                 uint32_t key,
+                                                 const void* value,
+                                                 size_t size,
+                                                 uint32_t type,
+                                                 uint32_t flags) {
+    auto* ctx = static_cast<StateStoreCtx*>(handle);
+    if (!value || size == 0) return LV2_STATE_SUCCESS;
+    QString keyUri = ctx->inst->uriForUrid(key);
+    if (keyUri.isEmpty()) return LV2_STATE_SUCCESS;
+
+    QJsonObject obj;
+    obj["key"] = keyUri;
+    obj["type"] = ctx->inst->uriForUrid(type);
+    obj["flags"] = static_cast<int>(flags);
+    obj["value"] = QString::fromLatin1(
+        QByteArray(static_cast<const char*>(value), static_cast<int>(size)).toBase64());
+    ctx->arr->append(obj);
+    return LV2_STATE_SUCCESS;
+}
+
+const void* LV2Instance::stateRetrieveCallback(LV2_State_Handle handle,
+                                               uint32_t key,
+                                               size_t* size,
+                                               uint32_t* type,
+                                               uint32_t* flags) {
+    auto* ctx = static_cast<StateRetrieveCtx*>(handle);
+    QString keyUri = ctx->inst->uriForUrid(key);
+    if (keyUri.isEmpty()) return nullptr;
+
+    for (auto& p : ctx->inst->m_pendingRestore) {
+        if (p.keyUri == keyUri) {
+            if (size) *size = p.value.size();
+            if (type) {
+                *type = p.typeUri.isEmpty() ? 0
+                    : ctx->inst->uridMapCallback(ctx->inst, p.typeUri.toUtf8().constData());
+            }
+            if (flags) *flags = p.flags;
+            return p.value.constData();
+        }
+    }
+    return nullptr;
+}
+
+void LV2Instance::applyStateRestore() {
+    std::lock_guard<std::mutex> lock(m_restoreMutex);
+    if (!m_instance || m_pendingRestore.empty()) {
+        m_hasPendingRestore = false;
+        return;
+    }
+
+    const LV2_Descriptor* desc = lilv_instance_get_descriptor(m_instance);
+    auto* stateIface = static_cast<const LV2_State_Interface*>(
+        desc->extension_data(LV2_STATE__interface));
+    if (stateIface && stateIface->restore) {
+        StateRetrieveCtx ctx{ this };
+        stateIface->restore(lilv_instance_get_handle(m_instance),
+                            stateRetrieveCallback, &ctx, 0, nullptr);
+    }
+
+    m_pendingRestore.clear();
+    m_hasPendingRestore = false;
 }
