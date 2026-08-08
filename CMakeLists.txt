@@ -17,11 +17,67 @@ pkg_check_modules(SOUNDTOUCH REQUIRED IMPORTED_TARGET soundtouch)
 pkg_check_modules(RTMIDI IMPORTED_TARGET rtmidi)
 find_package(X11 REQUIRED)
 
-add_executable(vvvdaw
-    resources.qrc
-    src/main.cpp
+set(APP_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# --- Static libraries (layered: core -> midi -> plugin -> model -> commands/audio -> gui) ---
+
+add_library(vvvdaw_core STATIC
     src/core/Settings.cpp
     src/core/UndoStack.cpp
+)
+target_include_directories(vvvdaw_core PUBLIC ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw_core PUBLIC Qt6::Core)
+
+add_library(vvvdaw_midi STATIC
+    src/midi/MidiOutputManager.cpp
+)
+target_include_directories(vvvdaw_midi PUBLIC ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw_midi PUBLIC vvvdaw_core)
+if(RTMIDI_FOUND)
+    target_compile_definitions(vvvdaw_midi PUBLIC HAVE_RTMIDI=1)
+    target_link_libraries(vvvdaw_midi PUBLIC PkgConfig::RTMIDI)
+endif()
+
+add_library(vvvdaw_plugin STATIC
+    src/plugin/LV2Instance.cpp
+    src/plugin/LV2UIHost.cpp
+    src/plugin/PluginChain.cpp
+    src/plugin/PluginManager.cpp
+    src/plugin/VST3Instance.cpp
+)
+target_include_directories(vvvdaw_plugin PUBLIC ${APP_INCLUDE_DIRS} /usr/include/vst3sdk)
+target_link_directories(vvvdaw_plugin PUBLIC /usr/lib/x86_64-linux-gnu/vst3sdk)
+target_link_libraries(vvvdaw_plugin PUBLIC
+    vvvdaw_midi
+    Qt6::Widgets
+    PkgConfig::LILV
+    PkgConfig::SORD
+    PkgConfig::SRATOM
+    X11::X11
+    -Wl,--start-group
+    sdk_hosting
+    sdk_common
+    pluginterfaces
+    base
+    -Wl,--end-group
+    dl
+)
+
+add_library(vvvdaw_model STATIC
+    src/model/AudioClip.cpp
+    src/model/AudioEvent.cpp
+    src/model/MidiClip.cpp
+    src/model/MidiEvent.cpp
+    src/model/Track.cpp
+    src/model/Project.cpp
+)
+target_include_directories(vvvdaw_model PUBLIC ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw_model PUBLIC
+    vvvdaw_plugin
+    PkgConfig::SNDFILE
+)
+
+add_library(vvvdaw_commands STATIC
     src/commands/TrackCommands.cpp
     src/commands/BusCommands.cpp
     src/commands/ProjectCommands.cpp
@@ -30,22 +86,29 @@ add_executable(vvvdaw
     src/commands/InstrumentCommands.cpp
     src/commands/PluginCommands.cpp
     src/commands/SnapshotCommand.cpp
+)
+target_include_directories(vvvdaw_commands PUBLIC ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw_commands PUBLIC
+    vvvdaw_model
+    vvvdaw_plugin
+)
+
+add_library(vvvdaw_audio STATIC
     src/audio/AudioEngine.cpp
     src/audio/RecordingManager.cpp
     src/audio/StreamingManager.cpp
     src/audio/TimeStretch.cpp
-    src/model/AudioClip.cpp
-    src/model/AudioEvent.cpp
-    src/model/MidiClip.cpp
-    src/model/MidiEvent.cpp
-    src/model/Track.cpp
-    src/model/Project.cpp
-    src/midi/MidiOutputManager.cpp
-    src/plugin/VST3Instance.cpp
-    src/plugin/LV2Instance.cpp
-    src/plugin/LV2UIHost.cpp
-    src/plugin/PluginChain.cpp
-    src/plugin/PluginManager.cpp
+)
+target_include_directories(vvvdaw_audio PUBLIC ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw_audio PUBLIC
+    vvvdaw_model
+    vvvdaw_plugin
+    PkgConfig::PORTAUDIO
+    PkgConfig::SNDFILE
+    PkgConfig::SOUNDTOUCH
+)
+
+add_library(vvvdaw_gui STATIC
     src/gui/MainWindow.cpp
     src/gui/TransportPanel.cpp
     src/gui/TrackPanelWidget.cpp
@@ -65,37 +128,35 @@ add_executable(vvvdaw
     src/gui/PluginParameterWidget.cpp
     src/gui/RotaryKnob.cpp
 )
-
-target_include_directories(vvvdaw PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    /usr/include/vst3sdk
-)
-
-target_link_directories(vvvdaw PRIVATE
-    /usr/lib/x86_64-linux-gnu/vst3sdk
-)
-
-target_link_libraries(vvvdaw PRIVATE
+target_include_directories(vvvdaw_gui PUBLIC ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw_gui PUBLIC
+    vvvdaw_commands
+    vvvdaw_audio
+    vvvdaw_model
+    vvvdaw_plugin
     Qt6::Widgets
-    PkgConfig::PORTAUDIO
-    PkgConfig::SNDFILE
-    PkgConfig::LILV
-    PkgConfig::SORD
-    PkgConfig::SRATOM
-    PkgConfig::SOUNDTOUCH
-    X11::X11
-    -Wl,--start-group
-    sdk_hosting
-    sdk_common
-    pluginterfaces
-    base
-    -Wl,--end-group
-    dl
 )
 
-if(RTMIDI_FOUND)
-    target_compile_definitions(vvvdaw PRIVATE HAVE_RTMIDI=1)
-    target_link_libraries(vvvdaw PRIVATE PkgConfig::RTMIDI)
-endif()
+# --- Application ---
 
+add_executable(vvvdaw
+    resources.qrc
+    src/main.cpp
+)
+target_include_directories(vvvdaw PRIVATE ${APP_INCLUDE_DIRS})
+target_link_libraries(vvvdaw PRIVATE
+    vvvdaw_gui
+    vvvdaw_audio
+    vvvdaw_commands
+    vvvdaw_model
+    vvvdaw_plugin
+    vvvdaw_midi
+    vvvdaw_core
+    Qt6::Widgets
+)
 target_link_options(vvvdaw PRIVATE -rdynamic)
+
+# --- Tests ---
+
+enable_testing()
+add_subdirectory(tests)

@@ -1,0 +1,520 @@
+#include <QTest>
+#include <QJsonArray>
+#include <QTemporaryDir>
+#include <memory>
+#include <vector>
+#include "model/Project.h"
+#include "model/Track.h"
+#include "model/AudioEvent.h"
+#include "model/AudioClip.h"
+#include "model/MidiEvent.h"
+#include "model/MidiClip.h"
+#include "model/AudioBus.h"
+#include "model/Instrument.h"
+
+class TestModel : public QObject {
+    Q_OBJECT
+private slots:
+    void projectDefaults();
+    void addRemoveTrack();
+    void addRemoveBus();
+    void addRemoveInstrument();
+    void trackEventManagement();
+    void audioEventTakes();
+    void midiEventTakes();
+    void midiClipNotes();
+    void midiClipSerialization();
+    void audioClipFromSamples();
+    void audioClipFileRoundTrip();
+    void projectTimeConversions();
+    void projectSnapSample();
+    void projectRescaleTimeline();
+    void projectJsonRoundTrip();
+    void projectSaveLoadRoundTrip();
+    void projectLoadCreatesMissingBuses();
+};
+
+void TestModel::projectDefaults() {
+    Project p;
+    QCOMPARE(p.name(), QString("Untitled"));
+    QCOMPARE(p.tempo(), 120.0);
+    QCOMPARE(p.timeSigNum(), 4);
+    QCOMPARE(p.timeSigDen(), 4);
+    QCOMPARE(p.tracks().size(), size_t(0));
+    QCOMPARE(p.buses().size(), size_t(2));
+    QCOMPARE(p.buses()[0].name, QString("Master"));
+    QCOMPARE(p.buses()[0].removable, false);
+    QCOMPARE(p.buses()[0].outputBusIndex, -1);
+    QCOMPARE(p.buses()[1].name, QString("Metronome"));
+    QCOMPARE(p.buses()[1].removable, false);
+    QVERIFY(!p.hasLoop());
+    QVERIFY(!p.hasRecordRegion());
+}
+
+void TestModel::addRemoveTrack() {
+    Project p;
+    Track* t = p.addTrack("A");
+    QVERIFY(t);
+    QCOMPARE(p.tracks().size(), size_t(1));
+    QCOMPARE(t->name(), QString("A"));
+    QCOMPARE(t->type(), Track::Type::Audio);
+
+    Track* m = p.addMidiTrack("B");
+    QVERIFY(m);
+    QCOMPARE(m->type(), Track::Type::Midi);
+    QCOMPARE(p.tracks().size(), size_t(2));
+
+    QVERIFY(!p.removeTrack(5));
+    QVERIFY(!p.removeTrack(-1));
+    QVERIFY(p.removeTrack(1));
+    QCOMPARE(p.tracks().size(), size_t(1));
+}
+
+void TestModel::addRemoveBus() {
+    Project p;
+    AudioBus bus;
+    bus.name = "Drums";
+    bus.volume = 0.5f;
+    int idx = p.addBus(std::move(bus));
+    QCOMPARE(idx, 2);
+    QCOMPARE(p.buses().size(), size_t(3));
+
+    // Master (index 0) and Metronome (index 1) are not removable.
+    QVERIFY(!p.removeBus(0));
+    QVERIFY(!p.removeBus(1));
+    QVERIFY(p.removeBus(2));
+    QCOMPARE(p.buses().size(), size_t(2));
+}
+
+void TestModel::addRemoveInstrument() {
+    Project p;
+    Track* t = p.addTrack("Track");
+    t->setInstrumentIndex(0);
+
+    Instrument inst;
+    inst.setName("Pad");
+    int idx = p.addInstrument(std::move(inst));
+    QCOMPARE(idx, 0);
+
+    QVERIFY(!p.removeInstrument(3));
+    QVERIFY(p.removeInstrument(0));
+    QCOMPARE(p.instruments().size(), size_t(0));
+    QCOMPARE(t->instrumentIndex(), -1);
+}
+
+void TestModel::trackEventManagement() {
+    Track t("T", 2);
+
+    AudioEvent e1;
+    e1.setStartSample(0);
+    AudioEvent e2;
+    e2.setStartSample(100);
+    t.addEvent(e1);
+    t.addEvent(e2);
+    QCOMPARE(t.events().size(), size_t(2));
+    QCOMPARE(t.events()[0].id(), int64_t(1)); // ids assigned sequentially
+    QCOMPARE(t.events()[1].id(), int64_t(2));
+
+    t.removeEvent(1);
+    QCOMPARE(t.events().size(), size_t(1));
+    QCOMPARE(t.events()[0].id(), int64_t(2));
+    QVERIFY(t.findEvent(2));
+    QVERIFY(!t.findEvent(999));
+
+    AudioEvent imported;
+    imported.setId(42);
+    imported.setStartSample(200);
+    t.importEvent(imported);
+    QCOMPARE(t.events().back().id(), int64_t(42)); // import preserves id
+
+    MidiEvent me;
+    t.addMidiEvent(me);
+    QCOMPARE(t.midiEvents().size(), size_t(1));
+    QCOMPARE(t.midiEvents()[0].id(), int64_t(1));
+    t.removeMidiEvent(1);
+    QVERIFY(t.midiEvents().empty());
+}
+
+void TestModel::audioEventTakes() {
+    AudioEvent ev;
+    QVERIFY(!ev.isValid());
+
+    auto main = std::make_shared<AudioClip>(
+        std::vector<float>(512, 0.1f), 48000, 1);
+    auto take = std::make_shared<AudioClip>(
+        std::vector<float>(256, 0.2f), 48000, 1);
+    ev.setClip(main);
+    ev.setStartSample(10);
+    ev.setDurationSample(50);
+    QCOMPARE(ev.endSample(), int64_t(60));
+    QCOMPARE(ev.activeClip(), main);
+    QCOMPARE(ev.activeTakeIndex(), -1);
+
+    ev.addTake(take);
+    QCOMPARE(ev.activeTakeIndex(), 0);
+    QCOMPARE(ev.activeClip(), take); // adding a take switches to it
+    QCOMPARE(ev.takes().size(), size_t(1));
+    QVERIFY(ev.isValid());
+
+    ev.setActiveTake(5); // out of range -> ignored
+    QCOMPARE(ev.activeTakeIndex(), 0);
+    ev.setActiveTake(0);
+    QCOMPARE(ev.activeClip(), take);
+}
+
+void TestModel::midiEventTakes() {
+    MidiEvent ev;
+    auto main = std::make_shared<MidiClip>();
+    auto take = std::make_shared<MidiClip>();
+    ev.setClip(main);
+    ev.setStartSample(5);
+    ev.setDurationSample(45);
+    QCOMPARE(ev.endSample(), int64_t(50));
+    QCOMPARE(ev.activeClip(), main);
+
+    ev.addTake(take);
+    QCOMPARE(ev.activeTakeIndex(), 0);
+    QCOMPARE(ev.activeClip(), take);
+
+    ev.setActiveTake(-1);
+    QCOMPARE(ev.activeClip(), take); // invalid index falls back to m_clip
+    ev.setActiveTake(0);
+    QCOMPARE(ev.activeClip(), take);
+}
+
+void TestModel::midiClipNotes() {
+    MidiClip clip;
+    clip.setLengthTicks(100);
+    int64_t id1 = clip.addNote(60, 100, 0, 240);
+    int64_t id2 = clip.addNote(64, 80, 960, 240);
+    QVERIFY(id1 != id2);
+    QCOMPARE(clip.notes().size(), size_t(2));
+    QCOMPARE(clip.notes()[0].id, id1);
+    QCOMPARE(clip.revision(), int64_t(2));
+
+    // lengthTicks is the max of the stored length and note extents
+    QCOMPARE(clip.lengthTicks(), int64_t(1200));
+
+    QVERIFY(clip.findNote(id1));
+    QVERIFY(!clip.findNote(999));
+
+    QVERIFY(clip.removeNote(id1));
+    QCOMPARE(clip.notes().size(), size_t(1));
+    QCOMPARE(clip.revision(), int64_t(3));
+    QVERIFY(!clip.removeNote(id1));
+
+    MidiNote n;
+    n.id = 1000;
+    n.pitch = 70;
+    clip.importNote(n);
+    QVERIFY(clip.findNote(1000));
+}
+
+void TestModel::midiClipSerialization() {
+    MidiClip clip;
+    clip.setLengthTicks(3840);
+    clip.addNote(60, 100, 0, 240);
+    clip.addNote(64, 80, 480, 120);
+
+    MidiClip restored;
+    restored.fromJson(clip.toJson());
+    QCOMPARE(restored.lengthTicks(), clip.lengthTicks());
+    QCOMPARE(restored.notes().size(), size_t(2));
+    QCOMPARE(restored.notes()[0].pitch, 60);
+    QCOMPARE(restored.notes()[0].velocity, 100);
+    QCOMPARE(restored.notes()[0].startTick, int64_t(0));
+    QCOMPARE(restored.notes()[0].durationTicks, int64_t(240));
+    QCOMPARE(restored.notes()[1].id, int64_t(2));
+
+    // Loading old data without nextNoteId must assign fresh ids
+    QJsonObject legacy;
+    legacy["lengthTicks"] = 10;
+    MidiClip legacyClip;
+    legacyClip.fromJson(legacy);
+    QCOMPARE(legacyClip.notes().size(), size_t(0));
+    int64_t id = legacyClip.addNote(50, 90, 0, 10);
+    QCOMPARE(id, int64_t(1));
+}
+
+void TestModel::audioClipFromSamples() {
+    std::vector<float> samples(1024, 0.5f);
+    AudioClip clip(std::move(samples), 48000, 1);
+    QVERIFY(clip.isValid());
+    QCOMPARE(clip.frameCount(), size_t(1024));
+    QCOMPARE(clip.channels(), 1);
+    QCOMPARE(clip.sampleRate(), 48000);
+    QCOMPARE(clip.peaks().size(), size_t(2)); // 1024 / 512 step
+    QCOMPARE(clip.peaks()[0].maxAbs, 0.5f);
+
+    AudioClip empty;
+    QVERIFY(!empty.isValid());
+    QCOMPARE(empty.frameCount(), size_t(0));
+}
+
+void TestModel::audioClipFileRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QString path = dir.path() + "/test.wav";
+
+    std::vector<float> samples(2048, 0.25f);
+    AudioClip clip(std::move(samples), 44100, 1);
+    QVERIFY(clip.saveToFile(path));
+
+    AudioClip loaded(path);
+    QVERIFY(loaded.isValid());
+    QCOMPARE(loaded.frameCount(), size_t(2048));
+    QCOMPARE(loaded.sampleRate(), 44100);
+    QCOMPARE(loaded.channels(), 1);
+}
+
+void TestModel::projectTimeConversions() {
+    Project p;
+    p.setSampleRate(48000);
+    p.setTempo(120.0);
+    QCOMPARE(p.samplesPerBeat(), 24000.0);
+    QCOMPARE(p.samplesPerBar(), 96000.0); // 4/4
+    QCOMPARE(p.samplesPerTick(), 25.0);   // 24000 / 960 ppq
+    QCOMPARE(p.ticksToSamples(1), int64_t(25));
+    QCOMPARE(p.ticksToSamples(100), int64_t(2500));
+    QCOMPARE(p.samplesToTicks(25), int64_t(1));
+    QCOMPARE(p.samplesToTicks(37), int64_t(1)); // rounds
+    QCOMPARE(p.samplesToTicks(75), int64_t(3));
+
+    p.setTempo(140.0);
+    QCOMPARE(p.samplesPerBeat(), 48000.0 * 60.0 / 140.0);
+}
+
+void TestModel::projectSnapSample() {
+    Project p;
+    p.setSampleRate(48000);
+    p.setTempo(120.0); // 24000 samples per beat
+    // beatDivision 4 -> snap grid 6000
+    QCOMPARE(p.snapSample(0), int64_t(0));
+    QCOMPARE(p.snapSample(7000), int64_t(6000));
+    QCOMPARE(p.snapSample(13000), int64_t(12000));
+    QCOMPARE(p.snapSample(5900), int64_t(6000));
+}
+
+void TestModel::projectRescaleTimeline() {
+    Project p;
+    p.setLoop(100, 200);
+    p.setRecordRegion(1000, 2000);
+    Track* t = p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(100);
+    ev.setDurationSample(50);
+    t->addEvent(ev);
+
+    p.rescaleTimeline(2.0);
+    QCOMPARE(p.loopStart(), int64_t(200));
+    QCOMPARE(p.loopEnd(), int64_t(400));
+    QCOMPARE(p.recordRegionStart(), int64_t(2000));
+    QCOMPARE(p.recordRegionEnd(), int64_t(4000));
+    QCOMPARE(t->events()[0].startSample(), int64_t(200));
+    QCOMPARE(t->events()[0].durationSample(), int64_t(100));
+
+    p.rescaleTimeline(1.0); // no-op
+    QCOMPARE(t->events()[0].startSample(), int64_t(200));
+    p.rescaleTimeline(0.0); // no-op
+    QCOMPARE(t->events()[0].startSample(), int64_t(200));
+}
+
+void TestModel::projectJsonRoundTrip() {
+    Project p;
+    p.setName("JsonTest");
+    p.setTempo(133.0);
+    p.setTimeSignature(7, 8);
+    p.setLoop(111, 222);
+    p.setRecordRegion(333, 444);
+
+    Track* t = p.addTrack("Guitar", 2);
+    t->setVolume(0.42f);
+    t->setPan(-0.3f);
+    t->setMuted(true);
+    AudioEvent ev;
+    ev.setStartSample(10);
+    ev.setOffsetSample(2);
+    ev.setDurationSample(64);
+    ev.setSourceFrames(128);
+    t->addEvent(ev);
+
+    AudioBus bus;
+    bus.name = "FX";
+    bus.volume = 0.5f;
+    bus.pan = 0.25f;
+    bus.outputBusIndex = 0;
+    p.addBus(std::move(bus));
+
+    Instrument inst;
+    inst.setName("Synth");
+    inst.setVolume(0.9f);
+    inst.setPan(-0.5f);
+    inst.setOutputBusIndex(1);
+    inst.setSolo(true);
+    p.addInstrument(std::move(inst));
+
+    Project q;
+    q.fromJson(p.toJson());
+    QCOMPARE(q.name(), p.name());
+    QCOMPARE(q.tempo(), 133.0);
+    QCOMPARE(q.timeSigNum(), 7);
+    QCOMPARE(q.timeSigDen(), 8);
+    QCOMPARE(q.loopStart(), int64_t(111));
+    QCOMPARE(q.loopEnd(), int64_t(222));
+    QCOMPARE(q.recordRegionStart(), int64_t(333));
+    QCOMPARE(q.recordRegionEnd(), int64_t(444));
+
+    QCOMPARE(q.tracks().size(), size_t(1));
+    QCOMPARE(q.tracks()[0].name(), QString("Guitar"));
+    QCOMPARE(q.tracks()[0].channels(), 2);
+    QCOMPARE(q.tracks()[0].volume(), 0.42f);
+    QCOMPARE(q.tracks()[0].pan(), -0.3f);
+    QCOMPARE(q.tracks()[0].isMuted(), true);
+    QCOMPARE(q.tracks()[0].events().size(), size_t(1));
+    QCOMPARE(q.tracks()[0].events()[0].startSample(), int64_t(10));
+    QCOMPARE(q.tracks()[0].events()[0].offsetSample(), int64_t(2));
+    QCOMPARE(q.tracks()[0].events()[0].durationSample(), int64_t(64));
+    QCOMPARE(q.tracks()[0].events()[0].sourceFrames(), int64_t(128));
+
+    QCOMPARE(q.buses().size(), size_t(3));
+    QCOMPARE(q.buses()[0].name, QString("Master"));
+    QCOMPARE(q.buses()[0].removable, false);
+    QCOMPARE(q.buses()[1].name, QString("Metronome"));
+    QCOMPARE(q.buses()[2].name, QString("FX"));
+    QCOMPARE(q.buses()[2].volume, 0.5f);
+    QCOMPARE(q.buses()[2].pan, 0.25f);
+
+    QCOMPARE(q.instruments().size(), size_t(1));
+    QCOMPARE(q.instruments()[0].name(), QString("Synth"));
+    QCOMPARE(q.instruments()[0].volume(), 0.9f);
+    QCOMPARE(q.instruments()[0].pan(), -0.5f);
+    QCOMPARE(q.instruments()[0].outputBusIndex(), 1);
+    QCOMPARE(q.instruments()[0].isSolo(), true);
+}
+
+void TestModel::projectSaveLoadRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QString projPath = dir.path() + "/roundtrip.vvvdaw";
+
+    Project p;
+    p.setName("RoundTrip");
+    p.setTempo(140.0);
+    p.setTimeSignature(3, 4);
+
+    Track* audio = p.addTrack("Guitar");
+    audio->setVolume(0.5f);
+    audio->setPan(-0.25f);
+    audio->setMuted(true);
+
+    auto clip = std::make_shared<AudioClip>(
+        std::vector<float>(4096, 0.1f), 44100, 1);
+    auto take = std::make_shared<AudioClip>(
+        std::vector<float>(4096, 0.2f), 44100, 1);
+    AudioEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(1000);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(2048);
+    ev.setSourceFrames(4096);
+    ev.takes().push_back(take);
+    audio->addEvent(ev);
+
+    Track* midi = p.addMidiTrack("Keys");
+    auto mclip = std::make_shared<MidiClip>();
+    mclip->setLengthTicks(4 * MidiClip::kPPQ);
+    mclip->addNote(60, 100, 0, 240);
+    mclip->addNote(64, 80, 480, 120);
+    MidiEvent mev;
+    mev.setClip(mclip);
+    mev.setStartSample(0);
+    mev.setOffsetSample(0);
+    mev.setDurationSample(75600);
+    midi->addMidiEvent(mev);
+
+    AudioBus bus;
+    bus.name = "Drums";
+    bus.volume = 0.7f;
+    bus.pan = 0.1f;
+    bus.outputBusIndex = 0;
+    p.addBus(std::move(bus));
+
+    Instrument inst;
+    inst.setName("Pad");
+    inst.setVolume(0.4f);
+    inst.setPan(0.2f);
+    inst.setOutputBusIndex(0);
+    inst.setMuted(true);
+    p.addInstrument(std::move(inst));
+
+    QVERIFY(p.save(projPath));
+
+    Project q;
+    QVERIFY(q.load(projPath));
+    QCOMPARE(q.name(), QString("RoundTrip"));
+    QCOMPARE(q.tempo(), 140.0);
+    QCOMPARE(q.timeSigNum(), 3);
+    QCOMPARE(q.timeSigDen(), 4);
+
+    QCOMPARE(q.tracks().size(), size_t(2));
+    QCOMPARE(q.tracks()[0].name(), QString("Guitar"));
+    QCOMPARE(q.tracks()[0].type(), Track::Type::Audio);
+    QCOMPARE(q.tracks()[0].volume(), 0.5f);
+    QCOMPARE(q.tracks()[0].pan(), -0.25f);
+    QCOMPARE(q.tracks()[0].isMuted(), true);
+    QCOMPARE(q.tracks()[0].events().size(), size_t(1));
+    const AudioEvent& rev = q.tracks()[0].events()[0];
+    QCOMPARE(rev.startSample(), int64_t(1000));
+    QCOMPARE(rev.durationSample(), int64_t(2048));
+    QCOMPARE(rev.sourceFrames(), int64_t(4096));
+    QVERIFY(rev.clip());
+    QVERIFY(rev.clip()->isValid());
+    QVERIFY(rev.clip()->filePath().endsWith(".wav"));
+    QCOMPARE(rev.takes().size(), size_t(1));
+    QVERIFY(rev.takes()[0]->isValid());
+    QCOMPARE(rev.activeTakeIndex(), -1);
+
+    QCOMPARE(q.tracks()[1].name(), QString("Keys"));
+    QCOMPARE(q.tracks()[1].type(), Track::Type::Midi);
+    QCOMPARE(q.tracks()[1].midiEvents().size(), size_t(1));
+    const MidiEvent& rm = q.tracks()[1].midiEvents()[0];
+    QVERIFY(rm.clip());
+    QCOMPARE(rm.clip()->lengthTicks(), int64_t(4 * MidiClip::kPPQ));
+    QCOMPARE(rm.clip()->notes().size(), size_t(2));
+    QCOMPARE(rm.clip()->notes()[0].pitch, 60);
+    QCOMPARE(rm.clip()->notes()[1].pitch, 64);
+
+    QCOMPARE(q.buses().size(), size_t(3));
+    QCOMPARE(q.buses()[0].name, QString("Master"));
+    QCOMPARE(q.buses()[0].removable, false);
+    QCOMPARE(q.buses()[1].name, QString("Metronome"));
+    QCOMPARE(q.buses()[1].removable, false);
+    QCOMPARE(q.buses()[2].name, QString("Drums"));
+    QCOMPARE(q.buses()[2].volume, 0.7f);
+    QCOMPARE(q.buses()[2].pan, 0.1f);
+
+    QCOMPARE(q.instruments().size(), size_t(1));
+    QCOMPARE(q.instruments()[0].name(), QString("Pad"));
+    QCOMPARE(q.instruments()[0].volume(), 0.4f);
+    QCOMPARE(q.instruments()[0].pan(), 0.2f);
+    QCOMPARE(q.instruments()[0].isMuted(), true);
+}
+
+void TestModel::projectLoadCreatesMissingBuses() {
+    // A project file with no buses must still end up with Master + Metronome.
+    QJsonObject obj;
+    obj["name"] = "Legacy";
+    obj["tempo"] = 90.0;
+    obj["tracks"] = QJsonArray();
+
+    Project p;
+    p.fromJson(obj);
+    QCOMPARE(p.buses().size(), size_t(2));
+    QCOMPARE(p.buses()[0].name, QString("Master"));
+    QCOMPARE(p.buses()[0].removable, false);
+    QCOMPARE(p.buses()[1].name, QString("Metronome"));
+    QCOMPARE(p.buses()[1].removable, false);
+}
+
+QTEST_MAIN(TestModel)
+#include "test_model.moc"
