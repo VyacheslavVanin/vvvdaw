@@ -13,6 +13,7 @@
 #include "model/Project.h"
 #include "model/TemplateStore.h"
 #include <QMessageBox>
+#include <QTimer>
 
 static void crashHandler(int sig) {
     fprintf(stderr, "\n=== SEGFAULT (signal %d) ===\n", sig);
@@ -104,6 +105,19 @@ int main(int argc, char* argv[]) {
 
     MainWindow window(project, audioEngine, settings);
     window.show();
+
+    // The main window is mapped only after the startup dialog closes and the
+    // audio/plugin setup runs, so GNOME/XWayland often leaves it behind other
+    // windows without focus. Raise it and give it focus both right away and
+    // once the event loop starts (when it is guaranteed to be fully mapped).
+    auto bringToFront = [&window] {
+        window.setWindowState((window.windowState() & ~Qt::WindowMinimized)
+                              | Qt::WindowActive);
+        window.raise();
+        window.activateWindow();
+    };
+    bringToFront();
+    QTimer::singleShot(0, bringToFront);
 
     int result = app.exec();
 
