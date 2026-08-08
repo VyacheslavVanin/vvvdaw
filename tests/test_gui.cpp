@@ -63,6 +63,7 @@ private slots:
     void startDialogListsTemplates();
     void startDialogSelectingTemplateSetsChoice();
     void mainWindowFileMenuHasSaveAsTemplate();
+    void replaceProjectSwapsAndRebuilds();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
 };
@@ -531,6 +532,29 @@ void MainWindowTest::mainWindowFileMenuHasSaveAsTemplate() {
         }
     }
     QVERIFY(found);
+}
+
+void MainWindowTest::replaceProjectSwapsAndRebuilds() {
+    Project project;
+    project.addTrack("T1");
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_project.tracks().size(), size_t(1));
+    QCOMPARE(window.m_trackRows.size(), size_t(1));
+
+    Project fresh;
+    fresh.addTrack("A");
+    fresh.addTrack("B");
+    const QString freshName = fresh.name();
+    window.replaceProject(std::move(fresh));
+
+    QCOMPARE(window.m_project.tracks().size(), size_t(2));
+    QCOMPARE(window.m_project.tracks()[0].name(), QString("A"));
+    QCOMPARE(window.m_project.tracks()[1].name(), QString("B"));
+    QCOMPARE(window.m_project.name(), freshName);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+    QVERIFY(window.m_project.filePath().isEmpty());
 }
 
 QTEST_MAIN(MainWindowTest)

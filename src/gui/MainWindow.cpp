@@ -11,6 +11,7 @@
 #include "PianoRollWindow.h"
 #include "PluginListWidget.h"
 #include "PluginWindow.h"
+#include "StartDialog.h"
 #include "core/UndoStack.h"
 #include "core/TimeUtils.h"
 #include "commands/TrackCommands.h"
@@ -732,21 +733,42 @@ void MainWindow::setupMenus() {
     auto* quitAction = fileMenu->addAction("&Quit", QKeySequence::Quit);
 
     connect(newAction, &QAction::triggered, this, [this] {
-        m_engine.setTransportState(TransportState::Stopped);
-        m_engine.setProject(nullptr);
-        closeAllPluginWindows();
-        resyncPianoRollWindows();
-        m_undoStack.clear();
-        m_project = Project();
-        m_project.addTrack("Track 1");
-        m_project.setPluginManager(&m_pluginManager);
-        m_engine.setProject(&m_project);
-        m_engine.activateAllPlugins();
-        m_engine.refreshMidiOutputs();
-        m_project.setSampleRate(m_engine.sampleRate());
-        m_scrollOffset = 0;
-        rebuildTracks();
-        setWindowTitle("vvvdaw - Untitled");
+        // Reuse the start dialog so a new project can come from a template or
+        // a recently opened project.
+        StartDialog dialog(m_settings, this);
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+
+        switch (dialog.choice().action) {
+        case StartDialog::Action::OpenRecent:
+        case StartDialog::Action::Browse: {
+            const QString path = dialog.choice().path;
+            if (path.isEmpty()) return;
+            Project project;
+            if (!project.load(path)) {
+                QMessageBox::warning(this, "Error", "Failed to load project.");
+                m_settings.removeRecentProject(path);
+                return;
+            }
+            replaceProject(std::move(project));
+            m_settings.addRecentProject(path);
+            setWindowTitle("vvvdaw - " + QFileInfo(path).absolutePath());
+            break;
+        }
+        case StartDialog::Action::OpenTemplate: {
+            Project project;
+            if (!TemplateStore::loadTemplate(project, dialog.choice().templateName)) {
+                QMessageBox::warning(this, "Error", "Failed to open template.");
+                return;
+            }
+            replaceProject(std::move(project));
+            setWindowTitle("vvvdaw - " + m_project.name());
+            break;
+        }
+        case StartDialog::Action::Exit:
+        default:
+            break; // Cancel: keep the current project as-is.
+        }
     });
 
     connect(openAction, &QAction::triggered, this, [this] {
@@ -754,24 +776,12 @@ void MainWindow::setupMenus() {
             QString(), "Project Files (project.json)");
         if (path.isEmpty()) return;
 
-        m_engine.setTransportState(TransportState::Stopped);
-        m_engine.setProject(nullptr);
-        closeAllPluginWindows();
-        resyncPianoRollWindows();
-        m_undoStack.clear();
-        Project newProject;
-        if (!newProject.load(path)) {
+        Project project;
+        if (!project.load(path)) {
             QMessageBox::warning(this, "Error", "Failed to load project.");
             return;
         }
-        m_project = std::move(newProject);
-        m_project.setPluginManager(&m_pluginManager);
-        m_engine.setProject(&m_project);
-        m_engine.activateAllPlugins();
-        m_engine.refreshMidiOutputs();
-        m_project.setSampleRate(m_engine.sampleRate());
-        m_scrollOffset = 0;
-        rebuildTracks();
+        replaceProject(std::move(project));
         m_settings.addRecentProject(path);
         setWindowTitle("vvvdaw - " + QFileInfo(path).absolutePath());
     });
@@ -960,6 +970,22 @@ void MainWindow::refreshBusCombos() {
             row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         }
     }
+}
+
+void MainWindow::replaceProject(Project project) {
+    m_engine.setTransportState(TransportState::Stopped);
+    m_engine.setProject(nullptr);
+    closeAllPluginWindows();
+    resyncPianoRollWindows();
+    m_undoStack.clear();
+    m_project = std::move(project);
+    m_project.setPluginManager(&m_pluginManager);
+    m_engine.setProject(&m_project);
+    m_engine.activateAllPlugins();
+    m_engine.refreshMidiOutputs();
+    m_project.setSampleRate(m_engine.sampleRate());
+    m_scrollOffset = 0;
+    rebuildTracks();
 }
 
 void MainWindow::rebuildTracks() {
