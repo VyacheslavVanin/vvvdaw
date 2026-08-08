@@ -111,6 +111,21 @@ void LV2Instance::processWorkQueue() {
 }
 
 bool LV2Instance::load(const QString& path) {
+    if (!loadPluginDescriptor(path))
+        return false;
+    initURIDs();
+    detectInstrumentType();
+    setupOptions();
+    if (!instantiatePlugin())
+        return false;
+    setupPorts();
+    setupAudioBuffers();
+    setupAtomBuffers();
+    detectUI();
+    return true;
+}
+
+bool LV2Instance::loadPluginDescriptor(const QString& path) {
     m_filePath = path;
     m_pluginId = path;
 
@@ -132,7 +147,10 @@ bool LV2Instance::load(const QString& path) {
     auto* authorNode = lilv_plugin_get_author_name(m_plugin);
     m_vendor = authorNode ? QString::fromUtf8(lilv_node_as_string(authorNode)) : QString();
     if (authorNode) lilv_node_free(authorNode);
+    return true;
+}
 
+void LV2Instance::initURIDs() {
     m_uridMap.handle = this;
     m_uridMap.map = uridMapCallback;
 
@@ -151,13 +169,17 @@ bool LV2Instance::load(const QString& path) {
     m_uridPatchValue = uridMapCallback(this, LV2_PATCH__value);
     m_uridPatchMessage = uridMapCallback(this, LV2_PATCH__Message);
     m_uridMidiEvent = uridMapCallback(this, LV2_MIDI__MidiEvent);
+}
 
+void LV2Instance::detectInstrumentType() {
     LilvNode* instrumentClass = lilv_new_uri(m_world, LV2_CORE__InstrumentPlugin);
     const LilvPluginClass* pluginClass = lilv_plugin_get_class(m_plugin);
     const LilvNode* classUri = pluginClass ? lilv_plugin_class_get_uri(pluginClass) : nullptr;
     m_isInstrument = classUri && lilv_node_equals(classUri, instrumentClass);
     lilv_node_free(instrumentClass);
+}
 
+void LV2Instance::setupOptions() {
     m_optionSampleRate = static_cast<float>(m_sampleRate);
     m_optionMaxBlockLength = m_maxBlockSize;
 
@@ -181,10 +203,14 @@ bool LV2Instance::load(const QString& path) {
     m_options[2].size = 0;
     m_options[2].type = 0;
     m_options[2].value = nullptr;
+}
 
+bool LV2Instance::instantiatePlugin() {
     m_instance = lilv_plugin_instantiate(m_plugin, m_sampleRate, m_features);
-    if (!m_instance) return false;
+    return m_instance != nullptr;
+}
 
+void LV2Instance::setupPorts() {
     uint32_t nPorts = lilv_plugin_get_num_ports(m_plugin);
     m_portInfos.resize(nPorts);
     m_ctrlValues.resize(nPorts, 0.0f);
@@ -325,6 +351,15 @@ bool LV2Instance::load(const QString& path) {
             lilv_instance_connect_port(m_instance, i, nullptr);
     }
 
+    lilv_node_free(audioPort);
+    lilv_node_free(controlPort);
+    lilv_node_free(atomPort);
+    lilv_node_free(inputPort);
+    lilv_node_free(outputPort);
+    lilv_node_free(minSizeNode);
+}
+
+void LV2Instance::setupAudioBuffers() {
     m_audioInBuffers.resize(m_audioInPorts.size(), std::vector<float>(m_maxBlockSize, 0.0f));
     m_audioOutBuffers.resize(m_audioOutPorts.size(), std::vector<float>(m_maxBlockSize, 0.0f));
 
@@ -336,7 +371,9 @@ bool LV2Instance::load(const QString& path) {
         m_audioOutPorts[j] = m_audioOutBuffers[j].data();
         lilv_instance_connect_port(m_instance, m_audioOutPortIndices[j], m_audioOutPorts[j]);
     }
+}
 
+void LV2Instance::setupAtomBuffers() {
     m_atomBuffers.resize(m_atomPorts.size());
     for (size_t j = 0; j < m_atomPorts.size(); ++j) {
         uint32_t bufSize = m_atomPorts[j].minSize;
@@ -351,15 +388,9 @@ bool LV2Instance::load(const QString& path) {
         m_atomPortPtrs.push_back(m_atomBuffers[j].data());
         lilv_instance_connect_port(m_instance, m_atomPorts[j].index, m_atomPortPtrs.back());
     }
+}
 
-    lilv_node_free(audioPort);
-    lilv_node_free(controlPort);
-    lilv_node_free(atomPort);
-    lilv_node_free(inputPort);
-    lilv_node_free(outputPort);
-    lilv_node_free(minSizeNode);
-
-    // Detect UI
+void LV2Instance::detectUI() {
     LilvNode* uiX11 = lilv_new_uri(m_world, "http://lv2plug.in/ns/extensions/ui#X11UI");
     const LilvUIs* uis = lilv_plugin_get_uis(m_plugin);
 
@@ -390,8 +421,6 @@ bool LV2Instance::load(const QString& path) {
         qInfo() << m_name << ": no X11 UI found";
 
     lilv_node_free(uiX11);
-
-    return true;
 }
 
 bool LV2Instance::activate(double sampleRate, int maxBlockSize) {
@@ -438,6 +467,32 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     int samples = std::min(numSamples, m_maxBlockSize);
 
+    routeAudioPorts(samples, numChannels, inputBuffers, outputBuffers);
+    resetAtomBuffers();
+    forgeInputAtoms(midi);
+
+    // Apply a queued state restore (set on the GUI thread while the plugin
+    // was running) on the audio thread, before run(). LV2 state restore is in
+    // the "Instantiation" threading class and must not run concurrently with
+    // run(), so this must happen here rather than on the GUI thread.
+    if (m_hasPendingRestore)
+        applyStateRestore();
+
+    lilv_instance_run(m_instance, samples);
+
+    // Mono plugin: duplicate the single output channel so downstream mixing
+    // sees a centered stereo signal instead of a hard-panned-left one.
+    if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2)
+        duplicateMonoToStereo(m_audioOutPorts[0], outputBuffers, samples);
+
+    processWorkQueue();
+    readOutputAtoms();
+
+    return true;
+}
+
+void LV2Instance::routeAudioPorts(int samples, int numChannels,
+                                  float** inputBuffers, float** outputBuffers) {
     for (size_t i = 0; i < m_audioInPorts.size(); ++i) {
         int ch = static_cast<int>(i);
         if (m_audioInPorts.size() == 1 && numChannels >= 2 && inputBuffers &&
@@ -462,7 +517,9 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     for (size_t i = 0; i < m_ctrlPorts.size(); ++i)
         lilv_instance_connect_port(m_instance, m_ctrlPortIndices[i], m_ctrlPorts[i]);
+}
 
+void LV2Instance::resetAtomBuffers() {
     // Reset all atom buffers before run(). For output ports the atom size
     // advertises the buffer capacity (the plugin overwrites it), otherwise
     // the plugin cannot know how much it may write (e.g. SiSco's notify port).
@@ -477,7 +534,9 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
             seq->atom.size = static_cast<uint32_t>(m_atomBuffers[j].size());
         }
     }
+}
 
+void LV2Instance::forgeInputAtoms(const MidiBuffer* midi) {
     // Drain UI -> plugin atom messages (queued on the GUI thread).
     std::deque<UiMessage> uiMessages;
     {
@@ -572,26 +631,6 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     m_pendingPatchGet = false;
     m_pendingPatchSet = false;
-
-    // Apply a queued state restore (set on the GUI thread while the plugin
-    // was running) on the audio thread, before run(). LV2 state restore is in
-    // the "Instantiation" threading class and must not run concurrently with
-    // run(), so this must happen here rather than on the GUI thread.
-    if (m_hasPendingRestore)
-        applyStateRestore();
-
-    lilv_instance_run(m_instance, samples);
-
-    // Mono plugin: duplicate the single output channel so downstream mixing
-    // sees a centered stereo signal instead of a hard-panned-left one.
-    if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2)
-        duplicateMonoToStereo(m_audioOutPorts[0], outputBuffers, samples);
-
-    processWorkQueue();
-
-    readOutputAtoms();
-
-    return true;
 }
 
 QString LV2Instance::name() const { return m_name; }

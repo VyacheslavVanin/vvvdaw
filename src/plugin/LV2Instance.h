@@ -76,6 +76,24 @@ public:
     bool hasNativeUI() const override { return !m_uiUri.isEmpty(); }
 
 private:
+    // load() steps
+    bool loadPluginDescriptor(const QString& path);
+    void initURIDs();
+    void detectInstrumentType();
+    void setupOptions();
+    bool instantiatePlugin();
+    void setupPorts();
+    void setupAudioBuffers();
+    void setupAtomBuffers();
+    void detectUI();
+
+    // process() steps
+    void routeAudioPorts(int samples, int numChannels,
+                         float** inputBuffers, float** outputBuffers);
+    void resetAtomBuffers();
+    void forgeInputAtoms(const MidiBuffer* midi);
+
+private:
     static LV2_URID uridMapCallback(LV2_URID_Map_Handle handle, const char* uri);
 
     struct StateStoreCtx {
