@@ -123,6 +123,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/WaveformPainter.cpp
     src/gui/TimelineRuler.cpp
     src/gui/MeasureRuler.cpp
+    src/gui/RangeRulerWidget.cpp
     src/gui/TempoWidget.cpp
     src/gui/SettingsDialog.cpp
     src/gui/PluginListWidget.cpp

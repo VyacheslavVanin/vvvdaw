@@ -21,9 +21,6 @@ signals:
     void pathParameterChangeRequested(int paramIndex, const QString& oldValue, const QString& newValue);
 
 private:
-    void buildControlGrid(int knobsPerRow, const std::vector<PluginPortInfo>& ports);
-    void buildStringRows(const std::vector<PluginPortInfo>& ports);
-
     PluginInstance* m_plugin = nullptr;
     std::vector<int> m_paramIndices;
     std::vector<RotaryKnob*> m_knobs;

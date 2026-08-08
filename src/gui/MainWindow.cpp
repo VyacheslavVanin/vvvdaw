@@ -124,10 +124,7 @@ void MainWindow::setupUi() {
 
     auto onPlayheadClicked = [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
-        m_timelineRuler->setPlayheadPosition(sample);
-        m_measureRuler->setPlayheadPosition(sample);
-        for (auto& row : m_trackRows)
-            row.view->setPlayheadPosition(sample);
+        syncPlayheadViews(sample);
         m_transportPanel->setTimeText(TimeUtils::formatTime(sample, m_engine.sampleRate()));
     };
     connect(m_timelineRuler, &TimelineRuler::playheadClicked, this, onPlayheadClicked);
@@ -323,13 +320,7 @@ void MainWindow::setupUi() {
 
     connect(m_busPanel, &BusPanelWidget::busPluginWillBeRemoved, this,
             [this](PluginInstance* plugin) {
-        std::vector<PluginWindow*> toClose;
-        for (auto* w : m_pluginWindows) {
-            if (w->plugin() == plugin)
-                toClose.push_back(w);
-        }
-        for (auto* w : toClose)
-            w->close();
+        closePluginWindowsFor(plugin);
     });
 
     connect(m_busPanel, &BusPanelWidget::busPluginAddRequested, this,
@@ -342,13 +333,7 @@ void MainWindow::setupUi() {
             m_project.buses()[busIndex].pluginChain(), pluginJson, &m_pluginManager,
             static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
         cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
-            std::vector<PluginWindow*> toClose;
-            for (auto* w : m_pluginWindows) {
-                if (w->plugin() == plugin)
-                    toClose.push_back(w);
-            }
-            for (auto* w : toClose)
-                w->close();
+            closePluginWindowsFor(plugin);
         });
         executeCommand(std::move(cmd));
         if (auto* added = dynamic_cast<AddPluginCommand*>(m_undoStack.topCommand()))
@@ -457,13 +442,7 @@ void MainWindow::setupUi() {
         if (index < 0 || index >= static_cast<int>(m_project.instruments().size())) return;
         auto& inst = m_project.instruments()[index];
         if (!inst.synth()) return;
-        std::vector<PluginWindow*> toClose;
-        for (auto* w : m_pluginWindows) {
-            if (w->plugin() == inst.synth())
-                toClose.push_back(w);
-        }
-        for (auto* w : toClose)
-            w->close();
+        closePluginWindowsFor(inst.synth());
         auto cmd = std::make_unique<SetInstrumentSynthCommand>(
             m_project, index, inst.synth()->stateToJson(), QJsonObject(), &m_pluginManager,
             m_engine.sampleRate(), m_engine.bufferSize());
@@ -483,13 +462,7 @@ void MainWindow::setupUi() {
 
     connect(m_instrumentPanel, &InstrumentPanelWidget::pluginWillBeRemoved, this,
             [this](PluginInstance* plugin) {
-        std::vector<PluginWindow*> toClose;
-        for (auto* w : m_pluginWindows) {
-            if (w->plugin() == plugin)
-                toClose.push_back(w);
-        }
-        for (auto* w : toClose)
-            w->close();
+        closePluginWindowsFor(plugin);
     });
 
     connect(m_instrumentPanel, &InstrumentPanelWidget::fxAddRequested, this,
@@ -502,13 +475,7 @@ void MainWindow::setupUi() {
             m_project.instruments()[index].effects(), pluginJson, &m_pluginManager,
             static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
         cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
-            std::vector<PluginWindow*> toClose;
-            for (auto* w : m_pluginWindows) {
-                if (w->plugin() == plugin)
-                    toClose.push_back(w);
-            }
-            for (auto* w : toClose)
-                w->close();
+            closePluginWindowsFor(plugin);
         });
         executeCommand(std::move(cmd));
         if (auto* added = dynamic_cast<AddPluginCommand*>(m_undoStack.topCommand()))
@@ -569,17 +536,13 @@ void MainWindow::setupTransportConnections() {
     connect(m_transportPanel, &TransportPanel::stopClicked, this, [this, refreshTrackViews] {
         m_engine.setTransportState(TransportState::Stopped);
         m_engine.setPlayPosition(0);
-        int64_t zeroPos = 0;
-        m_timelineRuler->setPlayheadPosition(zeroPos);
-        m_measureRuler->setPlayheadPosition(zeroPos);
-        for (auto& row : m_trackRows)
-            row.view->setPlayheadPosition(zeroPos);
+        syncPlayheadViews(0);
         m_transportPanel->setPlaying(false);
         m_transportPanel->setRecording(false);
         refreshTrackViews();
     });
 
-    connect(m_transportPanel, &TransportPanel::recordClicked, this, [this, refreshTrackViews] {
+    auto toggleRecording = [this, refreshTrackViews] {
         TransportState s = m_engine.transportState();
         if (s == TransportState::Recording) {
             m_engine.setTransportState(TransportState::Stopped);
@@ -589,20 +552,11 @@ void MainWindow::setupTransportConnections() {
             m_engine.setTransportState(TransportState::Recording);
             m_transportPanel->setRecording(true);
         }
-    });
+    };
+    connect(m_transportPanel, &TransportPanel::recordClicked, this, toggleRecording);
 
     auto* recordShortcut = new QShortcut(QKeySequence(Qt::Key_R), this);
-    connect(recordShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
-        TransportState s = m_engine.transportState();
-        if (s == TransportState::Recording) {
-            m_engine.setTransportState(TransportState::Stopped);
-            m_transportPanel->setRecording(false);
-            refreshTrackViews();
-        } else {
-            m_engine.setTransportState(TransportState::Recording);
-            m_transportPanel->setRecording(true);
-        }
-    });
+    connect(recordShortcut, &QShortcut::activated, this, toggleRecording);
 
     auto* playShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(playShortcut, &QShortcut::activated, this, [this, refreshTrackViews] {
@@ -664,10 +618,7 @@ void MainWindow::setupTimer() {
             }
         }
 
-        m_timelineRuler->setPlayheadPosition(pos);
-        m_measureRuler->setPlayheadPosition(pos);
-        for (auto& row : m_trackRows)
-            row.view->setPlayheadPosition(pos);
+        syncPlayheadViews(pos);
         for (auto* pr : m_pianoRollWindows)
             pr->setPlayheadSample(pos);
     });
@@ -740,6 +691,17 @@ void MainWindow::closePluginWindowsFor(const std::vector<PluginInstance*>& plugi
     }
     for (auto* w : toClose)
         w->close();
+}
+
+void MainWindow::closePluginWindowsFor(PluginInstance* plugin) {
+    closePluginWindowsFor(std::vector<PluginInstance*>{plugin});
+}
+
+void MainWindow::syncPlayheadViews(int64_t sample) {
+    m_timelineRuler->setPlayheadPosition(sample);
+    m_measureRuler->setPlayheadPosition(sample);
+    for (auto& row : m_trackRows)
+        row.view->setPlayheadPosition(sample);
 }
 
 void MainWindow::setupMenus() {
@@ -1135,13 +1097,7 @@ void MainWindow::rebuildTracks() {
 
         connect(row.pluginList, &PluginListWidget::pluginWillBeRemoved, this,
                 [this](PluginInstance* plugin) {
-            std::vector<PluginWindow*> toClose;
-            for (auto* w : m_pluginWindows) {
-                if (w->plugin() == plugin)
-                    toClose.push_back(w);
-            }
-            for (auto* w : toClose)
-                w->close();
+            closePluginWindowsFor(plugin);
         });
 
         connect(row.pluginList, &PluginListWidget::pluginAddRequested, this,
@@ -1153,13 +1109,7 @@ void MainWindow::rebuildTracks() {
                 track.pluginChain(), pluginJson, &m_pluginManager,
                 static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
             cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
-                std::vector<PluginWindow*> toClose;
-                for (auto* w : m_pluginWindows) {
-                    if (w->plugin() == plugin)
-                        toClose.push_back(w);
-                }
-                for (auto* w : toClose)
-                    w->close();
+                closePluginWindowsFor(plugin);
             });
             executeCommand(std::move(cmd));
             if (auto* added = dynamic_cast<AddPluginCommand*>(m_undoStack.topCommand()))
@@ -1302,10 +1252,7 @@ void MainWindow::rebuildTracks() {
     syncZoom();
 
     int64_t ph = m_engine.playPosition();
-    m_timelineRuler->setPlayheadPosition(ph);
-    m_measureRuler->setPlayheadPosition(ph);
-    for (auto& row : m_trackRows)
-        row.view->setPlayheadPosition(ph);
+    syncPlayheadViews(ph);
 
     bool snap = m_project.snapToGrid();
     m_timelineRuler->setSnapToGrid(snap);

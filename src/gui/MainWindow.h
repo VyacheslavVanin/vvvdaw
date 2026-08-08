@@ -57,6 +57,9 @@ private:
     class PluginChain* findChainForPlugin(PluginInstance* plugin);
     void closeAllPluginWindows();
     void closePluginWindowsFor(const std::vector<PluginInstance*>& plugins);
+    void closePluginWindowsFor(PluginInstance* plugin);
+    // Push the playhead position into the engine, rulers and all track views.
+    void syncPlayheadViews(int64_t sample);
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);
 
