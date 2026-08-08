@@ -37,6 +37,8 @@ public:
     ~MainWindow() override;
 
 private:
+    friend class MainWindowTest;
+
     void setupUi();
     void setupMenus();
     void setupTransportConnections();
