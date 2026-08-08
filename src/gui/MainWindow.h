@@ -28,6 +28,7 @@ class PluginChain;
 class PluginListWidget;
 class QSplitter;
 class QVBoxLayout;
+struct DeviceInfo;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -64,6 +65,20 @@ private:
     void syncPlayheadViews(int64_t sample);
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);
+
+    // setupUi() steps
+    void setupRulerConnections();
+    void setupBusPanel(QVBoxLayout* layout);
+    void setupInstrumentPanel(QVBoxLayout* layout);
+
+    // rebuildTracks() steps
+    void teardownTrackRows();
+    void buildTrackRow(int trackIndex, bool odd,
+                       const std::vector<DeviceInfo>& devices,
+                       const std::vector<std::pair<int, QString>>& midiOutList,
+                       const std::vector<QString>& instrumentNames);
+    void syncAfterRebuild();
+    void syncSnapUnit();
 
     bool eventFilter(QObject* obj, QEvent* event) override;
 

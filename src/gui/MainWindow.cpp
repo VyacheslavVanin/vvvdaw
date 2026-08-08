@@ -122,6 +122,52 @@ void MainWindow::setupUi() {
     rulerRow2->addWidget(m_measureRuler, 1);
     layout->addLayout(rulerRow2);
 
+    setupRulerConnections();
+    // Track scroll area
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    m_trackContainer = new QWidget(scrollArea);
+    m_trackContainer->setAutoFillBackground(true);
+    QPalette containerPal = m_trackContainer->palette();
+    containerPal.setColor(QPalette::Window, QColor("#2a2a2a"));
+    m_trackContainer->setPalette(containerPal);
+    scrollArea->viewport()->setAutoFillBackground(true);
+    QPalette viewportPal = scrollArea->viewport()->palette();
+    viewportPal.setColor(QPalette::Window, QColor("#2a2a2a"));
+    scrollArea->viewport()->setPalette(viewportPal);
+    m_trackLayout = new QVBoxLayout(m_trackContainer);
+    m_trackLayout->setContentsMargins(0, 0, 0, 0);
+    m_trackLayout->setSpacing(2);
+    scrollArea->setWidget(m_trackContainer);
+
+    layout->addWidget(scrollArea, 1);
+
+    m_horizontalScroll = new QScrollBar(Qt::Horizontal, this);
+    m_horizontalScroll->setRange(0, 1000000);
+    connect(m_horizontalScroll, &QScrollBar::valueChanged, this, &MainWindow::syncScrollPositions);
+
+    auto* scrollRow = new QHBoxLayout;
+    scrollRow->setContentsMargins(0, 0, 0, 0);
+    scrollRow->setSpacing(0);
+    m_scrollSpacer = new QWidget(this);
+    m_scrollSpacer->setFixedWidth(400);
+    m_scrollSpacer->setStyleSheet("background-color: #2a2a2a;");
+    scrollRow->addWidget(m_scrollSpacer);
+    scrollRow->addWidget(m_horizontalScroll);
+    layout->addLayout(scrollRow);
+
+    setupBusPanel(layout);
+    setupInstrumentPanel(layout);
+    setCentralWidget(central);
+
+    setupTransportConnections();
+    setupTimer();
+}
+
+void MainWindow::setupRulerConnections() {
     auto onPlayheadClicked = [this](int64_t sample) {
         m_engine.setPlayPosition(sample);
         syncPlayheadViews(sample);
@@ -181,19 +227,7 @@ void MainWindow::setupUi() {
     connect(m_measureRuler, &MeasureRuler::recordRegionChanged, this, onRecordRegionChanged);
 
     // Tempo widget signals
-    auto updateSnapUnit = [this] {
-        double snapUnit = m_project.samplesPerBar() / m_snapResolution;
-        m_timelineRuler->setSnapUnit(snapUnit);
-        m_measureRuler->setSnapUnit(snapUnit);
-        m_measureRuler->setTempo(m_project.tempo());
-        m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
-        for (auto& row : m_trackRows) {
-            if (row.view) {
-                row.view->setSnapUnit(snapUnit);
-                row.view->setSamplesPerTick(m_project.samplesPerTick());
-            }
-        }
-    };
+    auto updateSnapUnit = [this] { syncSnapUnit(); };
     connect(m_tempoWidget, &TempoWidget::tempoChanged, this, [this, updateSnapUnit](double bpm) {
         executeCommand(std::make_unique<SetTempoCommand>(m_project, m_project.tempo(), bpm));
         updateSnapUnit();
@@ -218,42 +252,9 @@ void MainWindow::setupUi() {
         m_engine.setPrecountEnabled(on);
     });
 
-    // Track scroll area
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+}
 
-    m_trackContainer = new QWidget(scrollArea);
-    m_trackContainer->setAutoFillBackground(true);
-    QPalette containerPal = m_trackContainer->palette();
-    containerPal.setColor(QPalette::Window, QColor("#2a2a2a"));
-    m_trackContainer->setPalette(containerPal);
-    scrollArea->viewport()->setAutoFillBackground(true);
-    QPalette viewportPal = scrollArea->viewport()->palette();
-    viewportPal.setColor(QPalette::Window, QColor("#2a2a2a"));
-    scrollArea->viewport()->setPalette(viewportPal);
-    m_trackLayout = new QVBoxLayout(m_trackContainer);
-    m_trackLayout->setContentsMargins(0, 0, 0, 0);
-    m_trackLayout->setSpacing(2);
-    scrollArea->setWidget(m_trackContainer);
-
-    layout->addWidget(scrollArea, 1);
-
-    m_horizontalScroll = new QScrollBar(Qt::Horizontal, this);
-    m_horizontalScroll->setRange(0, 1000000);
-    connect(m_horizontalScroll, &QScrollBar::valueChanged, this, &MainWindow::syncScrollPositions);
-
-    auto* scrollRow = new QHBoxLayout;
-    scrollRow->setContentsMargins(0, 0, 0, 0);
-    scrollRow->setSpacing(0);
-    m_scrollSpacer = new QWidget(this);
-    m_scrollSpacer->setFixedWidth(400);
-    m_scrollSpacer->setStyleSheet("background-color: #2a2a2a;");
-    scrollRow->addWidget(m_scrollSpacer);
-    scrollRow->addWidget(m_horizontalScroll);
-    layout->addLayout(scrollRow);
-
+void MainWindow::setupBusPanel(QVBoxLayout* layout) {
     // Bus panel grip (draggable resize handle)
     m_busPanelGrip = new QWidget(this);
     m_busPanelGrip->setFixedHeight(6);
@@ -353,6 +354,10 @@ void MainWindow::setupUi() {
         pushCommand(std::make_unique<SnapshotCommand>(m_project));
     });
 
+    m_busPanelGrip->installEventFilter(this);
+}
+
+void MainWindow::setupInstrumentPanel(QVBoxLayout* layout) {
     // Instrument panel grip (draggable resize handle)
     m_instrumentPanelGrip = new QWidget(this);
     m_instrumentPanelGrip->setFixedHeight(6);
@@ -497,12 +502,7 @@ void MainWindow::setupUi() {
 
     m_instrumentPanelGrip->installEventFilter(this);
 
-    m_busPanelGrip->installEventFilter(this);
 
-    setCentralWidget(central);
-
-    setupTransportConnections();
-    setupTimer();
 }
 
 void MainWindow::setupTransportConnections() {
@@ -916,6 +916,26 @@ void MainWindow::refreshBusCombos() {
 }
 
 void MainWindow::rebuildTracks() {
+    teardownTrackRows();
+
+    auto devices = AudioEngine::enumerateInputDevices();
+    auto midiDevices = AudioEngine::enumerateMidiOutputDevices();
+    std::vector<std::pair<int, QString>> midiOutList;
+    for (const auto& dev : midiDevices)
+        midiOutList.emplace_back(dev.id, dev.name);
+    std::vector<QString> instrumentNames;
+    for (const auto& inst : m_project.instruments())
+        instrumentNames.push_back(inst.name());
+
+    for (int i = 0; i < static_cast<int>(m_project.tracks().size()); ++i) {
+        bool odd = (i % 2) != 0;
+        buildTrackRow(i, odd, devices, midiOutList, instrumentNames);
+    }
+
+    syncAfterRebuild();
+}
+
+void MainWindow::teardownTrackRows() {
     if (!m_trackSplitters.empty())
         m_savedPluginListWidth = m_trackSplitters.front()->sizes().value(0, 200);
 
@@ -948,18 +968,14 @@ void MainWindow::rebuildTracks() {
         delete item;
     }
 
-    auto devices = AudioEngine::enumerateInputDevices();
-    auto midiDevices = AudioEngine::enumerateMidiOutputDevices();
-    std::vector<std::pair<int, QString>> midiOutList;
-    for (const auto& dev : midiDevices)
-        midiOutList.emplace_back(dev.id, dev.name);
-    std::vector<QString> instrumentNames;
-    for (const auto& inst : m_project.instruments())
-        instrumentNames.push_back(inst.name());
+}
 
-    for (auto& track : m_project.tracks()) {
-        TrackRow row;
-        bool odd = (static_cast<int>(&track - m_project.tracks().data()) % 2) != 0;
+void MainWindow::buildTrackRow(int trackIndex, bool odd,
+                               const std::vector<DeviceInfo>& devices,
+                               const std::vector<std::pair<int, QString>>& midiOutList,
+                               const std::vector<QString>& instrumentNames) {
+    Track& track = m_project.tracks()[trackIndex];
+    TrackRow row;
         row.panel = new TrackPanelWidget(&track, m_trackContainer);
         row.panel->setAlternateRow(odd);
         row.panel->updateBusList(m_project.buses());
@@ -994,7 +1010,7 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.panel, &TrackPanelWidget::addMidiEventRequested, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
+                [this, idx = trackIndex] {
             if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size()))
                 return;
             int64_t start = m_engine.playPosition();
@@ -1017,7 +1033,7 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.panel, &TrackPanelWidget::midiOutputChanged, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())]
+                [this, idx = trackIndex]
                 (int deviceId, const QString& deviceName, int instrumentIndex) {
             if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
             auto& trk = m_project.tracks()[idx];
@@ -1035,7 +1051,7 @@ void MainWindow::rebuildTracks() {
             m_engine.refreshMidiOutputs();
         });
 
-        connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = static_cast<int>(&track - m_project.tracks().data())] {
+        connect(row.panel, &TrackPanelWidget::deleteRequested, this, [this, idx = trackIndex] {
             if (idx < static_cast<int>(m_project.tracks().size())) {
                 std::vector<PluginInstance*> plugins;
                 auto& chain = m_project.tracks()[idx].pluginChain();
@@ -1051,43 +1067,43 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.panel, &TrackPanelWidget::armToggled, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+                [this, idx = trackIndex](bool oldValue, bool newValue) {
             if (oldValue == newValue) return;
             pushCommand(std::make_unique<SetTrackArmCommand>(m_project, idx, oldValue, newValue));
         });
 
         connect(row.panel, &TrackPanelWidget::soloToggled, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+                [this, idx = trackIndex](bool oldValue, bool newValue) {
             if (oldValue == newValue) return;
             pushCommand(std::make_unique<SetTrackSoloCommand>(m_project, idx, oldValue, newValue));
         });
 
         connect(row.panel, &TrackPanelWidget::muteToggled, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+                [this, idx = trackIndex](bool oldValue, bool newValue) {
             if (oldValue == newValue) return;
             pushCommand(std::make_unique<SetTrackMuteCommand>(m_project, idx, oldValue, newValue));
         });
 
         connect(row.panel, &TrackPanelWidget::monitorToggled, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](bool oldValue, bool newValue) {
+                [this, idx = trackIndex](bool oldValue, bool newValue) {
             if (oldValue == newValue) return;
             pushCommand(std::make_unique<SetTrackMonitorCommand>(m_project, idx, oldValue, newValue));
         });
 
         connect(row.panel, &TrackPanelWidget::panChanged, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](float oldValue, float newValue) {
+                [this, idx = trackIndex](float oldValue, float newValue) {
             if (oldValue == newValue) return;
             pushCommand(std::make_unique<SetTrackPanCommand>(m_project, idx, oldValue, newValue));
         });
 
         connect(row.panel, &TrackPanelWidget::volumeChanged, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](float oldValue, float newValue) {
+                [this, idx = trackIndex](float oldValue, float newValue) {
             if (oldValue == newValue) return;
             pushCommand(std::make_unique<SetTrackVolumeCommand>(m_project, idx, oldValue, newValue));
         });
 
         connect(row.panel, &TrackPanelWidget::outputBusChanged, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](int oldIndex, int newIndex) {
+                [this, idx = trackIndex](int oldIndex, int newIndex) {
             if (oldIndex == newIndex) return;
             pushCommand(std::make_unique<SetTrackOutputCommand>(m_project, idx, oldIndex, newIndex));
         });
@@ -1101,12 +1117,13 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.pluginList, &PluginListWidget::pluginAddRequested, this,
-                [this, &track](const QString& type, const QString& path) {
+                [this, idx = trackIndex](const QString& type, const QString& path) {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
             QJsonObject pluginJson;
             pluginJson["type"] = type;
             pluginJson["path"] = path;
             auto cmd = std::make_unique<AddPluginCommand>(
-                track.pluginChain(), pluginJson, &m_pluginManager,
+                m_project.tracks()[idx].pluginChain(), pluginJson, &m_pluginManager,
                 static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
             cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
                 closePluginWindowsFor(plugin);
@@ -1138,12 +1155,12 @@ void MainWindow::rebuildTracks() {
         });
 
         connect(row.view, &TrackViewWidget::eventDoubleClicked, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](int64_t eventId) {
+                [this, idx = trackIndex](int64_t eventId) {
             openPianoRoll(idx, eventId);
         });
 
         connect(row.view, &TrackViewWidget::addMidiEventRequested, this,
-                [this, idx = static_cast<int>(&track - m_project.tracks().data())](int64_t startSample) {
+                [this, idx = trackIndex](int64_t startSample) {
             if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size()))
                 return;
             QJsonObject clipJson;
@@ -1245,8 +1262,9 @@ void MainWindow::rebuildTracks() {
         });
 
         m_trackRows.push_back(row);
-    }
+}
 
+void MainWindow::syncAfterRebuild() {
     m_trackLayout->addStretch();
 
     syncZoom();
@@ -1290,20 +1308,26 @@ void MainWindow::rebuildTracks() {
     m_engine.setMetronomeEnabled(m_project.metronomeEnabled());
     m_engine.setPrecountEnabled(m_project.precountEnabled());
 
+    syncSnapUnit();
+
+    if (m_busPanel->isVisible())
+        m_busPanel->rebuild();
+
+    m_trackContainer->update();
+}
+
+void MainWindow::syncSnapUnit() {
     double snapUnit = m_project.samplesPerBar() / m_snapResolution;
     m_timelineRuler->setSnapUnit(snapUnit);
     m_measureRuler->setSnapUnit(snapUnit);
+    m_measureRuler->setTempo(m_project.tempo());
+    m_measureRuler->setTimeSignature(m_project.timeSigNum(), m_project.timeSigDen());
     for (auto& row : m_trackRows) {
         if (row.view) {
             row.view->setSnapUnit(snapUnit);
             row.view->setSamplesPerTick(m_project.samplesPerTick());
         }
     }
-
-    if (m_busPanel->isVisible())
-        m_busPanel->rebuild();
-
-    m_trackContainer->update();
 }
 
 void MainWindow::syncZoom() {
