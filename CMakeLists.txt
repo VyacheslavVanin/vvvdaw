@@ -72,6 +72,7 @@ add_library(vvvdaw_model STATIC
     src/model/MidiEvent.cpp
     src/model/Track.cpp
     src/model/Project.cpp
+    src/model/TemplateStore.cpp
 )
 target_include_directories(vvvdaw_model PUBLIC ${APP_INCLUDE_DIRS})
 target_link_libraries(vvvdaw_model PUBLIC
@@ -126,6 +127,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/RangeRulerWidget.cpp
     src/gui/TempoWidget.cpp
     src/gui/SettingsDialog.cpp
+    src/gui/StartDialog.cpp
     src/gui/PluginListWidget.cpp
     src/gui/PluginWindow.cpp
     src/gui/PluginParameterWidget.cpp

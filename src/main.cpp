@@ -9,7 +9,10 @@
 #include "core/Settings.h"
 #include "audio/AudioEngine.h"
 #include "gui/MainWindow.h"
+#include "gui/StartDialog.h"
 #include "model/Project.h"
+#include "model/TemplateStore.h"
+#include <QMessageBox>
 
 static void crashHandler(int sig) {
     fprintf(stderr, "\n=== SEGFAULT (signal %d) ===\n", sig);
@@ -48,16 +51,47 @@ int main(int argc, char* argv[]) {
     Settings settings;
     settings.load();
 
-    int result;
     Project project;
     if (!projectFile.isEmpty()) {
-        QFile f(projectFile);
-        if (f.open(QIODevice::ReadOnly)) {
-            QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-            if (doc.isObject()) project.fromJson(doc.object());
+        if (project.load(projectFile)) {
+            settings.addRecentProject(projectFile);
+        } else {
+            qWarning("Failed to load project: %s", qPrintable(projectFile));
+            project.addTrack("Track 1");
         }
     } else {
-        project.addTrack("Track 1");
+        // Show the startup dialog before any audio device is opened, so a
+        // declined start quits cleanly without touching the audio stack.
+        StartDialog startDialog(settings);
+        if (startDialog.exec() != QDialog::Accepted) {
+            settings.save();
+            return 0;
+        }
+        switch (startDialog.choice().action) {
+        case StartDialog::Action::OpenRecent:
+        case StartDialog::Action::Browse: {
+            const QString path = startDialog.choice().path;
+            if (!path.isEmpty() && project.load(path)) {
+                settings.addRecentProject(path);
+            } else {
+                settings.removeRecentProject(path);
+                QMessageBox::warning(nullptr, "vvvdaw", "Failed to open project.");
+                project.addTrack("Track 1");
+            }
+            break;
+        }
+        case StartDialog::Action::OpenTemplate:
+            if (!TemplateStore::loadTemplate(project, startDialog.choice().templateName)) {
+                QMessageBox::warning(nullptr, "vvvdaw", "Failed to open template.");
+                project.addTrack("Track 1");
+            }
+            break;
+        case StartDialog::Action::Exit:
+            settings.save();
+            return 0;
+        default:
+            project.addTrack("Track 1");
+        }
     }
 
     AudioEngine audioEngine;
@@ -71,7 +105,7 @@ int main(int argc, char* argv[]) {
     MainWindow window(project, audioEngine, settings);
     window.show();
 
-    result = app.exec();
+    int result = app.exec();
 
     audioEngine.deactivateAllPlugins();
     audioEngine.shutdown();

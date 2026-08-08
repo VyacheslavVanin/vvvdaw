@@ -27,6 +27,7 @@
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
 #include "model/Instrument.h"
+#include "model/TemplateStore.h"
 #include "audio/AudioEngine.h"
 #include "audio/DeviceInfo.h"
 #include "core/Settings.h"
@@ -41,6 +42,7 @@ using vvvdaw::TransportState;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScrollArea>
@@ -723,6 +725,7 @@ void MainWindow::setupMenus() {
     auto* openAction = fileMenu->addAction("&Open Project...", QKeySequence::Open);
     auto* saveAction = fileMenu->addAction("&Save Project", QKeySequence::Save);
     auto* saveAsAction = fileMenu->addAction("Save &As...", QKeySequence("Ctrl+Shift+S"));
+    auto* saveTemplateAction = fileMenu->addAction("Save as &Template...");
     fileMenu->addSeparator();
     auto* settingsAction = fileMenu->addAction("&Settings...");
     fileMenu->addSeparator();
@@ -769,6 +772,7 @@ void MainWindow::setupMenus() {
         m_project.setSampleRate(m_engine.sampleRate());
         m_scrollOffset = 0;
         rebuildTracks();
+        m_settings.addRecentProject(path);
         setWindowTitle("vvvdaw - " + QFileInfo(path).absolutePath());
     });
 
@@ -779,6 +783,8 @@ void MainWindow::setupMenus() {
         }
         if (!m_project.save(m_project.filePath())) {
             QMessageBox::warning(this, "Error", "Failed to save project.");
+        } else {
+            m_settings.addRecentProject(m_project.filePath());
         }
     });
 
@@ -791,7 +797,36 @@ void MainWindow::setupMenus() {
             QMessageBox::warning(this, "Error", "Failed to save project.");
             return;
         }
+        m_settings.addRecentProject(path);
         setWindowTitle("vvvdaw - " + dir);
+    });
+
+    connect(saveTemplateAction, &QAction::triggered, this, [this] {
+        bool ok = false;
+        QString name = QInputDialog::getText(this, "Save as Template",
+                                             "Template name:", QLineEdit::Normal, {}, &ok);
+        if (!ok)
+            return;
+        name = TemplateStore::sanitizeName(name);
+        if (name.isEmpty()) {
+            QMessageBox::warning(this, "Save as Template",
+                                 "The template name is not valid.");
+            return;
+        }
+        bool overwrite = false;
+        if (TemplateStore::exists(name)) {
+            auto ret = QMessageBox::question(
+                this, "Overwrite Template",
+                QString("Template \"%1\" already exists.\nOverwrite it?").arg(name),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (ret != QMessageBox::Yes)
+                return;
+            overwrite = true;
+        }
+        if (!TemplateStore::saveTemplate(m_project, name, overwrite)) {
+            QMessageBox::warning(this, "Save as Template",
+                                 "Failed to save template.");
+        }
     });
 
     connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);

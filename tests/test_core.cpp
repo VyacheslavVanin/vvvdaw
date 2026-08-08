@@ -1,8 +1,11 @@
 #include <QTest>
+#include <QCoreApplication>
+#include <QTemporaryDir>
 #include <memory>
 #include "core/UndoStack.h"
 #include "core/UndoCommand.h"
 #include "core/TimeUtils.h"
+#include "core/Settings.h"
 
 class ValueCommand : public UndoCommand {
 public:
@@ -181,5 +184,109 @@ void TestUndoStack::formatTime() {
     QCOMPARE(TimeUtils::formatTime(60 * 48000 + 12345, 48000), QString("00:01:00.257"));
 }
 
-QTEST_MAIN(TestUndoStack)
+class TestSettings : public QObject {
+    Q_OBJECT
+private slots:
+    void initTestCase();
+    void cleanupTestCase();
+    void recentsMostRecentFirst();
+    void recentsDedupe();
+    void recentsCappedAtTen();
+    void recentsJsonRoundTrip();
+    void removeRecentProject();
+};
+
+void TestSettings::initTestCase() {
+    Settings::setConfigDirOverride("");
+}
+
+void TestSettings::cleanupTestCase() {
+    Settings::setConfigDirOverride("");
+}
+
+void TestSettings::recentsMostRecentFirst() {
+    Settings settings;
+    settings.addRecentProject("/p/a");
+    settings.addRecentProject("/p/b");
+    settings.addRecentProject("/p/c");
+    QCOMPARE(settings.recentProjects().size(), size_t(3));
+    QCOMPARE(settings.recentProjects()[0].path, QString("/p/c"));
+    QCOMPARE(settings.recentProjects()[1].path, QString("/p/b"));
+    QCOMPARE(settings.recentProjects()[2].path, QString("/p/a"));
+
+    // Touching an older entry moves it back to the front.
+    settings.addRecentProject("/p/b");
+    QCOMPARE(settings.recentProjects().size(), size_t(3));
+    QCOMPARE(settings.recentProjects()[0].path, QString("/p/b"));
+    QCOMPARE(settings.recentProjects()[1].path, QString("/p/c"));
+    QCOMPARE(settings.recentProjects()[2].path, QString("/p/a"));
+}
+
+void TestSettings::recentsDedupe() {
+    Settings settings;
+    settings.addRecentProject("/p/a");
+    settings.addRecentProject("/p/a");
+    QCOMPARE(settings.recentProjects().size(), size_t(1));
+    QCOMPARE(settings.recentProjects()[0].path, QString("/p/a"));
+}
+
+void TestSettings::recentsCappedAtTen() {
+    Settings settings;
+    for (int i = 0; i < Settings::MaxRecentProjects + 5; ++i)
+        settings.addRecentProject(QString("/p/p%1").arg(i));
+    QCOMPARE(settings.recentProjects().size(), size_t(Settings::MaxRecentProjects));
+    QCOMPARE(settings.recentProjects().front().path,
+             QString("/p/p%1").arg(Settings::MaxRecentProjects + 4));
+    // Oldest entries were dropped.
+    for (int i = 0; i < 5; ++i) {
+        bool found = false;
+        for (const auto& r : settings.recentProjects())
+            if (r.path == QString("/p/p%1").arg(i)) found = true;
+        QVERIFY(!found);
+    }
+}
+
+void TestSettings::recentsJsonRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings::setConfigDirOverride(dir.path());
+
+    Settings settings;
+    settings.addRecentProject("/p/a");
+    QTest::qWait(5);
+    settings.addRecentProject("/p/b");
+    QTest::qWait(5);
+    settings.addRecentProject("/p/c");
+    settings.save();
+
+    Settings loaded;
+    loaded.load();
+    QCOMPARE(loaded.recentProjects().size(), size_t(3));
+    QCOMPARE(loaded.recentProjects()[0].path, QString("/p/c"));
+    QCOMPARE(loaded.recentProjects()[1].path, QString("/p/b"));
+    QCOMPARE(loaded.recentProjects()[2].path, QString("/p/a"));
+
+    Settings::setConfigDirOverride("");
+}
+
+void TestSettings::removeRecentProject() {
+    Settings settings;
+    settings.addRecentProject("/p/a");
+    settings.addRecentProject("/p/b");
+    settings.removeRecentProject("/p/missing");
+    QCOMPARE(settings.recentProjects().size(), size_t(2));
+    settings.removeRecentProject("/p/a");
+    QCOMPARE(settings.recentProjects().size(), size_t(1));
+    QCOMPARE(settings.recentProjects()[0].path, QString("/p/b"));
+}
+
+int main(int argc, char* argv[]) {
+    QCoreApplication app(argc, argv);
+    int status = 0;
+    TestUndoStack undo;
+    status |= QTest::qExec(&undo, argc, argv);
+    TestSettings settings;
+    status |= QTest::qExec(&settings, argc, argv);
+    return status;
+}
 #include "test_core.moc"

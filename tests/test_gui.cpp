@@ -1,5 +1,9 @@
 #include <QTest>
 #include <QApplication>
+#include <QFile>
+#include <QTemporaryDir>
+#include <QMenuBar>
+#include <QListWidget>
 #include <algorithm>
 #include <portaudio.h>
 
@@ -9,7 +13,9 @@
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include "model/Instrument.h"
+#include "model/TemplateStore.h"
 #include "gui/MainWindow.h"
+#include "gui/StartDialog.h"
 #include "gui/TrackPanelWidget.h"
 #include "gui/TrackViewWidget.h"
 #include "gui/TimelineRuler.h"
@@ -53,14 +59,27 @@ private slots:
     void busRenameRefreshesBusAndInstrumentOutCombos();
     void rejectAudioEventToMidiTrack();
     void rejectMidiEventToAudioTrack();
+    void startDialogListsRecentProjects();
+    void startDialogListsTemplates();
+    void startDialogSelectingTemplateSetsChoice();
+    void mainWindowFileMenuHasSaveAsTemplate();
+private:
+    QTemporaryDir* m_tmpDir = nullptr;
 };
 
 void MainWindowTest::initTestCase() {
     if (Pa_Initialize() != paNoError)
         QSKIP("PortAudio not available");
+    m_tmpDir = new QTemporaryDir;
+    QVERIFY(m_tmpDir->isValid());
+    TemplateStore::setTemplatesDirOverride(m_tmpDir->path());
+    TemplateStore::ensureBuiltInTemplates();
 }
 
 void MainWindowTest::cleanupTestCase() {
+    TemplateStore::setTemplatesDirOverride("");
+    delete m_tmpDir;
+    m_tmpDir = nullptr;
     Pa_Terminate();
 }
 
@@ -443,6 +462,75 @@ void MainWindowTest::rejectMidiEventToAudioTrack() {
     QCOMPARE(src.midiEvents().front().startSample(), int64_t(100));
     QVERIFY(dst.events().empty());
     QVERIFY(dst.midiEvents().empty());
+}
+
+void MainWindowTest::startDialogListsRecentProjects() {
+    const QString oldPath = m_tmpDir->filePath("project_old.json");
+    const QString recentPath = m_tmpDir->filePath("project_recent.json");
+    QFile oldFile(oldPath);
+    QVERIFY(oldFile.open(QIODevice::WriteOnly));
+    oldFile.write("{}");
+    QFile recentFile(recentPath);
+    QVERIFY(recentFile.open(QIODevice::WriteOnly));
+    recentFile.write("{}");
+
+    Settings settings;
+    settings.addRecentProject(oldPath);
+    settings.addRecentProject(recentPath);
+
+    StartDialog dialog(settings);
+    QCOMPARE(dialog.m_recentList->count(), 2);
+    QCOMPARE(dialog.m_recentList->item(0)->data(Qt::UserRole).toString(),
+             recentPath);
+    QCOMPARE(dialog.m_recentList->item(1)->data(Qt::UserRole).toString(),
+             oldPath);
+}
+
+void MainWindowTest::startDialogListsTemplates() {
+    Settings settings;
+    StartDialog dialog(settings);
+    QVERIFY(dialog.m_templateList->count() >= 2);
+    QStringList texts;
+    for (int i = 0; i < dialog.m_templateList->count(); ++i)
+        texts << dialog.m_templateList->item(i)->data(Qt::UserRole).toString();
+    QVERIFY(texts.contains("empty"));
+    QVERIFY(texts.contains("rock-band"));
+}
+
+void MainWindowTest::startDialogSelectingTemplateSetsChoice() {
+    Settings settings;
+    StartDialog dialog(settings);
+    dialog.show();
+    QCoreApplication::processEvents();
+
+    int idx = -1;
+    for (int i = 0; i < dialog.m_templateList->count(); ++i)
+        if (dialog.m_templateList->item(i)->data(Qt::UserRole).toString() == "empty")
+            idx = i;
+    QVERIFY(idx >= 0);
+    dialog.m_templateList->setCurrentRow(idx);
+    dialog.m_useTemplateButton->click();
+
+    QCOMPARE(dialog.choice().action, StartDialog::Action::OpenTemplate);
+    QCOMPARE(dialog.choice().templateName, QString("empty"));
+}
+
+void MainWindowTest::mainWindowFileMenuHasSaveAsTemplate() {
+    Project project;
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    auto* fileMenu = window.menuBar()->actions().value(0)->menu();
+    QVERIFY(fileMenu);
+    bool found = false;
+    for (auto* action : fileMenu->actions()) {
+        if (action->text().contains("Template")) {
+            found = true;
+            break;
+        }
+    }
+    QVERIFY(found);
 }
 
 QTEST_MAIN(MainWindowTest)

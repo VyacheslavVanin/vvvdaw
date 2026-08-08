@@ -1,11 +1,19 @@
 #include "Settings.h"
 #include "Constants.h"
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QStandardPaths>
+#include <algorithm>
+
+QString Settings::s_configDirOverride;
+
+void Settings::setConfigDirOverride(const QString& dir) {
+    s_configDirOverride = dir;
+}
 
 Settings::Settings()
     : sampleRate(vvvdaw::DefaultSampleRate)
@@ -21,9 +29,31 @@ Settings::Settings()
 }
 
 QString Settings::configFilePath() const {
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QString dir = s_configDirOverride.isEmpty()
+                      ? QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+                      : s_configDirOverride;
     QDir().mkpath(dir);
     return dir + "/settings.json";
+}
+
+void Settings::addRecentProject(const QString& path) {
+    if (path.isEmpty())
+        return;
+    m_recentProjects.erase(
+        std::remove_if(m_recentProjects.begin(), m_recentProjects.end(),
+                       [&](const RecentProject& r) { return r.path == path; }),
+        m_recentProjects.end());
+    m_recentProjects.insert(m_recentProjects.begin(),
+                            RecentProject{path, QDateTime::currentMSecsSinceEpoch()});
+    if (static_cast<int>(m_recentProjects.size()) > MaxRecentProjects)
+        m_recentProjects.resize(MaxRecentProjects);
+}
+
+void Settings::removeRecentProject(const QString& path) {
+    m_recentProjects.erase(
+        std::remove_if(m_recentProjects.begin(), m_recentProjects.end(),
+                       [&](const RecentProject& r) { return r.path == path; }),
+        m_recentProjects.end());
 }
 
 void Settings::load() {
@@ -61,6 +91,15 @@ QJsonObject Settings::toJson() const {
         pathsArr.append(path);
     obj["pluginScanPaths"] = pathsArr;
 
+    QJsonArray recentArr;
+    for (const auto& r : m_recentProjects) {
+        QJsonObject rObj;
+        rObj["path"] = r.path;
+        rObj["lastOpenedMs"] = r.lastOpenedMs;
+        recentArr.append(rObj);
+    }
+    obj["recentProjects"] = recentArr;
+
     return obj;
 }
 
@@ -81,4 +120,25 @@ void Settings::fromJson(const QJsonObject& obj) {
         for (const auto& v : arr)
             pluginScanPaths.push_back(v.toString());
     }
+
+    m_recentProjects.clear();
+    QJsonArray recentArr = obj["recentProjects"].toArray();
+    for (const auto& v : recentArr) {
+        QJsonObject rObj = v.toObject();
+        RecentProject r;
+        r.path = rObj["path"].toString();
+        r.lastOpenedMs = rObj["lastOpenedMs"].toVariant().toLongLong();
+        if (!r.path.isEmpty())
+            m_recentProjects.push_back(std::move(r));
+    }
+    std::stable_sort(m_recentProjects.begin(), m_recentProjects.end(),
+                     [](const RecentProject& a, const RecentProject& b) {
+                         return a.lastOpenedMs > b.lastOpenedMs;
+                     });
+    if (static_cast<int>(m_recentProjects.size()) > MaxRecentProjects)
+        m_recentProjects.resize(MaxRecentProjects);
+
+    // Migrate the legacy single-path setting into the recents list once.
+    if (m_recentProjects.empty() && !lastProjectPath.isEmpty())
+        addRecentProject(lastProjectPath);
 }
