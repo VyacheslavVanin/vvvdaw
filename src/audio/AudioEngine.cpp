@@ -15,6 +15,38 @@
 
 using vvvdaw::TransportState;
 
+namespace {
+
+constexpr size_t kInstrumentMidiReserve = 256;
+constexpr float kDownbeatClickGain = 0.6f;
+constexpr float kSilenceThreshold = 1e-5f;
+constexpr float kMonoDownmix = 0.5f;
+
+// Click envelope constants (5 ms click at 1 kHz with exponential decay).
+constexpr int kClickLengthMs = 5;
+constexpr double kClickDecayRate = 800.0;
+constexpr double kClickFrequency = 1000.0;
+
+bool anyTrackSolo(const Project* proj) {
+    for (const auto& track : proj->tracks())
+        if (track.isSolo()) return true;
+    return false;
+}
+
+bool anyInstrumentSolo(const Project* proj) {
+    for (const auto& inst : proj->instruments())
+        if (inst.isSolo()) return true;
+    return false;
+}
+
+bool anyBusSolo(const Project* proj) {
+    for (const auto& bus : proj->buses())
+        if (bus.isSolo()) return true;
+    return false;
+}
+
+} // namespace
+
 AudioEngine::AudioEngine() = default;
 
 AudioEngine::~AudioEngine() {
@@ -34,7 +66,6 @@ bool AudioEngine::init(const Settings& settings) {
     m_recordingManager.setScratchSize(static_cast<size_t>(m_bufferSize) * 2);
     AudioClip::setStreamingThresholdFrames(
         static_cast<size_t>(settings.streamingThresholdSec) * settings.sampleRate);
-
     PaDeviceIndex outputDev = Pa_GetDefaultOutputDevice();
     if (settings.outputDeviceId >= 0)
         outputDev = settings.outputDeviceId;
@@ -114,15 +145,18 @@ bool AudioEngine::init(const Settings& settings) {
         return false;
     }
 
-    m_clickEnvelopeSize = m_sampleRate * 5 / 1000;
+    generateClickEnvelope();
+    return true;
+}
+
+void AudioEngine::generateClickEnvelope() {
+    m_clickEnvelopeSize = m_sampleRate * kClickLengthMs / 1000;
     m_clickEnvelope.resize(m_clickEnvelopeSize);
     for (int i = 0; i < m_clickEnvelopeSize; ++i) {
         double t = static_cast<double>(i) / m_sampleRate;
-        double decay = std::exp(-t * 800.0);
-        m_clickEnvelope[i] = static_cast<float>(std::sin(2.0 * M_PI * 1000.0 * t) * decay);
+        double decay = std::exp(-t * kClickDecayRate);
+        m_clickEnvelope[i] = static_cast<float>(std::sin(2.0 * M_PI * kClickFrequency * t) * decay);
     }
-
-    return true;
 }
 
 void AudioEngine::shutdown() {
@@ -337,7 +371,7 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
 
     std::vector<int> inDegree(busCount, 0);
     for (int i = 0; i < busCount; ++i) {
-        int parent = proj->buses()[i].outputBusIndex;
+        int parent = proj->buses()[i].outputBusIndex();
         if (parent >= 0 && parent < busCount && parent != i)
             inDegree[parent]++;
     }
@@ -355,7 +389,7 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
         queue.pop_back();
         m_busProcessOrder.push_back(node);
 
-        int parent = proj->buses()[node].outputBusIndex;
+        int parent = proj->buses()[node].outputBusIndex();
         if (parent >= 0 && parent < busCount && parent != node) {
             inDegree[parent]--;
             if (inDegree[parent] == 0)
@@ -376,29 +410,50 @@ void AudioEngine::clearStretchSlots() {
     m_stretchSlots.clear();
 }
 
-void AudioEngine::flushActiveMidiNotes(Project* proj, unsigned long frameCount) {
-    for (auto& an : m_activeMidiNotes) {
-        if (an.toInstrument && an.destIndex >= 0 &&
-            an.destIndex < static_cast<int>(proj->instruments().size())) {
+void AudioEngine::sendNoteOn(int destIndex, bool toInstrument, uint8_t channel,
+                             uint8_t pitch, uint8_t velocity, int sampleOffset) {
+    if (toInstrument) {
+        if (destIndex >= 0 && destIndex < static_cast<int>(m_instrumentMidi.size())) {
             MidiMessage m;
-            m.sampleOffset = 0;
-            m.status = static_cast<uint8_t>(0x80 | an.channel);
-            m.data1 = an.pitch;
-            m.data2 = 0;
-            m_instrumentMidi[an.destIndex].push_back(m);
-        } else if (!an.toInstrument && an.destIndex >= 0) {
-            m_midiOutput.send(an.destIndex, static_cast<uint8_t>(0x80 | an.channel), an.pitch, 0);
+            m.sampleOffset = sampleOffset;
+            m.status = static_cast<uint8_t>(0x90 | channel);
+            m.data1 = pitch;
+            m.data2 = velocity;
+            m_instrumentMidi[destIndex].push_back(m);
         }
+    } else if (destIndex >= 0) {
+        m_midiOutput.send(destIndex, static_cast<uint8_t>(0x90 | channel), pitch, velocity);
     }
+}
+
+void AudioEngine::sendNoteOff(int destIndex, bool toInstrument, uint8_t channel,
+                              uint8_t pitch, int sampleOffset) {
+    if (toInstrument) {
+        if (destIndex >= 0 && destIndex < static_cast<int>(m_instrumentMidi.size())) {
+            MidiMessage m;
+            m.sampleOffset = sampleOffset;
+            m.status = static_cast<uint8_t>(0x80 | channel);
+            m.data1 = pitch;
+            m.data2 = 0;
+            m_instrumentMidi[destIndex].push_back(m);
+        }
+    } else if (destIndex >= 0) {
+        m_midiOutput.send(destIndex, static_cast<uint8_t>(0x80 | channel), pitch, 0);
+    }
+}
+
+void AudioEngine::sendActiveNoteOff(const ActiveMidiNote& note, int sampleOffset) {
+    sendNoteOff(note.destIndex, note.toInstrument, note.channel, note.pitch, sampleOffset);
+}
+
+void AudioEngine::flushActiveMidiNotes() {
+    for (const auto& an : m_activeMidiNotes)
+        sendActiveNoteOff(an, 0);
     m_activeMidiNotes.clear();
-    (void)frameCount;
 }
 
 void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, int64_t pos) {
-    bool anySolo = false;
-    for (const auto& track : proj->tracks()) {
-        if (track.isSolo()) { anySolo = true; break; }
-    }
+    bool anySolo = anyTrackSolo(proj);
 
     int trackIndex = 0;
     for (const auto& track : proj->tracks()) {
@@ -408,25 +463,10 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
         bool toInstrument = (instIdx >= 0 && instIdx < static_cast<int>(proj->instruments().size()));
         bool targetMuted = toInstrument && proj->instruments()[instIdx].isMuted();
 
-        auto sendNoteOffFor = [&](const ActiveMidiNote& an, int sampleOffset) {
-            if (an.toInstrument && an.destIndex >= 0 &&
-                an.destIndex < static_cast<int>(proj->instruments().size())) {
-                MidiMessage m;
-                m.sampleOffset = sampleOffset;
-                m.status = static_cast<uint8_t>(0x80 | an.channel);
-                m.data1 = an.pitch;
-                m.data2 = 0;
-                m_instrumentMidi[an.destIndex].push_back(m);
-            } else if (!an.toInstrument && an.destIndex >= 0) {
-                m_midiOutput.send(an.destIndex, static_cast<uint8_t>(0x80 | an.channel),
-                                  an.pitch, 0);
-            }
-        };
-
         auto flushTrackNotes = [&](int tIndex) {
             for (auto it = m_activeMidiNotes.begin(); it != m_activeMidiNotes.end();) {
                 if (it->trackIndex == tIndex) {
-                    sendNoteOffFor(*it, 0);
+                    sendActiveNoteOff(*it, 0);
                     it = m_activeMidiNotes.erase(it);
                 } else {
                     ++it;
@@ -460,7 +500,7 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
             if (pos >= eventEnd) {
                 for (auto it = m_activeMidiNotes.begin(); it != m_activeMidiNotes.end();) {
                     if (it->trackIndex == trackIndex && it->eventId == event.id()) {
-                        sendNoteOffFor(*it, 0);
+                        sendActiveNoteOff(*it, 0);
                         it = m_activeMidiNotes.erase(it);
                     } else {
                         ++it;
@@ -513,18 +553,9 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                         continue;
                     int off = static_cast<int>(noteStart - pos);
                     if (off < static_cast<int>(frameCount)) {
-                        if (toInstrument) {
-                            MidiMessage m;
-                            m.sampleOffset = off;
-                            m.status = static_cast<uint8_t>(0x90 | channel);
-                            m.data1 = static_cast<uint8_t>(note.pitch);
-                            m.data2 = static_cast<uint8_t>(note.velocity);
-                            m_instrumentMidi[instIdx].push_back(m);
-                        } else if (deviceId >= 0) {
-                            m_midiOutput.send(deviceId, static_cast<uint8_t>(0x90 | channel),
-                                              static_cast<uint8_t>(note.pitch),
-                                              static_cast<uint8_t>(note.velocity));
-                        }
+                        sendNoteOn(toInstrument ? instIdx : deviceId, toInstrument,
+                                   channel, static_cast<uint8_t>(note.pitch),
+                                   static_cast<uint8_t>(note.velocity), off);
                         ActiveMidiNote an;
                         an.trackIndex = trackIndex;
                         an.eventId = event.id();
@@ -547,7 +578,7 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                     an.toInstrument = toInstrument;
                     an.channel = channel;
                     an.pitch = static_cast<uint8_t>(note.pitch);
-                    sendNoteOffFor(an, off);
+                    sendActiveNoteOff(an, off);
                     auto it = std::remove_if(m_activeMidiNotes.begin(), m_activeMidiNotes.end(),
                         [&](const ActiveMidiNote& a) {
                             return a.trackIndex == trackIndex && a.eventId == event.id()
@@ -565,10 +596,7 @@ void AudioEngine::processInstruments(Project* proj, unsigned long frameCount) {
     int instCount = static_cast<int>(proj->instruments().size());
     if (instCount == 0) return;
 
-    bool anySolo = false;
-    for (auto& inst : proj->instruments()) {
-        if (inst.isSolo()) { anySolo = true; break; }
-    }
+    bool anySolo = anyInstrumentSolo(proj);
 
     int busCount = static_cast<int>(proj->buses().size());
     for (int i = 0; i < instCount; ++i) {
@@ -724,13 +752,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
     for (int i = 0; i < busCount; ++i)
         std::fill(m_busBuffers[i].begin(), m_busBuffers[i].end(), 0.0f);
 
-    int instCount = static_cast<int>(proj->instruments().size());
-    if (instCount != m_instrumentCount) {
-        m_instrumentMidi.resize(static_cast<size_t>(instCount));
-        for (auto& b : m_instrumentMidi)
-            b.reserve(256);
-        m_instrumentCount = instCount;
-    }
+    ensureInstrumentMidiBuffers(static_cast<int>(proj->instruments().size()));
     for (auto& b : m_instrumentMidi)
         b.clear();
 
@@ -738,7 +760,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
     bool midiJumped = m_midiTransportActive &&
         (pos < m_lastMidiPos || pos - m_lastMidiPos > static_cast<int64_t>(frameCount) * 2);
     if ((firstActiveBlock && !m_activeMidiNotes.empty()) || midiJumped)
-        flushActiveMidiNotes(proj, frameCount);
+        flushActiveMidiNotes();
     // Mark active transport once playback blocks start so the discontinuity
     // flush only runs on real jumps. The flag is reset to false on any
     // explicit Stop or Pause (see setTransportState), which makes the next
@@ -747,15 +769,32 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         m_midiTransportActive = true;
     m_lastMidiPos = pos;
 
-    bool anySolo = false;
-    for (const auto& track : proj->tracks()) {
-        if (track.isSolo()) { anySolo = true; break; }
+    mixTracksToBuses(proj, frameCount, pos, input, inCh, monitoringOnly);
+
+    if (!monitoringOnly) {
+        scheduleMidiTracks(proj, frameCount, pos);
+        injectPreviewMidi();
+        processInstruments(proj, frameCount);
+    } else if (m_previewCount.load(std::memory_order_acquire) > 0) {
+        injectPreviewMidi();
+        processInstruments(proj, frameCount);
     }
+
+    if (m_metronomeEnabled && !monitoringOnly && busCount > 1)
+        generateClick(proj, m_busBuffers[1].data(), frameCount, pos, outCh);
+
+    processBusChainsAndRoute(proj, output, frameCount, outCh);
+}
+
+void AudioEngine::mixTracksToBuses(Project* proj, unsigned long frameCount, int64_t pos,
+                                   const float* input, int inCh, bool monitoringOnly) {
+    int busCount = static_cast<int>(proj->buses().size());
+    bool hasTrackSolo = anyTrackSolo(proj);
 
     int trackIndex = 0;
     for (const auto& track : proj->tracks()) {
         if (track.isMuted()) { ++trackIndex; continue; }
-        if (anySolo && !track.isSolo()) { ++trackIndex; continue; }
+        if (hasTrackSolo && !track.isSolo()) { ++trackIndex; continue; }
 
         int busIdx = track.outputBusIndex();
         if (busIdx < 0 || busIdx >= busCount) busIdx = 0;
@@ -822,32 +861,26 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         }
         ++trackIndex;
     }
+}
 
-    if (!monitoringOnly) {
-        scheduleMidiTracks(proj, frameCount, pos);
-        injectPreviewMidi(proj);
-        processInstruments(proj, frameCount);
-    } else if (m_previewCount.load(std::memory_order_acquire) > 0) {
-        injectPreviewMidi(proj);
-        processInstruments(proj, frameCount);
+void AudioEngine::ensureInstrumentMidiBuffers(int instCount) {
+    if (static_cast<int>(m_instrumentMidi.size()) != instCount) {
+        m_instrumentMidi.resize(static_cast<size_t>(instCount));
+        for (auto& b : m_instrumentMidi)
+            b.reserve(kInstrumentMidiReserve);
+        m_instrumentCount = instCount;
     }
+}
 
-    if (m_metronomeEnabled && !monitoringOnly) {
-        int metroIdx = 1;
-        if (metroIdx < busCount) {
-            generateClick(proj, m_busBuffers[metroIdx].data(), frameCount, pos, outCh);
-        }
-    }
-
-    bool anyBusSolo = false;
-    for (const auto& bus : proj->buses()) {
-        if (bus.solo) { anyBusSolo = true; break; }
-    }
+void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
+                                           unsigned long frameCount, int outCh) {
+    int busCount = static_cast<int>(proj->buses().size());
+    bool hasBusSolo = anyBusSolo(proj);
 
     for (int idx : m_busProcessOrder) {
         const auto& bus = proj->buses()[idx];
 
-        if (bus.pluginChain.count() > 0) {
+        if (bus.pluginChain().count() > 0) {
             float* buf = m_busBuffers[idx].data();
             for (unsigned long f = 0; f < frameCount; ++f) {
                 m_busDeinterleaveL[f] = buf[f * 2];
@@ -855,19 +888,19 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             }
             float* inBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
             float* outBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
-            bus.pluginChain.process(inBufs, outBufs, frameCount, 2);
+            bus.pluginChain().process(inBufs, outBufs, frameCount, 2);
             for (unsigned long f = 0; f < frameCount; ++f) {
                 buf[f * 2]     = m_busDeinterleaveL[f];
                 buf[f * 2 + 1] = m_busDeinterleaveR[f];
             }
         }
 
-        if (bus.muted) continue;
-        if (anyBusSolo && !bus.solo) continue;
+        if (bus.isMuted()) continue;
+        if (hasBusSolo && !bus.isSolo()) continue;
 
-        float bVol = bus.volume;
+        float bVol = bus.volume();
 
-        int parentIdx = bus.outputBusIndex;
+        int parentIdx = bus.outputBusIndex();
         bool routeToOutput = (parentIdx < 0 || parentIdx >= busCount);
 
         if (routeToOutput) {
@@ -875,13 +908,13 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             if (outCh >= 2) {
                 for (unsigned long f = 0; f < frameCount; ++f) {
                     float lo, ro;
-                    panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan, lo, ro);
+                    panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan(), lo, ro);
                     output[f * 2]     += lo * bVol;
                     output[f * 2 + 1] += ro * bVol;
                 }
             } else {
                 for (unsigned long f = 0; f < frameCount; ++f) {
-                    output[f] += (buf[f * 2] + buf[f * 2 + 1]) * 0.5f * bVol;
+                    output[f] += (buf[f * 2] + buf[f * 2 + 1]) * kMonoDownmix * bVol;
                 }
             }
         } else {
@@ -889,53 +922,11 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
             float* dstBuf = m_busBuffers[parentIdx].data();
             for (unsigned long f = 0; f < frameCount; ++f) {
                 float lo, ro;
-                panStereo(srcBuf[f * 2], srcBuf[f * 2 + 1], bus.pan, lo, ro);
+                panStereo(srcBuf[f * 2], srcBuf[f * 2 + 1], bus.pan(), lo, ro);
                 dstBuf[f * 2]     += lo * bVol;
                 dstBuf[f * 2 + 1] += ro * bVol;
             }
         }
-    }
-}
-
-void AudioEngine::mixPlayback(Project* proj, float* output, unsigned long frameCount,
-                               int64_t pos, int outCh) {
-    bool anySolo = false;
-    for (const auto& track : proj->tracks()) {
-        if (track.isSolo()) { anySolo = true; break; }
-    }
-
-    int trackIndex = 0;
-    for (const auto& track : proj->tracks()) {
-        if (track.isMuted()) { ++trackIndex; continue; }
-        if (anySolo && !track.isSolo()) { ++trackIndex; continue; }
-        float trackVol = track.volume();
-        float pan = track.pan();
-        auto [leftGain, rightGain] = panGains(pan);
-
-        for (const auto& event : track.events()) {
-            auto activeClip = event.activeClip();
-            if (!activeClip || !activeClip->isValid()) continue;
-
-            int64_t eventEnd = event.startSample() + event.durationSample();
-            if (pos >= eventEnd || pos + frameCount <= event.startSample())
-                continue;
-
-            int ch = activeClip->channels();
-            size_t framesAvail = readEventBlock(event, trackIndex, pos,
-                                                m_stereoScratch.data(),
-                                                frameCount);
-            for (unsigned long f = 0; f < framesAvail; ++f) {
-                float sL = m_stereoScratch[f * ch];
-                float sR = ch > 1 ? m_stereoScratch[f * ch + 1] : sL;
-                if (outCh >= 2) {
-                    output[f * 2]     += sL * trackVol * leftGain;
-                    output[f * 2 + 1] += sR * trackVol * rightGain;
-                } else {
-                    output[f] += (sL + sR) * 0.5f * trackVol;
-                }
-            }
-        }
-        ++trackIndex;
     }
 }
 
@@ -1005,29 +996,16 @@ void AudioEngine::releaseInstruments() {
 
     std::unique_lock projectLock(proj->mutex());
 
-    if (static_cast<int>(m_instrumentMidi.size()) != instCount) {
-        m_instrumentMidi.resize(static_cast<size_t>(instCount));
-        for (auto& b : m_instrumentMidi)
-            b.reserve(256);
-    }
+    ensureInstrumentMidiBuffers(instCount);
     for (int i = 0; i < instCount; ++i)
         m_instrumentMidi[i].clear();
 
     // Build one note-off per active note targeting each instrument.
-    for (auto& an : m_activeMidiNotes) {
-        if (an.toInstrument && an.destIndex >= 0 && an.destIndex < instCount) {
-            MidiMessage m;
-            m.sampleOffset = 0;
-            m.status = static_cast<uint8_t>(0x80 | an.channel);
-            m.data1 = an.pitch;
-            m.data2 = 0;
-            m_instrumentMidi[an.destIndex].push_back(m);
-        }
-    }
+    for (const auto& an : m_activeMidiNotes)
+        sendNoteOff(an.destIndex, true, an.channel, an.pitch);
 
     // Render the release tails to silence so nothing is left ringing when
     // playback later resumes. Only run for instruments that actually held notes.
-    constexpr float kSilenceThreshold = 1e-5f;
     const int maxReleaseBlocks = std::max(1, m_sampleRate / std::max(1, m_bufferSize));
     float* inBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
     float* outBufs[2] = { m_instrumentScratchL.data(), m_instrumentScratchR.data() };
@@ -1141,45 +1119,19 @@ void AudioEngine::cancelPreviewNotes(int trackIndex) {
     }
 }
 
-void AudioEngine::injectPreviewMidi(Project* proj) {
+void AudioEngine::injectPreviewMidi() {
     std::lock_guard<std::mutex> lock(m_previewMutex);
     if (m_previewHeld.empty()) return;
 
-    int instCount = static_cast<int>(proj->instruments().size());
     for (auto& n : m_previewHeld) {
         if (n.offPending) {
-            if (n.toInstrument) {
-                if (n.target >= 0 && n.target < instCount
-                    && n.target < static_cast<int>(m_instrumentMidi.size())) {
-                    MidiMessage m;
-                    m.sampleOffset = 0;
-                    m.status = static_cast<uint8_t>(0x80 | n.channel);
-                    m.data1 = n.pitch;
-                    m.data2 = 0;
-                    m_instrumentMidi[n.target].push_back(m);
-                }
-            } else if (n.target >= 0) {
-                m_midiOutput.send(n.target, static_cast<uint8_t>(0x80 | n.channel),
-                                  n.pitch, 0);
-            }
+            sendNoteOff(n.target, n.toInstrument, n.channel, n.pitch);
             continue;
         }
         if (n.noteOnSent) continue;
 
-        if (n.toInstrument) {
-            if (n.target >= 0 && n.target < instCount
-                && n.target < static_cast<int>(m_instrumentMidi.size())) {
-                MidiMessage m;
-                m.sampleOffset = 0;
-                m.status = static_cast<uint8_t>(0x90 | n.channel);
-                m.data1 = n.pitch;
-                m.data2 = n.velocity;
-                m_instrumentMidi[n.target].push_back(m);
-                n.noteOnSent = true;
-            }
-        } else if (n.target >= 0) {
-            m_midiOutput.send(n.target, static_cast<uint8_t>(0x90 | n.channel),
-                              n.pitch, n.velocity);
+        if (n.target >= 0) {
+            sendNoteOn(n.target, n.toInstrument, n.channel, n.pitch, n.velocity);
             n.noteOnSent = true;
         } else {
             n.offPending = true; // nowhere to play it: drop
@@ -1194,36 +1146,40 @@ void AudioEngine::injectPreviewMidi(Project* proj) {
         m_previewCount.store(0);
 }
 
+void AudioEngine::renderClickSample(float* outL, float* outR, int64_t samplePos,
+                                   double samplesPerBeat, double samplesPerBar, float gain) {
+    double beatInBar = std::fmod(static_cast<double>(samplePos), samplesPerBar) / samplesPerBeat;
+    int beatNum = static_cast<int>(std::floor(beatInBar));
+    double beatFrac = beatInBar - std::floor(beatInBar);
+
+    bool isDownbeat = (beatNum == 0);
+
+    if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
+        m_clickPlayhead = 0;
+        m_clickIsDownbeat = isDownbeat;
+    }
+
+    if (m_clickPlayhead >= 0 && m_clickPlayhead < m_clickEnvelopeSize) {
+        float clickSample = m_clickEnvelope[m_clickPlayhead];
+        if (!m_clickIsDownbeat)
+            clickSample *= kDownbeatClickGain;
+        *outL += clickSample * gain;
+        *outR += clickSample * gain;
+        m_clickPlayhead++;
+    } else {
+        m_clickPlayhead = -1;
+    }
+}
+
 void AudioEngine::generateClick(Project* proj, float* buffer, unsigned long frameCount,
                                  int64_t pos, int outCh) {
     double samplesPerBeat = proj->samplesPerBeat();
     double samplesPerBar = proj->samplesPerBar();
     if (samplesPerBeat <= 0) return;
 
-    for (unsigned long f = 0; f < frameCount; ++f) {
-        int64_t samplePos = pos + f;
-        double beatInBar = std::fmod(static_cast<double>(samplePos), samplesPerBar) / samplesPerBeat;
-        int beatNum = static_cast<int>(std::floor(beatInBar));
-        double beatFrac = beatInBar - std::floor(beatInBar);
-
-        bool isDownbeat = (beatNum == 0);
-
-        if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
-            m_clickPlayhead = 0;
-            m_clickIsDownbeat = isDownbeat;
-        }
-
-        if (m_clickPlayhead >= 0 && m_clickPlayhead < m_clickEnvelopeSize) {
-            float clickSample = m_clickEnvelope[m_clickPlayhead];
-            if (!m_clickIsDownbeat)
-                clickSample *= 0.6f;
-            buffer[f * 2]     += clickSample;
-            buffer[f * 2 + 1] += clickSample;
-            m_clickPlayhead++;
-        } else {
-            m_clickPlayhead = -1;
-        }
-    }
+    for (unsigned long f = 0; f < frameCount; ++f)
+        renderClickSample(&buffer[f * 2], &buffer[f * 2 + 1], pos + f,
+                          samplesPerBeat, samplesPerBar, 1.0f);
 }
 
 void AudioEngine::processPrecounting(Project* proj, float* output, unsigned long frameCount,
@@ -1239,33 +1195,13 @@ void AudioEngine::processPrecounting(Project* proj, float* output, unsigned long
 
     float metroVol = 1.0f;
     if (static_cast<int>(proj->buses().size()) > 1)
-        metroVol = proj->buses()[1].volume;
+        metroVol = proj->buses()[1].volume();
 
     for (unsigned long f = 0; f < frameCount; ++f) {
         if (m_precountPosition >= m_precountTotalSamples) break;
 
-        double beatInBar = std::fmod(static_cast<double>(m_precountPosition), samplesPerBar) / samplesPerBeat;
-        int beatNum = static_cast<int>(std::floor(beatInBar));
-        double beatFrac = beatInBar - std::floor(beatInBar);
-
-        bool isDownbeat = (beatNum == 0);
-
-        if (beatFrac < 1.0 / samplesPerBeat && m_clickPlayhead < 0) {
-            m_clickPlayhead = 0;
-            m_clickIsDownbeat = isDownbeat;
-        }
-
-        if (m_clickPlayhead >= 0 && m_clickPlayhead < m_clickEnvelopeSize) {
-            float clickSample = m_clickEnvelope[m_clickPlayhead];
-            if (!m_clickIsDownbeat)
-                clickSample *= 0.6f;
-            output[f * 2]     += clickSample * metroVol;
-            output[f * 2 + 1] += clickSample * metroVol;
-            m_clickPlayhead++;
-        } else {
-            m_clickPlayhead = -1;
-        }
-
+        renderClickSample(&output[f * 2], &output[f * 2 + 1], m_precountPosition,
+                          samplesPerBeat, samplesPerBar, metroVol);
         m_precountPosition++;
     }
 
@@ -1293,7 +1229,7 @@ void AudioEngine::activateAllPlugins() {
     for (auto& track : proj->tracks())
         activatePluginChain(const_cast<PluginChain&>(track.pluginChain()));
     for (auto& bus : proj->buses())
-        activatePluginChain(bus.pluginChain);
+        activatePluginChain(bus.pluginChain());
     for (auto& inst : proj->instruments()) {
         if (inst.synth() && !inst.synth()->isActive())
             inst.synth()->activate(m_sampleRate, m_bufferSize);
@@ -1314,8 +1250,8 @@ void AudioEngine::deactivateAllPlugins() {
         }
     }
     for (auto& bus : proj->buses()) {
-        for (int i = 0; i < bus.pluginChain.count(); ++i) {
-            auto* plugin = bus.pluginChain.plugin(i);
+        for (int i = 0; i < bus.pluginChain().count(); ++i) {
+            auto* plugin = bus.pluginChain().plugin(i);
             if (plugin && plugin->isActive())
                 plugin->deactivate();
         }

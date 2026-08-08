@@ -85,8 +85,6 @@ private:
 
     void processAudio(const float* input, float* output, unsigned long frameCount);
 
-    void mixPlayback(Project* proj, float* output, unsigned long frameCount,
-                     int64_t pos, int outCh);
     void processBusMixing(Project* proj, float* output, unsigned long frameCount,
                           int64_t pos, int outCh, const float* input, int inCh,
                           bool monitoringOnly = false);
@@ -108,9 +106,29 @@ private:
 
     void scheduleMidiTracks(Project* proj, unsigned long frameCount, int64_t pos);
     void processInstruments(Project* proj, unsigned long frameCount);
-    void flushActiveMidiNotes(Project* proj, unsigned long frameCount);
+    void flushActiveMidiNotes();
     void releaseInstruments();
-    void injectPreviewMidi(Project* proj);
+    void injectPreviewMidi();
+
+    // Mix each audible track into its target bus buffer (monitoring, event
+    // playback and track plugin chains).
+    void mixTracksToBuses(Project* proj, unsigned long frameCount, int64_t pos,
+                          const float* input, int inCh, bool monitoringOnly);
+    // Run bus plugin chains and route each bus into its parent or the output.
+    void processBusChainsAndRoute(Project* proj, float* output,
+                                  unsigned long frameCount, int outCh);
+
+    void ensureInstrumentMidiBuffers(int instCount);
+    void sendNoteOn(int destIndex, bool toInstrument, uint8_t channel,
+                    uint8_t pitch, uint8_t velocity, int sampleOffset = 0);
+    void sendNoteOff(int destIndex, bool toInstrument, uint8_t channel,
+                     uint8_t pitch, int sampleOffset = 0);
+
+    void generateClickEnvelope();
+    // Advances the metronome click envelope for one sample position and adds
+    // the (gain-scaled) click to the interleaved stereo sample pair.
+    void renderClickSample(float* outL, float* outR, int64_t samplePos,
+                           double samplesPerBeat, double samplesPerBar, float gain);
 
     void startPlayback();
     void stopPlayback();
@@ -166,6 +184,7 @@ private:
         uint8_t channel = 0;
         uint8_t pitch = 0;
     };
+    void sendActiveNoteOff(const ActiveMidiNote& note, int sampleOffset);
     std::vector<ActiveMidiNote> m_activeMidiNotes;
     int64_t m_lastMidiPos = 0;
     bool m_midiTransportActive = false;

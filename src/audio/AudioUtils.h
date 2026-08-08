@@ -46,22 +46,22 @@ inline void addSourceToTrack(float* trackL, float* trackR, const float* src,
     }
 }
 
-// Accumulate an interleaved source (srcCh channels per frame) directly into
-// the interleaved stereo bus buffer, applying volume + pan.
-inline void addSourceToBus(float* busBuf, const float* src, int srcCh,
-                           unsigned long frames, float vol,
-                           float pan, bool isMono) {
+// Shared bus-accumulation core: per frame the GetFrame callback returns the
+// (left, right) pair from the source (interleaved buffer or split track
+// buffers). Applies volume + pan and accumulates into the stereo bus buffer.
+template <typename GetFrame>
+inline void accumulateToBus(float* busBuf, unsigned long frames, float vol,
+                            float pan, bool isMono, GetFrame getFrame) {
     if (isMono) {
         auto [leftGain, rightGain] = panGains(pan);
         for (unsigned long f = 0; f < frames; ++f) {
-            float s = src[f * srcCh] * vol;
+            float s = getFrame(f).first * vol;
             busBuf[f * 2]     += s * leftGain;
             busBuf[f * 2 + 1] += s * rightGain;
         }
     } else {
         for (unsigned long f = 0; f < frames; ++f) {
-            float sL = src[f * srcCh];
-            float sR = srcCh > 1 ? src[f * srcCh + 1] : sL;
+            auto [sL, sR] = getFrame(f);
             float lo, ro;
             panStereo(sL, sR, pan, lo, ro);
             busBuf[f * 2]     += lo * vol;
@@ -70,24 +70,23 @@ inline void addSourceToBus(float* busBuf, const float* src, int srcCh,
     }
 }
 
+// Accumulate an interleaved source (srcCh channels per frame) directly into
+// the interleaved stereo bus buffer, applying volume + pan.
+inline void addSourceToBus(float* busBuf, const float* src, int srcCh,
+                           unsigned long frames, float vol,
+                           float pan, bool isMono) {
+    accumulateToBus(busBuf, frames, vol, pan, isMono, [&](unsigned long f) {
+        float sL = src[f * srcCh];
+        return std::pair<float, float>{ sL, srcCh > 1 ? src[f * srcCh + 1] : sL };
+    });
+}
+
 // Accumulate split (mono/stereo) track buffers into the interleaved stereo
 // bus buffer, applying volume + pan.
 inline void writeTrackToBus(float* busBuf, const float* trackL, const float* trackR,
                             unsigned long frames, float vol,
                             float pan, bool isMono) {
-    if (isMono) {
-        auto [leftGain, rightGain] = panGains(pan);
-        for (unsigned long f = 0; f < frames; ++f) {
-            float s = trackL[f] * vol;
-            busBuf[f * 2]     += s * leftGain;
-            busBuf[f * 2 + 1] += s * rightGain;
-        }
-    } else {
-        for (unsigned long f = 0; f < frames; ++f) {
-            float lo, ro;
-            panStereo(trackL[f], trackR[f], pan, lo, ro);
-            busBuf[f * 2]     += lo * vol;
-            busBuf[f * 2 + 1] += ro * vol;
-        }
-    }
+    accumulateToBus(busBuf, frames, vol, pan, isMono, [&](unsigned long f) {
+        return std::pair<float, float>{ trackL[f], trackR[f] };
+    });
 }

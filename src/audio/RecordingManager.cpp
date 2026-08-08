@@ -14,12 +14,23 @@
 
 RecordingManager::RecordingManager() = default;
 
+namespace {
+// How often the writer thread wakes up to flush buffered input to disk.
+constexpr int kWriterPollMs = 30;
+}
+
 void RecordingManager::setScratchSize(size_t frames) {
     m_scratch.resize(frames);
 }
 
 void RecordingManager::start(Project* project, int sampleRate, int64_t playPosition) {
     if (!project) return;
+
+    if (m_writerThread.joinable()) {
+        m_writerRunning = false;
+        m_writerCond.notify_one();
+        m_writerThread.join();
+    }
 
     std::shared_lock projectLock(project->mutex());
 
@@ -71,7 +82,19 @@ void RecordingManager::start(Project* project, int sampleRate, int64_t playPosit
     }
 
     m_writerRunning = true;
-    m_writerThread = std::thread(&RecordingManager::writerThreadFunc, this);
+    try {
+        m_writerThread = std::thread(&RecordingManager::writerThreadFunc, this);
+    } catch (const std::system_error& e) {
+        qWarning() << "Failed to start writer thread:" << e.what();
+        m_writerRunning = false;
+        std::unique_lock tracksLock(m_recordingTracksMutex);
+        for (auto& [idx, rt] : m_recordingTracks)
+            if (rt.file) {
+                sf_close(rt.file);
+                rt.file = nullptr;
+            }
+        m_recordingTracks.clear();
+    }
 }
 
 void RecordingManager::stop(Project* project) {
@@ -258,7 +281,7 @@ void RecordingManager::writerThreadFunc() {
         for (auto& [trackIdx, rt] : m_recordingTracks) {
             if (!rt.file) continue;
             if (!rt.buffer) continue;
-            size_t avail = rt.buffer->available();
+            size_t avail = rt.buffer->used();
             while (avail > 0) {
                 size_t toRead = std::min(avail, tmp.size());
                 size_t readCount = rt.buffer->read(tmp.data(), toRead);
@@ -272,7 +295,7 @@ void RecordingManager::writerThreadFunc() {
     while (m_writerRunning) {
         drain();
         std::unique_lock<std::mutex> lock(m_writerMutex);
-        m_writerCond.wait_for(lock, std::chrono::milliseconds(30),
+        m_writerCond.wait_for(lock, std::chrono::milliseconds(kWriterPollMs),
                               [this] { return !m_writerRunning; });
     }
 

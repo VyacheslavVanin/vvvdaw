@@ -50,6 +50,20 @@ void PlaybackStream::resetPosition(int64_t startFrame) {
 
 // --- StreamingManager ---
 
+namespace {
+// How often the reader thread wakes up to top up the stream ring buffers.
+constexpr int kReaderPollMs = 5;
+
+// The file position for an event's stream at playback position `playPos`,
+// clamped so the stream never seeks before the event's source offset.
+int64_t streamLocalPos(int64_t eventOffsetSample, int64_t eventStartSample,
+                       double rate, int64_t playPos) {
+    int64_t localPos = static_cast<int64_t>(
+        std::llround(eventOffsetSample + (playPos - eventStartSample) * rate));
+    return std::max(localPos, eventOffsetSample);
+}
+}
+
 StreamingManager::StreamingManager() = default;
 
 void StreamingManager::start(Project* project, int64_t playPosition) {
@@ -110,10 +124,8 @@ void StreamingManager::createStreams(Project* project, int64_t playPosition) {
             double rate = sourceFrames / static_cast<double>(event.durationSample());
             if (rate <= 0.0) rate = 1.0;
 
-            int64_t localPos = static_cast<int64_t>(
-                std::llround(event.offsetSample() +
-                             (playPosition - event.startSample()) * rate));
-            if (localPos < event.offsetSample()) localPos = event.offsetSample();
+            int64_t localPos = streamLocalPos(event.offsetSample(),
+                                               event.startSample(), rate, playPosition);
 
             PlaybackStream stream;
             stream.clip = activeClip.get();
@@ -161,7 +173,7 @@ bool StreamingManager::readEvent(const AudioClip* clip, int64_t eventStartSample
     size_t samplesRead = stream->buffer.read(scratch, samplesNeeded);
     outFramesRead = samplesRead / ch;
 
-    if (stream->readerFinished && stream->buffer.available() == 0)
+    if (stream->readerFinished && stream->buffer.used() == 0)
         stream->finished = true;
 
     return outFramesRead > 0;
@@ -188,7 +200,7 @@ void StreamingManager::readerThreadFunc() {
         for (auto& stream : m_playbackStreams) {
             if (stream.finished || stream.readerFinished || !stream.file) continue;
 
-            size_t availSamples = stream.buffer.capacity() - stream.buffer.available() - 1;
+            size_t availSamples = stream.buffer.capacity() - stream.buffer.used() - 1;
             if (availSamples == 0) continue;
 
             size_t ch = stream.info.channels;
@@ -218,12 +230,9 @@ void StreamingManager::readerThreadFunc() {
             {
                 std::lock_guard<std::mutex> lock(m_streamMutex);
                 for (auto& stream : m_playbackStreams) {
-                    int64_t newLocalPos = static_cast<int64_t>(
-                        std::llround(stream.eventOffsetSample +
-                                     (resetPos - stream.eventStartSample) * stream.eventRate));
-                    if (newLocalPos < stream.eventOffsetSample)
-                        newLocalPos = stream.eventOffsetSample;
-                    stream.resetPosition(newLocalPos);
+                    stream.resetPosition(streamLocalPos(stream.eventOffsetSample,
+                                                           stream.eventStartSample,
+                                                           stream.eventRate, resetPos));
                 }
             }
             m_needStreamReset.store(false, std::memory_order_release);
@@ -232,7 +241,7 @@ void StreamingManager::readerThreadFunc() {
         fillAll();
 
         std::unique_lock<std::mutex> lock(m_readerMutex);
-        m_readerCond.wait_for(lock, std::chrono::milliseconds(5),
+        m_readerCond.wait_for(lock, std::chrono::milliseconds(kReaderPollMs),
                               [this] { return !m_readerRunning; });
     }
 
