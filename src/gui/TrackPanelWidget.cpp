@@ -300,6 +300,8 @@ void TrackPanelWidget::updateFromTrack() {
 
 void TrackPanelWidget::updateMidiOutputs(const std::vector<std::pair<int, QString>>& devices,
                                          const std::vector<QString>& instrumentNames) {
+    if (m_track && m_track->type() != Track::Type::Midi)
+        return;
     QSignalBlocker blocker(m_outputBusCombo);
     m_outputBusCombo->clear();
     m_outputBusCombo->addItem("None");
@@ -326,6 +328,8 @@ void TrackPanelWidget::updateMidiOutputs(const std::vector<std::pair<int, QStrin
 }
 
 void TrackPanelWidget::updateBusList(const std::vector<AudioBus>& buses) {
+    if (m_track && m_track->type() == Track::Type::Midi)
+        return;
     QSignalBlocker blocker(m_outputBusCombo);
     m_outputBusCombo->clear();
     for (const auto& bus : buses) {

@@ -284,11 +284,25 @@ void BusPanelWidget::rebuild() {
             emit busChanged();
         });
 
-        m_containerLayout->addWidget(row.widget);
-        m_busRows.push_back(row);
-    }
+    m_containerLayout->addWidget(row.widget);
+    m_busRows.push_back(row);
+}
 
     m_containerLayout->addStretch();
+}
+
+void BusPanelWidget::refreshOutCombos() {
+    const auto& buses = m_project.buses();
+    for (int from = 0; from < static_cast<int>(m_busRows.size()); ++from) {
+        QComboBox* combo = m_busRows[from].outCombo;
+        if (!combo) continue;
+        for (int c = 0; c < combo->count(); ++c) {
+            int busIdx = combo->itemData(c).toInt();
+            if (busIdx < 0 || busIdx >= static_cast<int>(buses.size())) continue;
+            bool cycle = wouldCreateCycle(buses, from, busIdx);
+            combo->setItemText(c, cycle ? buses[busIdx].name() + " (x)" : buses[busIdx].name());
+        }
+    }
 }
 
 bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {

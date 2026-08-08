@@ -307,6 +307,11 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
     connect(m_busPanel, &BusPanelWidget::busNameWillChange, this,
             [this](int busIndex, const QString& oldName, const QString& newName) {
         pushCommand(std::make_unique<SetBusNameCommand>(m_project, busIndex, oldName, newName));
+        if (busIndex >= 0 && busIndex < static_cast<int>(m_project.buses().size()))
+            m_project.buses()[busIndex].setName(newName);
+        refreshBusCombos();
+        m_busPanel->refreshOutCombos();
+        m_instrumentPanel->refreshOutCombos();
     });
     connect(m_busPanel, &BusPanelWidget::busOutputWillChange, this,
             [this](int busIndex, int oldVal, int newVal) {
@@ -412,6 +417,9 @@ void MainWindow::setupInstrumentPanel(QVBoxLayout* layout) {
     connect(m_instrumentPanel, &InstrumentPanelWidget::nameWillChange, this,
             [this](int index, const QString& oldName, const QString& newName) {
         pushCommand(std::make_unique<SetInstrumentNameCommand>(m_project, index, oldName, newName));
+        if (index >= 0 && index < static_cast<int>(m_project.instruments().size()))
+            m_project.instruments()[index].setName(newName);
+        refreshBusCombos();
     });
     connect(m_instrumentPanel, &InstrumentPanelWidget::outputWillChange, this,
             [this](int index, int oldVal, int newVal) {
@@ -650,6 +658,8 @@ void MainWindow::performUndo() {
         m_engine.refreshMidiOutputs();
         if (m_instrumentPanel->isVisible())
             m_instrumentPanel->rebuild();
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
     }
 }
 
@@ -664,6 +674,8 @@ void MainWindow::performRedo() {
         m_engine.refreshMidiOutputs();
         if (m_instrumentPanel->isVisible())
             m_instrumentPanel->rebuild();
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
     }
 }
 

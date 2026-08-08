@@ -17,6 +17,17 @@
 #include "gui/BusPanelWidget.h"
 #include "gui/InstrumentPanelWidget.h"
 
+namespace {
+QComboBox* findComboContaining(QWidget* parent, const QString& text) {
+    const auto combos = parent->findChildren<QComboBox*>();
+    for (QComboBox* cb : combos)
+        for (int i = 0; i < cb->count(); ++i)
+            if (cb->itemText(i).contains(text))
+                return cb;
+    return nullptr;
+}
+}
+
 // Integration tests for MainWindow::setupUi / rebuildTracks. They run on the
 // offscreen Qt platform and a real PortAudio initialization so that device
 // enumeration inside rebuildTracks works; they assert the widget structure
@@ -36,6 +47,10 @@ private slots:
     void midiCrossTrackMoveKeepsSiblingEvents();
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
+    void audioTrackOutComboListsBuses();
+    void busRenameRefreshesTrackOutCombo();
+    void instrumentRenameRefreshesMidiTrackOutCombo();
+    void busRenameRefreshesBusAndInstrumentOutCombos();
     void rejectAudioEventToMidiTrack();
     void rejectMidiEventToAudioTrack();
 };
@@ -286,6 +301,104 @@ void MainWindowTest::shiftDragOnAudioDoesNotDuplicate() {
     QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
     QCOMPARE(track.events().size(), size_t(1));
     QTest::mouseRelease(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
+}
+
+void MainWindowTest::audioTrackOutComboListsBuses() {
+    Project project;
+    project.addTrack("Audio 1");
+    project.addMidiTrack("Midi 1");
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+
+    QComboBox* audioOut = findComboContaining(window.m_trackRows[0].panel, "Master");
+    QVERIFY(audioOut);
+    QCOMPARE(audioOut->count(), static_cast<int>(project.buses().size()));
+    for (int i = 0; i < audioOut->count(); ++i) {
+        QVERIFY(!audioOut->itemText(i).contains("Inst:"));
+        QVERIFY(!audioOut->itemText(i).contains("MIDI:"));
+    }
+
+    QComboBox* midiOut = findComboContaining(window.m_trackRows[1].panel, "Inst:");
+    QVERIFY(midiOut);
+    bool foundInst = false;
+    for (int i = 0; i < midiOut->count(); ++i) {
+        if (midiOut->itemText(i).contains("Inst: Pad"))
+            foundInst = true;
+        QVERIFY(!midiOut->itemText(i).contains("Master"));
+    }
+    QVERIFY(foundInst);
+}
+
+void MainWindowTest::busRenameRefreshesTrackOutCombo() {
+    Project project;
+    project.addTrack("Audio 1");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QComboBox* audioOut = findComboContaining(window.m_trackRows[0].panel, "Metronome");
+    QVERIFY(audioOut);
+
+    window.m_project.buses()[1].setName("FX Bus");
+    emit window.m_busPanel->busNameWillChange(1, "Metronome", "FX Bus");
+
+    QVERIFY(findComboContaining(window.m_trackRows[0].panel, "FX Bus"));
+    QVERIFY(!findComboContaining(window.m_trackRows[0].panel, "Metronome"));
+}
+
+void MainWindowTest::instrumentRenameRefreshesMidiTrackOutCombo() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+    project.tracks()[0].setInstrumentIndex(0);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QComboBox* midiOut = findComboContaining(window.m_trackRows[0].panel, "Inst:");
+    QVERIFY(midiOut);
+    QVERIFY(midiOut->currentText().contains("Inst: Pad"));
+
+    window.m_project.instruments()[0].setName("Lead");
+    emit window.m_instrumentPanel->nameWillChange(0, "Pad", "Lead");
+
+    midiOut = findComboContaining(window.m_trackRows[0].panel, "Inst: Lead");
+    QVERIFY(midiOut);
+    QVERIFY(midiOut->currentText().contains("Inst: Lead"));
+}
+
+void MainWindowTest::busRenameRefreshesBusAndInstrumentOutCombos() {
+    Project project;
+    Instrument inst;
+    inst.setName("Pad");
+    inst.setOutputBusIndex(1);
+    project.addInstrument(std::move(inst));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    window.m_busPanel->rebuild();
+    window.m_instrumentPanel->rebuild();
+
+    QVERIFY(findComboContaining(window.m_busPanel, "Metronome"));
+    QVERIFY(findComboContaining(window.m_instrumentPanel, "Metronome"));
+
+    window.m_project.buses()[1].setName("FX Bus");
+    emit window.m_busPanel->busNameWillChange(1, "Metronome", "FX Bus");
+
+    QVERIFY(findComboContaining(window.m_busPanel, "FX Bus"));
+    QVERIFY(findComboContaining(window.m_instrumentPanel, "FX Bus"));
 }
 
 void MainWindowTest::rejectAudioEventToMidiTrack() {

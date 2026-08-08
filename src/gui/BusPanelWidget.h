@@ -20,6 +20,7 @@ public:
     explicit BusPanelWidget(Project& project, QWidget* parent = nullptr);
 
     void rebuild();
+    void refreshOutCombos();
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
 

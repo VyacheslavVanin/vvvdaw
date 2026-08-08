@@ -315,6 +315,19 @@ void InstrumentPanelWidget::rebuild() {
     m_containerLayout->addStretch();
 }
 
+void InstrumentPanelWidget::refreshOutCombos() {
+    const auto& buses = m_project.buses();
+    for (auto& row : m_instrumentRows) {
+        QComboBox* combo = row.outCombo;
+        if (!combo) continue;
+        for (int c = 0; c < combo->count(); ++c) {
+            int busIdx = combo->itemData(c).toInt();
+            if (busIdx < 0 || busIdx >= static_cast<int>(buses.size())) continue;
+            combo->setItemText(c, buses[busIdx].name());
+        }
+    }
+}
+
 void InstrumentPanelWidget::openSynthDialog(int index) {
     if (!m_pluginManager) return;
 
