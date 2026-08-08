@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginInstance.h"
+#include "core/Constants.h"
 #include <lilv/lilv.h>
 #include <lv2/atom/atom.h>
 #include <lv2/atom/forge.h>
@@ -95,8 +96,8 @@ private:
     bool m_enabled = true;
     bool m_active = false;
     bool m_isInstrument = false;
-    double m_sampleRate = 48000;
-    int m_maxBlockSize = 512;
+    double m_sampleRate = vvvdaw::DefaultSampleRate;
+    int m_maxBlockSize = vvvdaw::DefaultBufferSize;
     QString m_filePath;
     QString m_name;
     QString m_vendor;
@@ -144,8 +145,8 @@ private:
     LV2_URID m_uridMaxBlockLength = 0;
     LV2_URID m_uridAtomSequence = 0;
     LV2_URID m_uridAtomObject = 0;
-    float m_optionSampleRate = 48000;
-    int m_optionMaxBlockLength = 512;
+    float m_optionSampleRate = static_cast<float>(vvvdaw::DefaultSampleRate);
+    int m_optionMaxBlockLength = vvvdaw::DefaultBufferSize;
     LV2_Options_Option m_options[3] = {};
 
     static LV2_Worker_Status workerSchedule(LV2_Handle handle, uint32_t size, const void* data);

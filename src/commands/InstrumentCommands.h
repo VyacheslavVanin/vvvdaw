@@ -1,5 +1,6 @@
 #pragma once
 #include "core/UndoCommand.h"
+#include "core/Constants.h"
 #include <QJsonObject>
 #include <QString>
 
@@ -21,7 +22,7 @@ class RemoveInstrumentCommand : public UndoCommand {
 public:
     RemoveInstrumentCommand(Project& project, int index,
                             PluginManager* manager = nullptr,
-                            double sampleRate = 48000, int bufferSize = 512);
+                            double sampleRate = vvvdaw::DefaultSampleRate, int bufferSize = vvvdaw::DefaultBufferSize);
     void execute() override;
     void undo() override;
     int id() const override { return 71; }
@@ -123,7 +124,7 @@ class SetInstrumentSynthCommand : public UndoCommand {
 public:
     SetInstrumentSynthCommand(Project& project, int index, QJsonObject oldSynthJson, QJsonObject newSynthJson,
                               PluginManager* manager = nullptr,
-                              double sampleRate = 48000, int bufferSize = 512);
+                              double sampleRate = vvvdaw::DefaultSampleRate, int bufferSize = vvvdaw::DefaultBufferSize);
     void execute() override;
     void undo() override;
     int id() const override { return 78; }

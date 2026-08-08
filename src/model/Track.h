@@ -5,6 +5,7 @@
 #include "AudioEvent.h"
 #include "MidiEvent.h"
 #include "plugin/PluginChain.h"
+#include "core/Constants.h"
 
 class Track {
 public:
@@ -96,7 +97,7 @@ private:
     bool m_monitoring = false;
 
     float m_pan = 0.0f;
-    float m_volume = 0.8f;
+    float m_volume = static_cast<float>(vvvdaw::DefaultVolume);
 
     std::vector<AudioEvent> m_events;
     int64_t m_nextEventId = 1;

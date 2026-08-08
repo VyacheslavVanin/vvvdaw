@@ -18,6 +18,12 @@ public:
     UndoCommand* topCommand() const { return m_undoStack.empty() ? nullptr : m_undoStack.back().get(); }
 
 private:
+    // If the incoming command can be merged into the top of the undo stack,
+    // merges it and returns true.
+    bool mergeIntoLast(UndoCommand* cmd);
+    // Appends a command, trimming the stack to MAX_UNDO and clearing redo.
+    void append(std::unique_ptr<UndoCommand> cmd);
+
     std::vector<std::unique_ptr<UndoCommand>> m_undoStack;
     std::vector<std::unique_ptr<UndoCommand>> m_redoStack;
 };

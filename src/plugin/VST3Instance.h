@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginInstance.h"
+#include "core/Constants.h"
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -198,8 +199,8 @@ private:
     bool m_enabled = true;
     bool m_active = false;
     bool m_isInstrument = false;
-    double m_sampleRate = 48000;
-    int m_maxBlockSize = 512;
+    double m_sampleRate = vvvdaw::DefaultSampleRate;
+    int m_maxBlockSize = vvvdaw::DefaultBufferSize;
     QString m_filePath;
     QString m_name;
     QString m_vendor;

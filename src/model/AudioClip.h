@@ -3,6 +3,7 @@
 #include <vector>
 #include <QString>
 #include <sndfile.h>
+#include "core/Constants.h"
 
 class AudioClip {
 public:
@@ -35,7 +36,7 @@ public:
     const std::vector<Peak>& peaks() const { return m_peaks; }
     size_t peaksPerFrame() const { return PEAK_STEP_FRAMES; }
 
-    static constexpr size_t DEFAULT_STREAMING_THRESHOLD_FRAMES = 30 * 48000;
+    static constexpr size_t DEFAULT_STREAMING_THRESHOLD_FRAMES = 30 * vvvdaw::DefaultSampleRate;
 
 private:
     void computePeaks();

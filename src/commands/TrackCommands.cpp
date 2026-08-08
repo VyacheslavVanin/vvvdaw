@@ -5,6 +5,7 @@
 #include "model/AudioClip.h"
 #include "model/MidiEvent.h"
 #include "plugin/PluginManager.h"
+#include "core/Constants.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QDir>
@@ -84,7 +85,7 @@ static Track trackFromJson(const QJsonObject& tObj, PluginManager* manager = nul
     track.setInputChannel(tObj["inputChannel"].toInt(0));
     track.setOutputBusIndex(tObj["outputBusIndex"].toInt(0));
     track.setPan(static_cast<float>(tObj["pan"].toDouble(0.0)));
-    track.setVolume(static_cast<float>(tObj["volume"].toDouble(0.8)));
+    track.setVolume(static_cast<float>(tObj["volume"].toDouble(vvvdaw::DefaultVolume)));
     track.setMuted(tObj["muted"].toBool(false));
     track.setSolo(tObj["solo"].toBool(false));
 

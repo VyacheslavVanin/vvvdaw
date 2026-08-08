@@ -9,6 +9,7 @@
 #include "AudioBus.h"
 #include "Instrument.h"
 #include "MidiClip.h"
+#include "core/Constants.h"
 
 class PluginManager;
 
@@ -112,7 +113,7 @@ private:
 
     QString m_filePath;
     QString m_name;
-    int m_sampleRate = 48000;
+    int m_sampleRate = vvvdaw::DefaultSampleRate;
     double m_tempo = 120.0;
     int m_timeSigNum = 4;
     int m_timeSigDen = 4;
