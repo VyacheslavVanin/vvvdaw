@@ -41,6 +41,10 @@ int64_t MidiClip::lengthTicks() const {
     return len;
 }
 
+std::shared_ptr<MidiClip> MidiClip::clone() const {
+    return std::make_shared<MidiClip>(*this);
+}
+
 QJsonObject MidiClip::toJson() const {
     QJsonObject obj;
     obj["ppq"] = kPPQ;

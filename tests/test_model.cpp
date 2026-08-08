@@ -23,6 +23,8 @@ private slots:
     void importAssignsUniqueIds();
     void importAdvancesNextIdCounter();
     void removeRemovesOnlyMatchingId();
+    void midiClipCloneIndependent();
+    void midiEventCloneDeepIndependent();
     void audioEventTakes();
     void midiEventTakes();
     void midiClipNotes();
@@ -207,6 +209,48 @@ void TestModel::removeRemovesOnlyMatchingId() {
     QCOMPARE(m.midiEvents().size(), size_t(2)); // only the matching event is removed
     for (const auto& ev : m.midiEvents())
         QVERIFY(ev.id() != victimId);
+}
+
+void TestModel::midiClipCloneIndependent() {
+    auto orig = std::make_shared<MidiClip>();
+    orig->addNote(60, 100, 0, 960);
+    orig->addNote(64, 90, 480, 480);
+    orig->setLengthTicks(960);
+
+    auto copy = orig->clone();
+    QVERIFY(copy.get() != orig.get());
+    QCOMPARE(copy->notes().size(), size_t(2));
+    QCOMPARE(copy->lengthTicks(), orig->lengthTicks());
+
+    copy->addNote(72, 110, 720, 240);
+    QCOMPARE(copy->notes().size(), size_t(3));
+    QCOMPARE(orig->notes().size(), size_t(2)); // original untouched
+    QCOMPARE(copy->revision(), orig->revision() + 1);
+}
+
+void TestModel::midiEventCloneDeepIndependent() {
+    auto clip = std::make_shared<MidiClip>();
+    clip->addNote(60, 100, 0, 960);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(9600);
+
+    auto take = std::make_shared<MidiClip>();
+    take->addNote(72, 80, 0, 480);
+    ev.addTake(take); // switches the active clip to the take
+    QCOMPARE(ev.activeTakeIndex(), 0);
+    QCOMPARE(ev.activeClip(), take);
+
+    MidiEvent clone = ev.cloneDeep();
+    QVERIFY(clone.activeClip() != ev.activeClip()); // distinct clip objects
+    QCOMPARE(clone.activeClip()->notes().size(), size_t(1));
+    QCOMPARE(clone.activeTakeIndex(), ev.activeTakeIndex());
+
+    clone.activeClip()->addNote(84, 120, 240, 240);
+    QCOMPARE(clone.activeClip()->notes().size(), size_t(2));
+    QCOMPARE(ev.activeClip()->notes().size(), size_t(1)); // original unaffected
+    QCOMPARE(ev.activeClip(), take);
 }
 
 void TestModel::audioEventTakes() {

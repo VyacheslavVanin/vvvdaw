@@ -19,6 +19,17 @@ const std::shared_ptr<MidiClip>& MidiEvent::activeClip() const {
     return eventActiveClip(m_takes, m_clip, m_activeTakeIndex);
 }
 
+MidiEvent MidiEvent::cloneDeep() const {
+    MidiEvent copy = *this;
+    if (m_clip)
+        copy.m_clip = m_clip->clone();
+    copy.m_takes.clear();
+    copy.m_takes.reserve(m_takes.size());
+    for (const auto& take : m_takes)
+        copy.m_takes.push_back(take->clone());
+    return copy;
+}
+
 QJsonObject MidiEvent::toJson() const {
     QJsonObject eObj;
     eObj["startSample"] = static_cast<qint64>(m_startSample);

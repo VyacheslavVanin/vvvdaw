@@ -34,6 +34,8 @@ private slots:
     void moveAudioEventBetweenAudioTracks();
     void moveMidiEventBetweenMidiTracks();
     void midiCrossTrackMoveKeepsSiblingEvents();
+    void shiftDragCreatesIndependentMidiCopy();
+    void shiftDragOnAudioDoesNotDuplicate();
     void rejectAudioEventToMidiTrack();
     void rejectMidiEventToAudioTrack();
 };
@@ -220,6 +222,70 @@ void MainWindowTest::midiCrossTrackMoveKeepsSiblingEvents() {
     QVERIFY(window.moveEventToTrack(1, 0, moveOutId, 600));
     QCOMPARE(b.midiEvents().size(), size_t(1)); // sibling survives
     QCOMPARE(a.midiEvents().size(), size_t(2));
+}
+
+void MainWindowTest::shiftDragCreatesIndependentMidiCopy() {
+    Project project;
+    project.addMidiTrack("M1");
+    Track& track = project.tracks()[0];
+    auto clip = std::make_shared<MidiClip>();
+    clip->addNote(60, 100, 0, 960);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addMidiEvent(ev);
+    QCOMPARE(track.midiEvents().size(), size_t(1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002); // event spans 96 px, click well inside it
+    QVERIFY(view->isVisible());
+
+    QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
+    QCOMPARE(track.midiEvents().size(), size_t(2));
+    QVERIFY(track.midiEvents()[0].clip() != track.midiEvents()[1].clip());
+    QCOMPARE(track.midiEvents()[1].clip()->notes().size(), size_t(1));
+
+    // Editing the copy's clip must not affect the original event's clip.
+    track.midiEvents()[1].clip()->addNote(72, 120, 240, 240);
+    QCOMPARE(track.midiEvents()[1].clip()->notes().size(), size_t(2));
+    QCOMPARE(track.midiEvents()[0].clip()->notes().size(), size_t(1));
+
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
+}
+
+void MainWindowTest::shiftDragOnAudioDoesNotDuplicate() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+    QCOMPARE(track.events().size(), size_t(1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002);
+    QVERIFY(view->isVisible());
+
+    // Shift on an audio event is a plain move, not a duplicate.
+    QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
+    QCOMPARE(track.events().size(), size_t(1));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
 }
 
 void MainWindowTest::rejectAudioEventToMidiTrack() {

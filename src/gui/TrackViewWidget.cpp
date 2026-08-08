@@ -452,10 +452,13 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             m_selectedEventIndex = idx;
 
             bool ctrlDrag = (event->modifiers() & Qt::ControlModifier);
-            if (ctrlDrag) {
+            bool shiftDrag = (event->modifiers() & Qt::ShiftModifier);
+            bool duplicate = ctrlDrag || (isMidiMode() && shiftDrag);
+            if (duplicate) {
                 emit eventDragStarted();
                 if (isMidiMode()) {
-                    MidiEvent copy = m_track->midiEvents()[idx];
+                    MidiEvent copy = shiftDrag ? m_track->midiEvents()[idx].cloneDeep()
+                                               : m_track->midiEvents()[idx];
                     copy.setStartSample(copy.startSample() +
                         static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
                     m_track->addMidiEvent(std::move(copy));
@@ -475,7 +478,7 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
 
-            if (!ctrlDrag)
+            if (!duplicate)
                 emit eventDragStarted();
         } else {
             m_selectedEventIndex = -1;

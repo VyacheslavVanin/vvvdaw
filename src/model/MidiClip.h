@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <QString>
 #include <QJsonObject>
@@ -28,6 +29,8 @@ public:
 
     int64_t nextNoteId() const { return m_nextNoteId; }
     void setNextNoteId(int64_t id) { m_nextNoteId = id; }
+
+    std::shared_ptr<MidiClip> clone() const;
 
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& obj);

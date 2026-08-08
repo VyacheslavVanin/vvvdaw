@@ -37,6 +37,8 @@ public:
     int activeTakeIndex() const { return m_activeTakeIndex; }
     void setActiveTakeIndex(int idx) { m_activeTakeIndex = idx; }
 
+    MidiEvent cloneDeep() const;
+
     QJsonObject toJson() const;
     static MidiEvent fromJson(const QJsonObject& obj);
 
