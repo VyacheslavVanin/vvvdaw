@@ -44,6 +44,7 @@ private slots:
     void activateProcessDeactivate();
     void stateRoundTrip();
     void stateToJsonWithoutStateExtension();
+    void stateSerializationSurvivesBuggyPlugin();
     void genericScanSmoke();
 };
 
@@ -225,6 +226,46 @@ void TestLV2::stateToJsonWithoutStateExtension() {
     QVERIFY(instrument.effects().count() == 1);
     QJsonObject instJson = instrument.toJson();
     QVERIFY(instJson["effects"].isObject());
+}
+
+void TestLV2::stateSerializationSurvivesBuggyPlugin() {
+    // Regression: state save/restore handed the plugin a null features array,
+    // which a-fluidsynth's save()/restore() dereference, so any project
+    // serialization (SnapshotCommand on a MIDI event edit, File->Save)
+    // segfaulted the whole app. The host now passes a terminating features
+    // array and additionally guards the plugin call so a faulting plugin can
+    // never take the host down.
+    //
+    // Note: a-fluidsynth must only be loaded ONCE per process — creating a
+    // second fluidsynth synth deadlocks inside libinstpatch's GObject
+    // once-init (a libinstpatch/fluidsynth bug, unrelated to this host).
+    LV2Instance inst;
+    if (!inst.load("urn:ardour:a-fluidsynth"))
+        QSKIP("a-fluidsynth LV2 plugin not installed");
+
+    // Repeated serialization (as happens on every MIDI event edit) must not
+    // crash and must keep producing a valid object.
+    QJsonObject json = inst.stateToJson();
+    QVERIFY(json.contains("params"));
+    QVERIFY(json.contains("lv2State"));
+    QJsonObject again = inst.stateToJson();
+    QVERIFY(again.contains("params"));
+    QVERIFY(again.contains("lv2State"));
+
+    // Feeding stored state back (restore path) must not crash either.
+    QJsonObject state;
+    QJsonObject entry;
+    entry["key"] = QString("urn:ardour:a-fluidsynth:sf2file");
+    entry["type"] = QString("http://lv2plug.in/ns/ext/atom#Path");
+    entry["flags"] = static_cast<int>(LV2_STATE_IS_POD);
+    entry["value"] = QString::fromLatin1(
+        QByteArray("/tmp/fake.sf2\0", 13).toBase64());
+    QJsonArray arr;
+    arr.append(entry);
+    state["lv2State"] = arr;
+
+    inst.stateFromJson(state);
+    QVERIFY(inst.isEnabled());
 }
 
 void TestLV2::genericScanSmoke() {

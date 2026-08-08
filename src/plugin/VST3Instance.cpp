@@ -642,17 +642,21 @@ QJsonObject VST3Instance::stateToJson() const {
 
     if (m_component) {
         StateStream stream;
-        if (m_component->getState(&stream) == kResultTrue) {
-            int64 dataSize = 0;
-            stream.tell(&dataSize);
-            stream.reset();
-            std::vector<char> data(dataSize);
-            int32 bytesRead = 0;
-            stream.read(data.data(), static_cast<int32>(dataSize), &bytesRead);
+        bool ok = runSigGuarded([&] {
+            if (m_component->getState(&stream) == kResultTrue) {
+                int64 dataSize = 0;
+                stream.tell(&dataSize);
+                stream.reset();
+                std::vector<char> data(dataSize);
+                int32 bytesRead = 0;
+                stream.read(data.data(), static_cast<int32>(dataSize), &bytesRead);
 
-            QByteArray ba(data.data(), bytesRead);
-            json["state"] = QString::fromLatin1(ba.toBase64());
-        }
+                QByteArray ba(data.data(), bytesRead);
+                json["state"] = QString::fromLatin1(ba.toBase64());
+            }
+        });
+        if (!ok)
+            qWarning() << m_name << ": VST3 state save crashed, skipping state";
     }
 
     return json;
@@ -667,11 +671,15 @@ void VST3Instance::stateFromJson(const QJsonObject& json) {
         int32 written = 0;
         stream.write(ba.data(), static_cast<int32>(ba.size()), &written);
         stream.reset();
-        m_component->setState(&stream);
+        bool ok = runSigGuarded([&] {
+            m_component->setState(&stream);
 
-        if (m_controller && m_separateController) {
-            stream.reset();
-            m_controller->setComponentState(&stream);
-        }
+            if (m_controller && m_separateController) {
+                stream.reset();
+                m_controller->setComponentState(&stream);
+            }
+        });
+        if (!ok)
+            qWarning() << m_name << ": VST3 state restore crashed, skipping state";
     }
 }

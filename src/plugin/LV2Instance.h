@@ -218,6 +218,10 @@ private:
     std::vector<StoredStateProperty> m_pendingRestore;
     bool m_hasPendingRestore = false;
     mutable std::mutex m_restoreMutex;
+    // Set when the plugin's state save/restore faulted once; further calls
+    // skip the extension so we do not re-fault on every snapshot.
+    mutable bool m_stateSaveCrashed = false;
+    mutable bool m_stateRestoreCrashed = false;
 
     // Pending patch operations (forged in process() just before run())
     bool m_pendingPatchGet = false;

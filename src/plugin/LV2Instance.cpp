@@ -1,6 +1,7 @@
 #include "LV2Instance.h"
 #include "LV2UIHost.h"
 #include "PluginAudioUtils.h"
+#include "SigGuard.h"
 #include <cstring>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -14,6 +15,13 @@
 #include <lv2/parameters/parameters.h>
 #include <lv2/resize-port/resize-port.h>
 #include <lv2/ui/ui.h>
+
+namespace {
+// Terminating features array for state save/restore. The LV2 state extension
+// passes the host's feature array to the plugin, which is allowed to iterate
+// it; a null pointer makes such plugins dereference null and crash.
+const LV2_Feature* const kEmptyStateFeatures[] = { nullptr };
+}
 
 
 LV2Instance::LV2Instance() {
@@ -985,14 +993,29 @@ QJsonObject LV2Instance::stateToJson() const {
     // (e.g. DrumGizmo) keep all of their settings internally and only expose
     // them via state:interface (stored as atom:Chunk), not through control
     // ports or patch messages.
+    //
+    // The call runs native plugin code, which can fault. We previously passed
+    // a null features array; a-fluidsynth's save() iterates it and dereferenced
+    // null, segfaulting on every project serialization (any MIDI event edit).
+    // We now pass a terminating array and additionally guard the call so a
+    // faulting plugin can never take the host down, remembering the fault so
+    // later snapshots skip the call instead of re-faulting on every edit.
     QJsonArray stateArr;
-    if (m_instance) {
+    if (m_instance && !m_stateSaveCrashed) {
         auto* stateIface = static_cast<const LV2_State_Interface*>(
             extensionData(LV2_STATE__interface));
         if (stateIface && stateIface->save) {
             StateStoreCtx ctx{ this, &stateArr };
-            stateIface->save(lilv_instance_get_handle(m_instance),
-                             stateStoreCallback, &ctx, 0, nullptr);
+            bool ok = runSigGuarded([&] {
+                stateIface->save(lilv_instance_get_handle(m_instance),
+                                 stateStoreCallback, &ctx, 0, kEmptyStateFeatures);
+            });
+            if (!ok) {
+                qWarning() << m_name
+                           << ": LV2 state save crashed, disabling state capture";
+                stateArr = QJsonArray();
+                m_stateSaveCrashed = true;
+            }
         }
     }
     json["lv2State"] = stateArr;
@@ -1120,10 +1143,18 @@ void LV2Instance::applyStateRestore() {
 
     auto* stateIface = static_cast<const LV2_State_Interface*>(
         extensionData(LV2_STATE__interface));
-    if (stateIface && stateIface->restore) {
+    if (stateIface && stateIface->restore && !m_stateRestoreCrashed) {
         StateRetrieveCtx ctx{ this };
-        stateIface->restore(lilv_instance_get_handle(m_instance),
-                            stateRetrieveCallback, &ctx, 0, nullptr);
+        bool ok = runSigGuarded([&] {
+            stateIface->restore(lilv_instance_get_handle(m_instance),
+                                stateRetrieveCallback, &ctx, 0,
+                                kEmptyStateFeatures);
+        });
+        if (!ok) {
+            qWarning() << m_name
+                       << ": LV2 state restore crashed, disabling state restore";
+            m_stateRestoreCrashed = true;
+        }
     }
 
     m_pendingRestore.clear();
