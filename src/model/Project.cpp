@@ -16,21 +16,21 @@ namespace {
 
 AudioBus makeDefaultMasterBus() {
     AudioBus master;
-    master.name = "Master";
-    master.volume = 1.0f;
-    master.pan = 0.0f;
-    master.outputBusIndex = -1;
-    master.removable = false;
+    master.setName("Master");
+    master.setVolume(1.0f);
+    master.setPan(0.0f);
+    master.setOutputBusIndex(-1);
+    master.setRemovable(false);
     return master;
 }
 
 AudioBus makeDefaultMetronomeBus() {
     AudioBus metro;
-    metro.name = "Metronome";
-    metro.volume = static_cast<float>(vvvdaw::DefaultVolume);
-    metro.pan = 0.0f;
-    metro.outputBusIndex = 0;
-    metro.removable = false;
+    metro.setName("Metronome");
+    metro.setVolume(static_cast<float>(vvvdaw::DefaultVolume));
+    metro.setPan(0.0f);
+    metro.setOutputBusIndex(0);
+    metro.setRemovable(false);
     return metro;
 }
 
@@ -153,6 +153,42 @@ bool Project::removeTrack(int index) {
     return true;
 }
 
+Track* Project::trackAt(int index) {
+    if (index < 0 || index >= static_cast<int>(m_tracks.size()))
+        return nullptr;
+    return &m_tracks[index];
+}
+
+const Track* Project::trackAt(int index) const {
+    if (index < 0 || index >= static_cast<int>(m_tracks.size()))
+        return nullptr;
+    return &m_tracks[index];
+}
+
+AudioBus* Project::busAt(int index) {
+    if (index < 0 || index >= static_cast<int>(m_buses.size()))
+        return nullptr;
+    return &m_buses[index];
+}
+
+const AudioBus* Project::busAt(int index) const {
+    if (index < 0 || index >= static_cast<int>(m_buses.size()))
+        return nullptr;
+    return &m_buses[index];
+}
+
+Instrument* Project::instrumentAt(int index) {
+    if (index < 0 || index >= static_cast<int>(m_instruments.size()))
+        return nullptr;
+    return &m_instruments[index];
+}
+
+const Instrument* Project::instrumentAt(int index) const {
+    if (index < 0 || index >= static_cast<int>(m_instruments.size()))
+        return nullptr;
+    return &m_instruments[index];
+}
+
 int Project::addBus(AudioBus bus) {
     m_buses.push_back(std::move(bus));
     return static_cast<int>(m_buses.size()) - 1;
@@ -182,7 +218,7 @@ bool Project::removeInstrument(int index) {
 bool Project::removeBus(int index) {
     if (index <= 0 || index >= static_cast<int>(m_buses.size()))
         return false;
-    if (!m_buses[index].removable)
+    if (!m_buses[index].removable())
         return false;
 
     m_buses.erase(m_buses.begin() + index);
@@ -193,8 +229,11 @@ bool Project::removeBus(int index) {
         track.setOutputBusIndex(busIdx);
     }
 
-    for (auto& bus : m_buses)
-        remapBusIndexAfterRemoval(bus.outputBusIndex, index);
+    for (auto& bus : m_buses) {
+        int busIdx = bus.outputBusIndex();
+        remapBusIndexAfterRemoval(busIdx, index);
+        bus.setOutputBusIndex(busIdx);
+    }
 
     for (auto& instrument : m_instruments) {
         int busIdx = instrument.outputBusIndex();
@@ -319,12 +358,12 @@ void Project::fromJson(const QJsonObject& obj) {
             m_buses.push_back(AudioBus::fromJson(bVal.toObject(), m_pluginManager));
     }
 
-    if (m_buses.empty() || m_buses[0].name != "Master") {
+    if (m_buses.empty() || m_buses[0].name() != "Master") {
         m_buses.insert(m_buses.begin(), makeDefaultMasterBus());
     }
 
     bool hasMetronome = (static_cast<int>(m_buses.size()) > MetronomeBusIndex
-                         && m_buses[MetronomeBusIndex].name == "Metronome");
+                         && m_buses[MetronomeBusIndex].name() == "Metronome");
     if (!hasMetronome) {
         m_buses.insert(m_buses.begin() + MetronomeBusIndex, makeDefaultMetronomeBus());
 
@@ -335,16 +374,16 @@ void Project::fromJson(const QJsonObject& obj) {
         }
         for (int i = 0; i < static_cast<int>(m_buses.size()); ++i) {
             if (i == MetronomeBusIndex) continue;
-            int parent = m_buses[i].outputBusIndex;
+            int parent = m_buses[i].outputBusIndex();
             if (parent >= MetronomeBusIndex)
-                m_buses[i].outputBusIndex = parent + 1;
+                m_buses[i].setOutputBusIndex(parent + 1);
         }
     }
 
-    m_buses[0].removable = false;
-    m_buses[0].outputBusIndex = -1;
+    m_buses[0].setRemovable(false);
+    m_buses[0].setOutputBusIndex(-1);
     if (static_cast<int>(m_buses.size()) > MetronomeBusIndex) {
-        m_buses[MetronomeBusIndex].removable = false;
+        m_buses[MetronomeBusIndex].setRemovable(false);
     }
 
     m_instruments.clear();

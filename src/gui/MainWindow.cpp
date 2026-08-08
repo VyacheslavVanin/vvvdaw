@@ -280,10 +280,10 @@ void MainWindow::setupUi() {
     connect(m_busPanel, &BusPanelWidget::removeBusRequested, this, [this](int index) {
         if (index <= 0 || index >= static_cast<int>(m_project.buses().size()))
             return;
-        if (!m_project.buses()[index].removable)
+        if (!m_project.buses()[index].removable())
             return;
         std::vector<PluginInstance*> plugins;
-        auto& chain = m_project.buses()[index].pluginChain;
+        auto& chain = m_project.buses()[index].pluginChain();
         for (int j = 0; j < chain.count(); ++j)
             plugins.push_back(chain.plugin(j));
         closePluginWindowsFor(plugins);
@@ -339,7 +339,7 @@ void MainWindow::setupUi() {
         pluginJson["type"] = type;
         pluginJson["path"] = path;
         auto cmd = std::make_unique<AddPluginCommand>(
-            m_project.buses()[busIndex].pluginChain, pluginJson, &m_pluginManager,
+            m_project.buses()[busIndex].pluginChain(), pluginJson, &m_pluginManager,
             static_cast<double>(m_engine.sampleRate()), m_engine.bufferSize());
         cmd->setBeforeRemoveCallback([this](PluginInstance* plugin) {
             std::vector<PluginWindow*> toClose;
@@ -361,7 +361,7 @@ void MainWindow::setupUi() {
             [this](int busIndex, int from, int to) {
         if (busIndex >= 0 && busIndex < static_cast<int>(m_project.buses().size())) {
             pushCommand(std::make_unique<MovePluginCommand>(
-                m_project.buses()[busIndex].pluginChain, from, to));
+                m_project.buses()[busIndex].pluginChain(), from, to));
         }
     });
     connect(m_busPanel, &BusPanelWidget::busPluginWillBeToggled, this, [this](int) {
@@ -1452,8 +1452,8 @@ PluginChain* MainWindow::findChainForPlugin(PluginInstance* plugin) {
     }
     // Search all buses
     for (auto& bus : m_project.buses()) {
-        for (int j = 0; j < bus.pluginChain.count(); ++j)
-            if (bus.pluginChain.plugin(j) == plugin) return &bus.pluginChain;
+        for (int j = 0; j < bus.pluginChain().count(); ++j)
+            if (bus.pluginChain().plugin(j) == plugin) return &bus.pluginChain();
     }
     // Search all instruments (synth + effects)
     for (auto& inst : m_project.instruments()) {

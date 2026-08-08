@@ -48,11 +48,11 @@ void TestModel::projectDefaults() {
     QCOMPARE(p.timeSigDen(), 4);
     QCOMPARE(p.tracks().size(), size_t(0));
     QCOMPARE(p.buses().size(), size_t(2));
-    QCOMPARE(p.buses()[0].name, QString("Master"));
-    QCOMPARE(p.buses()[0].removable, false);
-    QCOMPARE(p.buses()[0].outputBusIndex, -1);
-    QCOMPARE(p.buses()[1].name, QString("Metronome"));
-    QCOMPARE(p.buses()[1].removable, false);
+    QCOMPARE(p.buses()[0].name(), QString("Master"));
+    QCOMPARE(p.buses()[0].removable(), false);
+    QCOMPARE(p.buses()[0].outputBusIndex(), -1);
+    QCOMPARE(p.buses()[1].name(), QString("Metronome"));
+    QCOMPARE(p.buses()[1].removable(), false);
     QVERIFY(!p.hasLoop());
     QVERIFY(!p.hasRecordRegion());
 }
@@ -79,8 +79,8 @@ void TestModel::addRemoveTrack() {
 void TestModel::addRemoveBus() {
     Project p;
     AudioBus bus;
-    bus.name = "Drums";
-    bus.volume = 0.5f;
+    bus.setName("Drums");
+    bus.setVolume(0.5f);
     int idx = p.addBus(std::move(bus));
     QCOMPARE(idx, 2);
     QCOMPARE(p.buses().size(), size_t(3));
@@ -345,10 +345,10 @@ void TestModel::projectJsonRoundTrip() {
     t->addEvent(ev);
 
     AudioBus bus;
-    bus.name = "FX";
-    bus.volume = 0.5f;
-    bus.pan = 0.25f;
-    bus.outputBusIndex = 0;
+    bus.setName("FX");
+    bus.setVolume(0.5f);
+    bus.setPan(0.25f);
+    bus.setOutputBusIndex(0);
     p.addBus(std::move(bus));
 
     Instrument inst;
@@ -383,12 +383,12 @@ void TestModel::projectJsonRoundTrip() {
     QCOMPARE(q.tracks()[0].events()[0].sourceFrames(), int64_t(128));
 
     QCOMPARE(q.buses().size(), size_t(3));
-    QCOMPARE(q.buses()[0].name, QString("Master"));
-    QCOMPARE(q.buses()[0].removable, false);
-    QCOMPARE(q.buses()[1].name, QString("Metronome"));
-    QCOMPARE(q.buses()[2].name, QString("FX"));
-    QCOMPARE(q.buses()[2].volume, 0.5f);
-    QCOMPARE(q.buses()[2].pan, 0.25f);
+    QCOMPARE(q.buses()[0].name(), QString("Master"));
+    QCOMPARE(q.buses()[0].removable(), false);
+    QCOMPARE(q.buses()[1].name(), QString("Metronome"));
+    QCOMPARE(q.buses()[2].name(), QString("FX"));
+    QCOMPARE(q.buses()[2].volume(), 0.5f);
+    QCOMPARE(q.buses()[2].pan(), 0.25f);
 
     QCOMPARE(q.instruments().size(), size_t(1));
     QCOMPARE(q.instruments()[0].name(), QString("Synth"));
@@ -439,10 +439,10 @@ void TestModel::projectSaveLoadRoundTrip() {
     midi->addMidiEvent(mev);
 
     AudioBus bus;
-    bus.name = "Drums";
-    bus.volume = 0.7f;
-    bus.pan = 0.1f;
-    bus.outputBusIndex = 0;
+    bus.setName("Drums");
+    bus.setVolume(0.7f);
+    bus.setPan(0.1f);
+    bus.setOutputBusIndex(0);
     p.addBus(std::move(bus));
 
     Instrument inst;
@@ -491,13 +491,13 @@ void TestModel::projectSaveLoadRoundTrip() {
     QCOMPARE(rm.clip()->notes()[1].pitch, 64);
 
     QCOMPARE(q.buses().size(), size_t(3));
-    QCOMPARE(q.buses()[0].name, QString("Master"));
-    QCOMPARE(q.buses()[0].removable, false);
-    QCOMPARE(q.buses()[1].name, QString("Metronome"));
-    QCOMPARE(q.buses()[1].removable, false);
-    QCOMPARE(q.buses()[2].name, QString("Drums"));
-    QCOMPARE(q.buses()[2].volume, 0.7f);
-    QCOMPARE(q.buses()[2].pan, 0.1f);
+    QCOMPARE(q.buses()[0].name(), QString("Master"));
+    QCOMPARE(q.buses()[0].removable(), false);
+    QCOMPARE(q.buses()[1].name(), QString("Metronome"));
+    QCOMPARE(q.buses()[1].removable(), false);
+    QCOMPARE(q.buses()[2].name(), QString("Drums"));
+    QCOMPARE(q.buses()[2].volume(), 0.7f);
+    QCOMPARE(q.buses()[2].pan(), 0.1f);
 
     QCOMPARE(q.instruments().size(), size_t(1));
     QCOMPARE(q.instruments()[0].name(), QString("Pad"));
@@ -516,19 +516,19 @@ void TestModel::projectLoadCreatesMissingBuses() {
     Project p;
     p.fromJson(obj);
     QCOMPARE(p.buses().size(), size_t(2));
-    QCOMPARE(p.buses()[0].name, QString("Master"));
-    QCOMPARE(p.buses()[0].removable, false);
-    QCOMPARE(p.buses()[1].name, QString("Metronome"));
-    QCOMPARE(p.buses()[1].removable, false);
+    QCOMPARE(p.buses()[0].name(), QString("Master"));
+    QCOMPARE(p.buses()[0].removable(), false);
+    QCOMPARE(p.buses()[1].name(), QString("Metronome"));
+    QCOMPARE(p.buses()[1].removable(), false);
 }
 
 void TestModel::removeBusRemapsOutputs() {
     Project p;
     AudioBus b1;
-    b1.name = "B1";
+    b1.setName("B1");
     p.addBus(std::move(b1)); // index 2
     AudioBus b2;
-    b2.name = "B2";
+    b2.setName("B2");
     p.addBus(std::move(b2)); // index 3
 
     Track* t = p.addTrack("T");
@@ -546,22 +546,22 @@ void TestModel::removeBusRemapsOutputs() {
 
 void TestModel::audioBusSerialization() {
     AudioBus bus;
-    bus.name = "FX";
-    bus.volume = 0.6f;
-    bus.pan = 0.2f;
-    bus.outputBusIndex = 1;
-    bus.solo = true;
-    bus.muted = false;
-    bus.removable = true;
+    bus.setName("FX");
+    bus.setVolume(0.6f);
+    bus.setPan(0.2f);
+    bus.setOutputBusIndex(1);
+    bus.setSolo(true);
+    bus.setMuted(false);
+    bus.setRemovable(true);
 
     AudioBus restored = AudioBus::fromJson(bus.toJson());
-    QCOMPARE(restored.name, QString("FX"));
-    QCOMPARE(restored.volume, 0.6f);
-    QCOMPARE(restored.pan, 0.2f);
-    QCOMPARE(restored.outputBusIndex, 1);
-    QCOMPARE(restored.solo, true);
-    QCOMPARE(restored.muted, false);
-    QCOMPARE(restored.removable, true);
+    QCOMPARE(restored.name(), QString("FX"));
+    QCOMPARE(restored.volume(), 0.6f);
+    QCOMPARE(restored.pan(), 0.2f);
+    QCOMPARE(restored.outputBusIndex(), 1);
+    QCOMPARE(restored.isSolo(), true);
+    QCOMPARE(restored.isMuted(), false);
+    QCOMPARE(restored.removable(), true);
 }
 
 void TestModel::instrumentSerialization() {

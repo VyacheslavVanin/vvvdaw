@@ -3,57 +3,6 @@
 #include "model/Track.h"
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
-#include <QJsonArray>
-#include <QJsonObject>
-
-static QJsonObject eventToJson(const AudioEvent& event) {
-    QJsonObject eObj;
-    if (event.clip())
-        eObj["clipPath"] = event.clip()->filePath();
-    eObj["startSample"] = static_cast<qint64>(event.startSample());
-    eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
-    eObj["durationSample"] = static_cast<qint64>(event.durationSample());
-    eObj["sourceFrames"] = static_cast<qint64>(event.sourceFrames());
-    if (!event.takes().empty()) {
-        QJsonArray takesArr;
-        for (const auto& take : event.takes())
-            takesArr.append(take->filePath());
-        eObj["takes"] = takesArr;
-        eObj["activeTakeIndex"] = event.activeTakeIndex();
-    }
-    return eObj;
-}
-
-static AudioEvent eventFromJson(const QJsonObject& eObj) {
-    AudioEvent event;
-    QString clipPath = eObj["clipPath"].toString();
-    if (!clipPath.isEmpty()) {
-        auto clip = std::make_shared<AudioClip>(clipPath);
-        if (clip->isValid())
-            event.setClip(clip);
-    }
-    event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
-    event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
-    event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
-    event.setSourceFrames(eObj.contains("sourceFrames")
-        ? static_cast<int64_t>(eObj["sourceFrames"].toVariant().toLongLong())
-        : event.durationSample());
-    if (eObj.contains("takes")) {
-        const QJsonArray takesArr = eObj["takes"].toArray();
-        for (const auto& takeVal : takesArr) {
-            QString takePath = takeVal.toString();
-            if (!takePath.isEmpty()) {
-                auto takeClip = std::make_shared<AudioClip>(takePath);
-                if (takeClip->isValid())
-                    event.takes().push_back(takeClip);
-            }
-        }
-        event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
-        if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
-            event.setClip(event.takes()[event.activeTakeIndex()]);
-    }
-    return event;
-}
 
 // --- AddEventCommand ---
 
@@ -61,40 +10,41 @@ AddEventCommand::AddEventCommand(Project& project, int trackIndex, QJsonObject e
     : m_project(project), m_trackIndex(trackIndex), m_eventJson(eventJson) {}
 
 void AddEventCommand::execute() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
         return;
-    AudioEvent event = eventFromJson(m_eventJson);
-    m_project.tracks()[m_trackIndex].addEvent(event);
+    track->addEvent(AudioEvent::fromJson(m_eventJson));
 }
 
 void AddEventCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
         return;
-    auto& events = m_project.tracks()[m_trackIndex].events();
-    if (!events.empty())
-        m_project.tracks()[m_trackIndex].removeEvent(events.back().id());
+    if (!track->events().empty())
+        track->removeEvent(track->events().back().id());
 }
 
 // --- RemoveEventCommand ---
 
 RemoveEventCommand::RemoveEventCommand(Project& project, int trackIndex, int64_t eventId)
     : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId) {
-    if (trackIndex >= 0 && trackIndex < static_cast<int>(m_project.tracks().size())) {
-        auto* ev = m_project.tracks()[trackIndex].findEvent(eventId);
-        if (ev) m_savedEvent = eventToJson(*ev);
+    if (Track* track = m_project.trackAt(trackIndex)) {
+        if (AudioEvent* ev = track->findEvent(eventId))
+            m_savedEvent = ev->toJson();
     }
 }
 
 void RemoveEventCommand::execute() {
-    if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
-        m_project.tracks()[m_trackIndex].removeEvent(m_eventId);
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (track)
+        track->removeEvent(m_eventId);
 }
 
 void RemoveEventCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
         return;
-    AudioEvent event = eventFromJson(m_savedEvent);
-    m_project.tracks()[m_trackIndex].importEvent(event);
+    track->importEvent(AudioEvent::fromJson(m_savedEvent));
 }
 
 // --- MoveEventCommand ---
@@ -105,17 +55,15 @@ MoveEventCommand::MoveEventCommand(Project& project, int trackIndex, int64_t eve
       m_oldStart(oldStart), m_newStart(newStart) {}
 
 void MoveEventCommand::execute() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
-        return;
-    auto* ev = m_project.tracks()[m_trackIndex].findEvent(m_eventId);
-    if (ev) ev->setStartSample(m_newStart);
+    if (Track* track = m_project.trackAt(m_trackIndex))
+        if (AudioEvent* ev = track->findEvent(m_eventId))
+            ev->setStartSample(m_newStart);
 }
 
 void MoveEventCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
-        return;
-    auto* ev = m_project.tracks()[m_trackIndex].findEvent(m_eventId);
-    if (ev) ev->setStartSample(m_oldStart);
+    if (Track* track = m_project.trackAt(m_trackIndex))
+        if (AudioEvent* ev = track->findEvent(m_eventId))
+            ev->setStartSample(m_oldStart);
 }
 
 bool MoveEventCommand::mergeWith(const UndoCommand* other) {
@@ -135,22 +83,20 @@ TrimEventCommand::TrimEventCommand(Project& project, int trackIndex, int64_t eve
       m_newOffset(newOffset), m_newDuration(newDuration) {}
 
 void TrimEventCommand::execute() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
-        return;
-    auto* ev = m_project.tracks()[m_trackIndex].findEvent(m_eventId);
-    if (ev) {
-        ev->setOffsetSample(m_newOffset);
-        ev->setDurationSample(m_newDuration);
+    if (Track* track = m_project.trackAt(m_trackIndex)) {
+        if (AudioEvent* ev = track->findEvent(m_eventId)) {
+            ev->setOffsetSample(m_newOffset);
+            ev->setDurationSample(m_newDuration);
+        }
     }
 }
 
 void TrimEventCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
-        return;
-    auto* ev = m_project.tracks()[m_trackIndex].findEvent(m_eventId);
-    if (ev) {
-        ev->setOffsetSample(m_oldOffset);
-        ev->setDurationSample(m_oldDuration);
+    if (Track* track = m_project.trackAt(m_trackIndex)) {
+        if (AudioEvent* ev = track->findEvent(m_eventId)) {
+            ev->setOffsetSample(m_oldOffset);
+            ev->setDurationSample(m_oldDuration);
+        }
     }
 }
 
@@ -170,15 +116,13 @@ SwitchTakeCommand::SwitchTakeCommand(Project& project, int trackIndex, int64_t e
       m_oldTake(oldTake), m_newTake(newTake) {}
 
 void SwitchTakeCommand::execute() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
-        return;
-    auto* ev = m_project.tracks()[m_trackIndex].findEvent(m_eventId);
-    if (ev) ev->setActiveTakeIndex(m_newTake);
+    if (Track* track = m_project.trackAt(m_trackIndex))
+        if (AudioEvent* ev = track->findEvent(m_eventId))
+            ev->setActiveTakeIndex(m_newTake);
 }
 
 void SwitchTakeCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
-        return;
-    auto* ev = m_project.tracks()[m_trackIndex].findEvent(m_eventId);
-    if (ev) ev->setActiveTakeIndex(m_oldTake);
+    if (Track* track = m_project.trackAt(m_trackIndex))
+        if (AudioEvent* ev = track->findEvent(m_eventId))
+            ev->setActiveTakeIndex(m_oldTake);
 }

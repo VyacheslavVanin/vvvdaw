@@ -2,54 +2,12 @@
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/MidiEvent.h"
-#include <QJsonArray>
-#include <QJsonObject>
-
-static QJsonObject midiEventToJson(const MidiEvent& event) {
-    QJsonObject eObj;
-    eObj["startSample"] = static_cast<qint64>(event.startSample());
-    eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
-    eObj["durationSample"] = static_cast<qint64>(event.durationSample());
-    if (event.clip())
-        eObj["clip"] = event.clip()->toJson();
-    if (!event.takes().empty()) {
-        QJsonArray takesArr;
-        for (const auto& take : event.takes())
-            takesArr.append(take->toJson());
-        eObj["takes"] = takesArr;
-        eObj["activeTakeIndex"] = event.activeTakeIndex();
-    }
-    return eObj;
-}
-
-static MidiEvent midiEventFromJson(const QJsonObject& eObj) {
-    MidiEvent event;
-    if (eObj.contains("clip")) {
-        auto clip = std::make_shared<MidiClip>();
-        clip->fromJson(eObj["clip"].toObject());
-        event.setClip(clip);
-    }
-    event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
-    event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
-    event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
-    if (eObj.contains("takes")) {
-        const QJsonArray takesArr = eObj["takes"].toArray();
-        for (const auto& takeVal : takesArr) {
-            auto takeClip = std::make_shared<MidiClip>();
-            takeClip->fromJson(takeVal.toObject());
-            event.takes().push_back(takeClip);
-        }
-        event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
-        if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
-            event.setClip(event.takes()[event.activeTakeIndex()]);
-    }
-    return event;
-}
 
 static MidiEvent* findMidiEvent(Project& project, int trackIndex, int64_t eventId) {
-    if (trackIndex < 0 || trackIndex >= static_cast<int>(project.tracks().size()))
+    Track* track = project.trackAt(trackIndex);
+    if (!track)
         return nullptr;
-    return project.tracks()[trackIndex].findMidiEvent(eventId);
+    return track->findMidiEvent(eventId);
 }
 
 static MidiClip* activeClipForEvent(Project& project, int trackIndex, int64_t eventId) {
@@ -84,41 +42,42 @@ AddMidiEventCommand::AddMidiEventCommand(Project& project, int trackIndex, QJson
     : m_project(project), m_trackIndex(trackIndex), m_eventJson(eventJson) {}
 
 void AddMidiEventCommand::execute() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
         return;
-    MidiEvent event = midiEventFromJson(m_eventJson);
-    m_project.tracks()[m_trackIndex].addMidiEvent(event);
-    m_createdEventId = m_project.tracks()[m_trackIndex].midiEvents().back().id();
+    track->addMidiEvent(MidiEvent::fromJson(m_eventJson));
+    m_createdEventId = track->midiEvents().back().id();
 }
 
 void AddMidiEventCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
         return;
-    auto& events = m_project.tracks()[m_trackIndex].midiEvents();
-    if (!events.empty())
-        m_project.tracks()[m_trackIndex].removeMidiEvent(events.back().id());
+    if (!track->midiEvents().empty())
+        track->removeMidiEvent(track->midiEvents().back().id());
 }
 
 // --- RemoveMidiEventCommand ---
 
 RemoveMidiEventCommand::RemoveMidiEventCommand(Project& project, int trackIndex, int64_t eventId)
     : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId) {
-    if (trackIndex >= 0 && trackIndex < static_cast<int>(m_project.tracks().size())) {
-        auto* ev = m_project.tracks()[trackIndex].findMidiEvent(eventId);
-        if (ev) m_savedEvent = midiEventToJson(*ev);
+    if (Track* track = m_project.trackAt(trackIndex)) {
+        if (MidiEvent* ev = track->findMidiEvent(eventId))
+            m_savedEvent = ev->toJson();
     }
 }
 
 void RemoveMidiEventCommand::execute() {
-    if (m_trackIndex >= 0 && m_trackIndex < static_cast<int>(m_project.tracks().size()))
-        m_project.tracks()[m_trackIndex].removeMidiEvent(m_eventId);
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (track)
+        track->removeMidiEvent(m_eventId);
 }
 
 void RemoveMidiEventCommand::undo() {
-    if (m_trackIndex < 0 || m_trackIndex >= static_cast<int>(m_project.tracks().size()))
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
         return;
-    MidiEvent event = midiEventFromJson(m_savedEvent);
-    m_project.tracks()[m_trackIndex].importMidiEvent(event);
+    track->importMidiEvent(MidiEvent::fromJson(m_savedEvent));
 }
 
 // --- MoveMidiEventCommand ---

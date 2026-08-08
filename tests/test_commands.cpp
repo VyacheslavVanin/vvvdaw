@@ -165,8 +165,8 @@ void TestCommands::addBusCommand() {
     UndoStack stack;
     stack.execute(std::make_unique<AddBusCommand>(p));
     QCOMPARE(p.buses().size(), size_t(3));
-    QCOMPARE(p.buses()[2].name, QString("Bus 2"));
-    QVERIFY(p.buses()[2].removable);
+    QCOMPARE(p.buses()[2].name(), QString("Bus 2"));
+    QVERIFY(p.buses()[2].removable());
     stack.undo();
     QCOMPARE(p.buses().size(), size_t(2));
 }
@@ -174,7 +174,7 @@ void TestCommands::addBusCommand() {
 void TestCommands::removeBusCommand() {
     Project p;
     AudioBus bus;
-    bus.name = "FX";
+    bus.setName("FX");
     p.addBus(std::move(bus));
 
     UndoStack stack;
@@ -182,7 +182,7 @@ void TestCommands::removeBusCommand() {
     QCOMPARE(p.buses().size(), size_t(2));
     stack.undo();
     QCOMPARE(p.buses().size(), size_t(3));
-    QCOMPARE(p.buses()[2].name, QString("FX"));
+    QCOMPARE(p.buses()[2].name(), QString("FX"));
 }
 
 void TestCommands::setBusCommands() {

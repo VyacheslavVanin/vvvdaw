@@ -329,7 +329,7 @@ void TrackPanelWidget::updateBusList(const std::vector<AudioBus>& buses) {
     QSignalBlocker blocker(m_outputBusCombo);
     m_outputBusCombo->clear();
     for (const auto& bus : buses) {
-        m_outputBusCombo->addItem(bus.name);
+        m_outputBusCombo->addItem(bus.name());
     }
     if (m_track) {
         int idx = m_track->outputBusIndex();

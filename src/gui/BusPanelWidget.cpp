@@ -24,7 +24,7 @@ static bool wouldCreateCycle(const std::vector<AudioBus>& buses, int fromIndex, 
     for (int step = 0; step < busCount; ++step) {
         if (current == fromIndex) return true;
         if (current < 0 || current >= busCount) return false;
-        current = buses[current].outputBusIndex;
+        current = buses[current].outputBusIndex();
     }
     return false;
 }
@@ -92,7 +92,7 @@ void BusPanelWidget::rebuild() {
         layout->setSpacing(2);
 
         auto* topRow = new QHBoxLayout;
-        row.nameEdit = new QLineEdit(bus.name, row.widget);
+        row.nameEdit = new QLineEdit(bus.name(), row.widget);
         row.nameEdit->setReadOnly(true);
         row.nameEdit->setStyleSheet(
             "QLineEdit { background: transparent; border: none; font-weight: bold; font-size: 11px; color: #ccc; }"
@@ -108,7 +108,7 @@ void BusPanelWidget::rebuild() {
         row.soloButton = new QPushButton("S", row.widget);
         row.soloButton->setFixedSize(22, 22);
         row.soloButton->setCheckable(true);
-        row.soloButton->setChecked(bus.solo);
+        row.soloButton->setChecked(bus.isSolo());
         row.soloButton->setStyleSheet(
             btnStyle(
                 "QPushButton { background: #443322; color: #ccaa66; border: 1px solid #665544; font-weight: bold; font-size: 10px",
@@ -121,7 +121,7 @@ void BusPanelWidget::rebuild() {
         row.muteButton = new QPushButton("M", row.widget);
         row.muteButton->setFixedSize(22, 22);
         row.muteButton->setCheckable(true);
-        row.muteButton->setChecked(bus.muted);
+        row.muteButton->setChecked(bus.isMuted());
         row.muteButton->setStyleSheet(
             btnStyle(
                 "QPushButton { background: #334433; color: #66cc66; border: 1px solid #446644; font-weight: bold; font-size: 10px",
@@ -139,7 +139,7 @@ void BusPanelWidget::rebuild() {
         panRow->addWidget(panLabel);
         row.panSlider = new QSlider(Qt::Horizontal, row.widget);
         row.panSlider->setRange(-100, 100);
-        row.panSlider->setValue(static_cast<int>(bus.pan * 100));
+        row.panSlider->setValue(static_cast<int>(bus.pan() * 100));
         row.panSlider->setFixedHeight(12);
         row.panSlider->setStyleSheet(
             "QSlider::groove:horizontal { background: #444; height: 3px; border-radius: 1px; }"
@@ -155,7 +155,7 @@ void BusPanelWidget::rebuild() {
         volRow->addWidget(volLabel);
         row.volumeSlider = new QSlider(Qt::Horizontal, row.widget);
         row.volumeSlider->setRange(0, 100);
-        row.volumeSlider->setValue(static_cast<int>(bus.volume * 100));
+        row.volumeSlider->setValue(static_cast<int>(bus.volume() * 100));
         row.volumeSlider->setFixedHeight(12);
         row.volumeSlider->setStyleSheet(
             "QSlider::groove:horizontal { background: #444; height: 3px; border-radius: 1px; }"
@@ -179,14 +179,14 @@ void BusPanelWidget::rebuild() {
         for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
             if (j == i) continue;
             bool cycle = wouldCreateCycle(buses, i, j);
-            row.outCombo->addItem(buses[j].name, j);
+            row.outCombo->addItem(buses[j].name(), j);
             int lastIdx = row.outCombo->count() - 1;
             if (cycle) {
                 row.outCombo->setItemData(lastIdx, QVariant(), Qt::UserRole - 1);
-                row.outCombo->setItemText(lastIdx, buses[j].name + " (x)");
+                row.outCombo->setItemText(lastIdx, buses[j].name() + " (x)");
             }
         }
-        int outTarget = bus.outputBusIndex;
+        int outTarget = bus.outputBusIndex();
         for (int c = 0; c < row.outCombo->count(); ++c) {
             if (row.outCombo->itemData(c).toInt() == outTarget) {
                 row.outCombo->setCurrentIndex(c);
@@ -222,24 +222,24 @@ void BusPanelWidget::rebuild() {
         layout->addWidget(row.pluginList, 1);
 
         connect(row.soloButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
-            bool oldVal = m_project.buses()[busIndex].solo;
+            bool oldVal = m_project.buses()[busIndex].isSolo();
             emit busSoloWillChange(busIndex, oldVal, checked);
-            m_project.buses()[busIndex].solo = checked;
+            m_project.buses()[busIndex].setSolo(checked);
             emit busChanged();
         });
         connect(row.muteButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
-            bool oldVal = m_project.buses()[busIndex].muted;
+            bool oldVal = m_project.buses()[busIndex].isMuted();
             emit busMuteWillChange(busIndex, oldVal, checked);
-            m_project.buses()[busIndex].muted = checked;
+            m_project.buses()[busIndex].setMuted(checked);
             emit busChanged();
         });
 
         connect(row.nameEdit, &QLineEdit::editingFinished, this, [this, row, busIndex] {
             QString text = row.nameEdit->text().trimmed();
-            if (!text.isEmpty() && text != m_project.buses()[busIndex].name) {
-                QString oldName = m_project.buses()[busIndex].name;
+            if (!text.isEmpty() && text != m_project.buses()[busIndex].name()) {
+                QString oldName = m_project.buses()[busIndex].name();
                 emit busNameWillChange(busIndex, oldName, text);
-                m_project.buses()[busIndex].name = text;
+                m_project.buses()[busIndex].setName(text);
                 emit busChanged();
             }
             row.nameEdit->setReadOnly(true);
@@ -251,7 +251,7 @@ void BusPanelWidget::rebuild() {
                 [this, row, busIndex](int comboIdx) {
             int targetBusIdx = row.outCombo->itemData(comboIdx).toInt();
             if (targetBusIdx >= 0 && wouldCreateCycle(m_project.buses(), busIndex, targetBusIdx)) {
-                int outTarget = m_project.buses()[busIndex].outputBusIndex;
+                int outTarget = m_project.buses()[busIndex].outputBusIndex();
                 for (int c = 0; c < row.outCombo->count(); ++c) {
                     if (row.outCombo->itemData(c).toInt() == outTarget) {
                         row.outCombo->setCurrentIndex(c);
@@ -260,27 +260,27 @@ void BusPanelWidget::rebuild() {
                 }
                 return;
             }
-            int oldVal = m_project.buses()[busIndex].outputBusIndex;
+            int oldVal = m_project.buses()[busIndex].outputBusIndex();
             emit busOutputWillChange(busIndex, oldVal, targetBusIdx);
-            m_project.buses()[busIndex].outputBusIndex = targetBusIdx;
+            m_project.buses()[busIndex].setOutputBusIndex(targetBusIdx);
             emit busChanged();
         });
 
         connect(row.panSlider, &QSlider::valueChanged, this,
                 [this, busIndex](int val) {
-            float oldVal = m_project.buses()[busIndex].pan;
+            float oldVal = m_project.buses()[busIndex].pan();
             float newVal = val / 100.0f;
             emit busPanWillChange(busIndex, oldVal, newVal);
-            m_project.buses()[busIndex].pan = newVal;
+            m_project.buses()[busIndex].setPan(newVal);
             emit busChanged();
         });
 
         connect(row.volumeSlider, &QSlider::valueChanged, this,
                 [this, busIndex](int val) {
-            float oldVal = m_project.buses()[busIndex].volume;
+            float oldVal = m_project.buses()[busIndex].volume();
             float newVal = val / 100.0f;
             emit busVolumeWillChange(busIndex, oldVal, newVal);
-            m_project.buses()[busIndex].volume = newVal;
+            m_project.buses()[busIndex].setVolume(newVal);
             emit busChanged();
         });
 
@@ -306,7 +306,7 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
         auto* ce = static_cast<QContextMenuEvent*>(event);
         for (int i = 0; i < static_cast<int>(m_busRows.size()); ++i) {
             if (m_busRows[i].widget == obj) {
-                if (!m_project.buses()[i].removable) return true;
+                if (!m_project.buses()[i].removable()) return true;
                 QMenu menu(m_busRows[i].widget);
                 QAction* deleteAction = menu.addAction("Delete Bus");
                 connect(deleteAction, &QAction::triggered, this, [this, i] {

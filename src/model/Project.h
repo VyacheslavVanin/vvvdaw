@@ -42,6 +42,14 @@ public:
     std::vector<Instrument>& instruments() { return m_instruments; }
     const std::vector<Instrument>& instruments() const { return m_instruments; }
 
+    // Bounds-checked accessors (return nullptr for out-of-range indices).
+    Track* trackAt(int index);
+    const Track* trackAt(int index) const;
+    AudioBus* busAt(int index);
+    const AudioBus* busAt(int index) const;
+    Instrument* instrumentAt(int index);
+    const Instrument* instrumentAt(int index) const;
+
     AudioBus& masterBus() { return m_buses[0]; }
     const AudioBus& masterBus() const { return m_buses[0]; }
 

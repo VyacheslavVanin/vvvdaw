@@ -1,8 +1,6 @@
 #include "PluginCommands.h"
 #include "plugin/PluginChain.h"
 #include "plugin/PluginInstance.h"
-#include "plugin/VST3Instance.h"
-#include "plugin/LV2Instance.h"
 #include "plugin/PluginManager.h"
 
 // --- AddPluginCommand ---
@@ -13,22 +11,11 @@ AddPluginCommand::AddPluginCommand(PluginChain& chain, QJsonObject pluginJson,
       m_sampleRate(sampleRate), m_bufferSize(bufferSize) {}
 
 void AddPluginCommand::execute() {
-    QString type = m_pluginJson["type"].toString();
-    if (type == "vst3") {
-        auto instance = std::make_unique<VST3Instance>();
-        if (instance->load(m_pluginJson["path"].toString())) {
-            instance->activate(m_sampleRate, m_bufferSize);
-            m_addedPlugin = instance.get();
-            m_chain.addPlugin(std::move(instance));
-        }
-    } else if (type == "lv2") {
-        auto instance = std::make_unique<LV2Instance>();
-        if (m_manager) instance->setWorld(m_manager->lilvWorld());
-        if (instance->load(m_pluginJson["path"].toString())) {
-            instance->activate(m_sampleRate, m_bufferSize);
-            m_addedPlugin = instance.get();
-            m_chain.addPlugin(std::move(instance));
-        }
+    auto instance = PluginChain::createInstance(m_pluginJson, m_manager);
+    if (instance) {
+        instance->activate(m_sampleRate, m_bufferSize);
+        m_addedPlugin = instance.get();
+        m_chain.addPlugin(std::move(instance));
     }
 }
 
@@ -54,22 +41,10 @@ void RemovePluginCommand::execute() {
 }
 
 void RemovePluginCommand::undo() {
-    QString type = m_savedPlugin["type"].toString();
-    if (type == "vst3") {
-        auto instance = std::make_unique<VST3Instance>();
-        if (instance->load(m_savedPlugin["path"].toString())) {
-            instance->activate(m_sampleRate, m_bufferSize);
-            instance->stateFromJson(m_savedPlugin);
-            m_chain.addPlugin(std::move(instance));
-        }
-    } else if (type == "lv2") {
-        auto instance = std::make_unique<LV2Instance>();
-        if (m_manager) instance->setWorld(m_manager->lilvWorld());
-        if (instance->load(m_savedPlugin["path"].toString())) {
-            instance->activate(m_sampleRate, m_bufferSize);
-            instance->stateFromJson(m_savedPlugin);
-            m_chain.addPlugin(std::move(instance));
-        }
+    auto instance = PluginChain::createInstance(m_savedPlugin, m_manager);
+    if (instance) {
+        instance->activate(m_sampleRate, m_bufferSize);
+        m_chain.addPlugin(std::move(instance));
     }
 }
 

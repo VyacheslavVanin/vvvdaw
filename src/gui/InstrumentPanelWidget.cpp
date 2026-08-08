@@ -22,7 +22,7 @@ static bool instrumentCycleCheck(const std::vector<AudioBus>& buses, int toIndex
     int current = toIndex;
     for (int step = 0; step < busCount + 1; ++step) {
         if (current < 0 || current >= busCount) return false;
-        current = buses[current].outputBusIndex;
+        current = buses[current].outputBusIndex();
     }
     return true;
 }
@@ -168,7 +168,7 @@ void InstrumentPanelWidget::rebuild() {
         row.outCombo->addItem("Master", 0);
         for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
             if (j == 0) continue;
-            row.outCombo->addItem(buses[j].name, j);
+            row.outCombo->addItem(buses[j].name(), j);
         }
         int outTarget = instrument.outputBusIndex();
         for (int c = 0; c < row.outCombo->count(); ++c) {

@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
     for (auto& t : project.tracks())
         t.pluginChain().clear();
     for (auto& b : project.buses())
-        b.pluginChain.clear();
+        b.pluginChain().clear();
     for (auto& inst : project.instruments()) {
         inst.setSynth(nullptr);
         inst.effects().clear();

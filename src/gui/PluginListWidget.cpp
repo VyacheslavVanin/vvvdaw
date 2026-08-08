@@ -95,7 +95,7 @@ void PluginListWidget::setInstrument(Instrument* instrument) {
 
 PluginChain* PluginListWidget::targetChain() const {
     if (m_track) return const_cast<PluginChain*>(&m_track->pluginChain());
-    if (m_bus) return &m_bus->pluginChain;
+    if (m_bus) return &m_bus->pluginChain();
     if (m_instrument) return &m_instrument->effects();
     return nullptr;
 }
