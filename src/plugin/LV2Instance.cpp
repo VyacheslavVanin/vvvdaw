@@ -90,10 +90,9 @@ void LV2Instance::processWorkQueue() {
     std::vector<WorkItem> pending;
     m_workQueue.swap(pending);
 
-    const LV2_Descriptor* desc = lilv_instance_get_descriptor(m_instance);
     LV2_Handle handle = lilv_instance_get_handle(m_instance);
     auto* workerIface = static_cast<const LV2_Worker_Interface*>(
-        desc->extension_data(LV2_WORKER__interface));
+        extensionData(LV2_WORKER__interface));
     if (!workerIface || !workerIface->work) return;
 
     for (auto& item : pending) {
@@ -988,9 +987,8 @@ QJsonObject LV2Instance::stateToJson() const {
     // ports or patch messages.
     QJsonArray stateArr;
     if (m_instance) {
-        const LV2_Descriptor* desc = lilv_instance_get_descriptor(m_instance);
         auto* stateIface = static_cast<const LV2_State_Interface*>(
-            desc->extension_data(LV2_STATE__interface));
+            extensionData(LV2_STATE__interface));
         if (stateIface && stateIface->save) {
             StateStoreCtx ctx{ this, &stateArr };
             stateIface->save(lilv_instance_get_handle(m_instance),
@@ -1062,6 +1060,13 @@ QString LV2Instance::uriForUrid(uint32_t urid) const {
     return {};
 }
 
+const void* LV2Instance::extensionData(const char* uri) const {
+    if (!m_instance) return nullptr;
+    const LV2_Descriptor* desc = lilv_instance_get_descriptor(m_instance);
+    if (!desc || !desc->extension_data) return nullptr;
+    return desc->extension_data(uri);
+}
+
 LV2_State_Status LV2Instance::stateStoreCallback(LV2_State_Handle handle,
                                                  uint32_t key,
                                                  const void* value,
@@ -1113,9 +1118,8 @@ void LV2Instance::applyStateRestore() {
         return;
     }
 
-    const LV2_Descriptor* desc = lilv_instance_get_descriptor(m_instance);
     auto* stateIface = static_cast<const LV2_State_Interface*>(
-        desc->extension_data(LV2_STATE__interface));
+        extensionData(LV2_STATE__interface));
     if (stateIface && stateIface->restore) {
         StateRetrieveCtx ctx{ this };
         stateIface->restore(lilv_instance_get_handle(m_instance),

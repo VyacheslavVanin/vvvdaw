@@ -1,11 +1,14 @@
 #include <QTest>
+#include <QJsonArray>
 #include <algorithm>
 #include <cmath>
 #include <csignal>
 #include <vector>
 
 #include "plugin/LV2Instance.h"
+#include "plugin/PluginChain.h"
 #include "plugin/SigGuard.h"
+#include "model/Instrument.h"
 
 // Smoke / integration tests for the LV2 backend. These exercise the real
 // Lilv world and installed plugins, so they verify the load/activate/process/
@@ -15,6 +18,7 @@
 namespace {
 
 constexpr const char* kZamCompUri = "urn:zamaudio:ZamComp";
+constexpr const char* kHardLimiterUri = "http://plugin.org.uk/swh-plugins/hardLimiter";
 constexpr int kSampleRate = 48000;
 constexpr int kBlockSize = 512;
 constexpr int kNumChannels = 2;
@@ -36,6 +40,7 @@ private slots:
     void loadKnownPlugin();
     void activateProcessDeactivate();
     void stateRoundTrip();
+    void stateToJsonWithoutStateExtension();
     void genericScanSmoke();
 };
 
@@ -159,6 +164,32 @@ void TestLV2::stateRoundTrip() {
     b.stateFromJson(json);
     QVERIFY(b.isEnabled());
     QVERIFY(std::abs(b.getParameter(ctrlIndex) - newVal) < 1e-3f);
+}
+
+void TestLV2::stateToJsonWithoutStateExtension() {
+    // Regression: swh-lv2 plugins have no LV2 state extension (their LV2
+    // descriptor's extension_data is NULL). stateToJson() previously called
+    // desc->extension_data() unconditionally, which crashed (NULL function
+    // pointer) whenever the project was serialized (e.g. SnapshotCommand on
+    // plugin removal). Guarded via LV2Instance::extensionData().
+    LV2Instance inst;
+    if (!inst.load(kHardLimiterUri))
+        QSKIP("swh Hard Limiter LV2 plugin not installed");
+    QVERIFY(inst.activate(kSampleRate, kBlockSize));
+
+    QJsonObject json = inst.stateToJson();
+    QVERIFY(json.contains("params"));
+    QVERIFY(json.contains("lv2State"));
+    QVERIFY(json["lv2State"].toArray().isEmpty());
+
+    // Project-level serialization used by SnapshotCommand on plugin removal.
+    Instrument instrument;
+    instrument.setName("FX host");
+    instrument.effects().addPlugin(
+        PluginChain::createInstance(json, nullptr));
+    QVERIFY(instrument.effects().count() == 1);
+    QJsonObject instJson = instrument.toJson();
+    QVERIFY(instJson["effects"].isObject());
 }
 
 void TestLV2::genericScanSmoke() {

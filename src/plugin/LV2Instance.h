@@ -59,6 +59,9 @@ public:
     QString parameterPropertyUri(int index) const override;
 
     QString uriForUrid(uint32_t urid) const;
+    // Returns the plugin's extension data for `uri`, or nullptr when the
+    // plugin does not implement extension_data (e.g. swh-lv2 plugins).
+    const void* extensionData(const char* uri) const;
     void applyStateRestore();
 
     bool hasEditor() const override;
