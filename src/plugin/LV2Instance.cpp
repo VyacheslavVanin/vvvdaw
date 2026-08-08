@@ -1,5 +1,6 @@
 #include "LV2Instance.h"
 #include "LV2UIHost.h"
+#include "PluginAudioUtils.h"
 #include <cstring>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -431,13 +432,9 @@ bool LV2Instance::deactivate() {
 
 bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
                           int numSamples, int numChannels, const MidiBuffer* midi) {
-    if (!m_active || !m_instance || !m_enabled) {
-        if (outputBuffers && inputBuffers) {
-            for (int ch = 0; ch < numChannels; ++ch)
-                std::memcpy(outputBuffers[ch], inputBuffers[ch], numSamples * sizeof(float));
-        }
+    if (bypassPassthrough(m_active && m_instance && m_enabled,
+                          inputBuffers, outputBuffers, numSamples, numChannels))
         return true;
-    }
 
     int samples = std::min(numSamples, m_maxBlockSize);
 
@@ -445,9 +442,7 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
         int ch = static_cast<int>(i);
         if (m_audioInPorts.size() == 1 && numChannels >= 2 && inputBuffers &&
             !m_audioInBuffers.empty()) {
-            for (int s = 0; s < samples; ++s)
-                m_audioInBuffers[0][static_cast<size_t>(s)] =
-                    (inputBuffers[0][s] + inputBuffers[1][s]) * 0.5f;
+            foldStereoToMono(m_audioInBuffers[0].data(), inputBuffers, samples);
             m_audioInPorts[0] = m_audioInBuffers[0].data();
             lilv_instance_connect_port(m_instance, m_audioInPortIndices[0], m_audioInPorts[0]);
             continue;
@@ -589,13 +584,8 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     // Mono plugin: duplicate the single output channel so downstream mixing
     // sees a centered stereo signal instead of a hard-panned-left one.
-    if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2) {
-        const float* src = m_audioOutPorts[0];
-        if (src) {
-            float* dst = outputBuffers[1];
-            std::memcpy(dst, src, static_cast<size_t>(samples) * sizeof(float));
-        }
-    }
+    if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2)
+        duplicateMonoToStereo(m_audioOutPorts[0], outputBuffers, samples);
 
     processWorkQueue();
 
@@ -933,10 +923,7 @@ bool LV2Instance::getEditorSize(int& width, int& height) const {
 
 QJsonObject LV2Instance::stateToJson() const {
     QJsonObject json;
-    json["type"] = "lv2";
-    json["path"] = m_filePath;
-    json["pluginId"] = m_pluginId;
-    json["enabled"] = m_enabled;
+    writeIdentityToJson(json, "lv2");
 
     QJsonArray params;
     for (size_t i = 0; i < m_ctrlValues.size(); ++i) {
@@ -977,8 +964,7 @@ QJsonObject LV2Instance::stateToJson() const {
 }
 
 void LV2Instance::stateFromJson(const QJsonObject& json) {
-    if (json.contains("enabled"))
-        m_enabled = json["enabled"].toBool(true);
+    readIdentityFromJson(json);
 
     if (json.contains("params")) {
         QJsonArray params = json["params"].toArray();

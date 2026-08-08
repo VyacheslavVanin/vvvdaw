@@ -1,5 +1,7 @@
 #include "VST3Instance.h"
 #include "VST3Scan.h"
+#include "SigGuard.h"
+#include "PluginAudioUtils.h"
 #include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
@@ -107,17 +109,6 @@ uint32 PLUGIN_API PluginFrame::addRef() { return 1; }
 uint32 PLUGIN_API PluginFrame::release() { return 0; }
 
 } // anonymous namespace
-
-// Crash guard for third-party editors (e.g. MT-PowerDrumKit's VSTGUI editor)
-// that can segfault inside createView. If the plugin crashes while building its
-// editor, we recover and fall back to the parameter UI instead of dying.
-static sigjmp_buf s_editorJmpBuf;
-static volatile sig_atomic_t s_editorCrashed = 0;
-
-static void editorCrashHandler(int) {
-    s_editorCrashed = 1;
-    siglongjmp(s_editorJmpBuf, 1);
-}
 
 // HostComponentHandler method implementations
 tresult PLUGIN_API HostComponentHandler::queryInterface(const TUID _iid, void** obj) {
@@ -383,13 +374,9 @@ bool VST3Instance::deactivate() {
 
 bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
                            int numSamples, int numChannels, const MidiBuffer* midi) {
-    if (!m_active || !m_audioProcessor || !m_enabled) {
-        if (outputBuffers && inputBuffers) {
-            for (int ch = 0; ch < numChannels; ++ch)
-                std::memcpy(outputBuffers[ch], inputBuffers[ch], numSamples * sizeof(float));
-        }
+    if (bypassPassthrough(m_active && m_audioProcessor && m_enabled,
+                          inputBuffers, outputBuffers, numSamples, numChannels))
         return true;
-    }
 
     int32 numInBuses = m_component ? m_component->getBusCount(kAudio, kInput) : 1;
     int32 numOutBuses = m_component ? m_component->getBusCount(kAudio, kOutput) : 1;
@@ -406,9 +393,7 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
         if (busChannels == 1 && numChannels >= 2 && inputBuffers) {
             if (m_monoScratch.size() < static_cast<size_t>(numSamples))
                 m_monoScratch.resize(static_cast<size_t>(numSamples));
-            for (int s = 0; s < numSamples; ++s)
-                m_monoScratch[static_cast<size_t>(s)] =
-                    (inputBuffers[0][s] + inputBuffers[1][s]) * 0.5f;
+            foldStereoToMono(m_monoScratch.data(), inputBuffers, numSamples);
             inBuses[i].channelBuffers32 = monoInChannels;
         } else {
             inBuses[i].channelBuffers32 = inputBuffers;
@@ -450,11 +435,8 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     // Mono plugin: duplicate the single output channel so downstream mixing
     // sees a centered stereo signal instead of a hard-panned-left one.
     bool monoOut = m_outputBusChannels.size() == 1 && m_outputBusChannels[0] == 1;
-    if (monoOut && result == kResultTrue && outputBuffers && numChannels >= 2) {
-        const float* src = outputBuffers[0];
-        float* dst = outputBuffers[1];
-        std::memcpy(dst, src, static_cast<size_t>(numSamples) * sizeof(float));
-    }
+    if (monoOut && result == kResultTrue && outputBuffers && numChannels >= 2)
+        duplicateMonoToStereo(outputBuffers[0], outputBuffers, numSamples);
 
     {
         std::lock_guard<std::mutex> lock(m_paramMutex);
@@ -573,21 +555,12 @@ void* VST3Instance::createEditor(void* parentWindow) {
 
     Steinberg::IPlugView* view = nullptr;
 
-    struct sigaction oldSa, sa{};
-    sa.sa_handler = editorCrashHandler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGSEGV, &sa, &oldSa);
-    s_editorCrashed = 0;
-
-    if (sigsetjmp(s_editorJmpBuf, 1) == 0) {
+    bool ok = runSigGuarded([&] {
         view = m_controller->createView(ViewType::kEditor);
         if (!view) qWarning() << m_name << ": createView returned nullptr";
-    }
+    });
 
-    sigaction(SIGSEGV, &oldSa, nullptr);
-
-    if (s_editorCrashed) {
+    if (!ok) {
         qWarning() << m_name << ": editor crashed (SEGV) in createView — disabling native editor";
         m_editorCrashed = true;
         return nullptr;
@@ -598,14 +571,7 @@ void* VST3Instance::createEditor(void* parentWindow) {
     qInfo() << m_name << ": isPlatformTypeSupported(X11) =" << x11support;
 
     if (x11support == kResultTrue) {
-        struct sigaction oldSa2, sa2{};
-        sa2.sa_handler = editorCrashHandler;
-        sigemptyset(&sa2.sa_mask);
-        sa2.sa_flags = 0;
-        sigaction(SIGSEGV, &sa2, &oldSa2);
-        s_editorCrashed = 0;
-
-        if (sigsetjmp(s_editorJmpBuf, 1) == 0) {
+        bool ok = runSigGuarded([&] {
             if (!m_frame) {
                 auto* frame = new PluginFrame();
                 frame->setHostWindow(parentWidget);
@@ -619,11 +585,9 @@ void* VST3Instance::createEditor(void* parentWindow) {
             m_editorView->attached(x11WindowId, kPlatformTypeX11EmbedWindowID);
             ViewRect rect;
             m_editorView->getSize(&rect);
-        }
+        });
 
-        sigaction(SIGSEGV, &oldSa2, nullptr);
-
-        if (s_editorCrashed) {
+        if (!ok) {
             qWarning() << m_name << ": editor crashed (SEGV) during attach — disabling native editor";
             m_editorCrashed = true;
             // The view may be partially initialized; do not touch it.
@@ -674,10 +638,7 @@ bool VST3Instance::getEditorSize(int& width, int& height) const {
 
 QJsonObject VST3Instance::stateToJson() const {
     QJsonObject json;
-    json["type"] = "vst3";
-    json["path"] = m_filePath;
-    json["pluginId"] = m_pluginId;
-    json["enabled"] = m_enabled;
+    writeIdentityToJson(json, "vst3");
 
     if (m_component) {
         StateStream stream;
@@ -698,8 +659,7 @@ QJsonObject VST3Instance::stateToJson() const {
 }
 
 void VST3Instance::stateFromJson(const QJsonObject& json) {
-    if (json.contains("enabled"))
-        m_enabled = json["enabled"].toBool(true);
+    readIdentityFromJson(json);
 
     if (json.contains("state") && m_component) {
         QByteArray ba = QByteArray::fromBase64(json["state"].toString().toLatin1());

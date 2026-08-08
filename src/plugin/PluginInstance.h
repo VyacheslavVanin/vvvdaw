@@ -81,6 +81,20 @@ public:
     const StringParamChangeCallback& stringParameterChangeCallback() const { return m_stringParamChangeCallback; }
 
 protected:
+    // Serialize the plugin identity block shared by every backend
+    // (type/path/pluginId/enabled).
+    void writeIdentityToJson(QJsonObject& json, const char* type) const {
+        json["type"] = type;
+        json["path"] = filePath();
+        json["pluginId"] = pluginId();
+        json["enabled"] = isEnabled();
+    }
+
+    void readIdentityFromJson(const QJsonObject& json) {
+        if (json.contains("enabled"))
+            setEnabled(json["enabled"].toBool(true));
+    }
+
     ParamChangeCallback m_paramChangeCallback;
     ParamValueCallback m_paramValueCallback;
     StringParamValueCallback m_stringParamValueCallback;

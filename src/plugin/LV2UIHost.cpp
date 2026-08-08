@@ -1,4 +1,5 @@
 #include "LV2UIHost.h"
+#include "SigGuard.h"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -367,14 +368,6 @@ bool LV2UIHost::open(const char* pluginUri, const char* bundlePath, const char* 
     return true;
 }
 
-static sigjmp_buf s_idleJmpBuf;
-static bool s_idleCrashFlag = false;
-
-static void idleCrashHandler(int) {
-    s_idleCrashFlag = true;
-    siglongjmp(s_idleJmpBuf, 1);
-}
-
 void LV2UIHost::close() {
     if (!m_impl) return;
 
@@ -430,14 +423,7 @@ void LV2UIHost::idle() {
     if (!m_impl || !m_impl->descriptor || !m_impl->descriptor->extension_data || !m_impl->uiHandle)
         return;
 
-    struct sigaction oldSa, sa{};
-    sa.sa_handler = idleCrashHandler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGSEGV, &sa, &oldSa);
-
-    s_idleCrashFlag = false;
-    if (sigsetjmp(s_idleJmpBuf, 1) == 0) {
+    bool ok = runSigGuarded([&] {
         auto* idle = reinterpret_cast<const LV2UI_Idle_Interface*>(
             m_impl->descriptor->extension_data(LV2_UI__idleInterface));
         if (idle && idle->idle) {
@@ -447,11 +433,9 @@ void LV2UIHost::idle() {
         } else {
             LV2UI_LOG("idle interface has no idle() function");
         }
-    }
+    });
 
-    sigaction(SIGSEGV, &oldSa, nullptr);
-
-    if (s_idleCrashFlag) {
+    if (!ok) {
         LV2UI_LOG("DPF bad function pointer caught — patching window IDs");
         patchAfterCrash(m_impl->uiHandle,
                         m_impl->parentWindow,

@@ -1,4 +1,5 @@
 #pragma once
+#include "SigGuard.h"
 #include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <public.sdk/source/vst/hosting/hostclasses.h>
@@ -54,40 +55,21 @@ inline bool findComponentUIDByScan(Steinberg::IPluginFactory* factory,
     return false;
 }
 
-namespace detail {
-inline sigjmp_buf gClassInfoJmpBuf;
-inline volatile sig_atomic_t gClassInfoCrashed = 0;
-} // namespace detail
-
-inline void classInfoCrashHandler(int) {
-    detail::gClassInfoCrashed = 1;
-    siglongjmp(detail::gClassInfoJmpBuf, 1);
-}
-
 // Enumerates factory classes via getClassInfo inside a SIGSEGV guard. Some old
 // plugins (DPF-based) crash inside getClassInfo, so the crash is caught and the
 // caller falls back to binary scanning. Returns false if enumeration crashed.
 inline bool enumerateClassesGuarded(Steinberg::IPluginFactory* factory,
                                     std::vector<Steinberg::PClassInfo>& out) {
     using namespace Steinberg;
-    struct sigaction oldSa, sa{};
-    sa.sa_handler = classInfoCrashHandler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGSEGV, &sa, &oldSa);
-
-    detail::gClassInfoCrashed = 0;
-    if (sigsetjmp(detail::gClassInfoJmpBuf, 1) == 0) {
+    bool ok = runSigGuarded([&] {
         int32 n = factory->countClasses();
         for (int32 i = 0; i < n; ++i) {
             PClassInfo ci{};
             if (factory->getClassInfo(i, &ci) == kResultOk)
                 out.push_back(ci);
         }
-    }
-
-    sigaction(SIGSEGV, &oldSa, nullptr);
-    return detail::gClassInfoCrashed == 0;
+    });
+    return ok;
 }
 
 // Fallback UID discovery for plugins whose UID is not present as contiguous
