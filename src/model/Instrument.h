@@ -1,8 +1,11 @@
 #pragma once
 #include <QString>
+#include <QJsonObject>
 #include <memory>
 #include "plugin/PluginInstance.h"
 #include "plugin/PluginChain.h"
+
+class PluginManager;
 
 class Instrument {
 public:
@@ -37,6 +40,9 @@ public:
 
     bool isSolo() const { return m_solo; }
     void setSolo(bool solo) { m_solo = solo; }
+
+    QJsonObject toJson() const;
+    static Instrument fromJson(const QJsonObject& obj, PluginManager* manager = nullptr);
 
 private:
     QString m_name;

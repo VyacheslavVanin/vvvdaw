@@ -64,8 +64,10 @@ target_link_libraries(vvvdaw_plugin PUBLIC
 )
 
 add_library(vvvdaw_model STATIC
+    src/model/AudioBus.cpp
     src/model/AudioClip.cpp
     src/model/AudioEvent.cpp
+    src/model/Instrument.cpp
     src/model/MidiClip.cpp
     src/model/MidiEvent.cpp
     src/model/Track.cpp

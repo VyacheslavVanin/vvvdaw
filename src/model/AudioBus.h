@@ -1,6 +1,9 @@
 #pragma once
 #include <QString>
+#include <QJsonObject>
 #include "plugin/PluginChain.h"
+
+class PluginManager;
 
 struct AudioBus {
     QString name;
@@ -11,4 +14,7 @@ struct AudioBus {
     bool muted = false;
     bool removable = true;
     PluginChain pluginChain;
+
+    QJsonObject toJson() const;
+    static AudioBus fromJson(const QJsonObject& obj, PluginManager* manager = nullptr);
 };

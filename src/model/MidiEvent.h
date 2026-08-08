@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <QJsonObject>
 #include "MidiClip.h"
 
 class MidiEvent {
@@ -35,6 +36,9 @@ public:
 
     int activeTakeIndex() const { return m_activeTakeIndex; }
     void setActiveTakeIndex(int idx) { m_activeTakeIndex = idx; }
+
+    QJsonObject toJson() const;
+    static MidiEvent fromJson(const QJsonObject& obj);
 
 private:
     int64_t m_id = 0;

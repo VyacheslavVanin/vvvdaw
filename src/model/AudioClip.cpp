@@ -76,21 +76,35 @@ bool AudioClip::saveToFile(const QString& filePath, int sampleRate) const {
     return true;
 }
 
+namespace {
+
+// Number of peak slots for a given frame count.
+size_t peakSlotCount(size_t frames) {
+    return (frames + AudioClip::PEAK_STEP_FRAMES - 1) / AudioClip::PEAK_STEP_FRAMES;
+}
+
+// Peak absolute value of the first channel across `frames` interleaved frames.
+float peakOfChannel(const float* data, size_t frames, int channels) {
+    float maxAbs = 0.0f;
+    for (size_t i = 0; i < frames; ++i) {
+        float s = std::abs(data[i * channels]);
+        if (s > maxAbs) maxAbs = s;
+    }
+    return maxAbs;
+}
+
+} // namespace
+
 void AudioClip::computePeaks() {
     m_peaks.clear();
     if (m_frameCount == 0 || m_channels == 0) return;
 
-    size_t peakCount = (m_frameCount + PEAK_STEP_FRAMES - 1) / PEAK_STEP_FRAMES;
-    m_peaks.reserve(peakCount);
+    m_peaks.reserve(peakSlotCount(m_frameCount));
 
     for (size_t f = 0; f < m_frameCount; f += PEAK_STEP_FRAMES) {
         size_t end = std::min(f + PEAK_STEP_FRAMES, m_frameCount);
-        float maxAbs = 0.0f;
-        for (size_t i = f; i < end; ++i) {
-            float s = std::abs(m_samples[i * m_channels]);
-            if (s > maxAbs) maxAbs = s;
-        }
-        m_peaks.push_back({maxAbs});
+        m_peaks.push_back({peakOfChannel(m_samples.data() + f * m_channels,
+                                         end - f, m_channels)});
     }
 }
 
@@ -98,20 +112,15 @@ void AudioClip::computePeaksFromFile(SNDFILE* file, const SF_INFO& info) {
     m_peaks.clear();
     if (info.frames == 0 || info.channels == 0) return;
 
-    size_t peakCount = (static_cast<size_t>(info.frames) + PEAK_STEP_FRAMES - 1) / PEAK_STEP_FRAMES;
-    m_peaks.reserve(peakCount);
+    m_peaks.reserve(peakSlotCount(static_cast<size_t>(info.frames)));
 
     std::vector<float> buf(static_cast<size_t>(PEAK_STEP_FRAMES) * info.channels);
 
     for (sf_count_t f = 0; f < info.frames; f += PEAK_STEP_FRAMES) {
         sf_count_t toRead = std::min<sf_count_t>(PEAK_STEP_FRAMES, info.frames - f);
         sf_count_t read = sf_readf_float(file, buf.data(), toRead);
-        float maxAbs = 0.0f;
-        for (sf_count_t i = 0; i < read; ++i) {
-            float s = std::abs(buf[i * info.channels]);
-            if (s > maxAbs) maxAbs = s;
-        }
-        m_peaks.push_back({maxAbs});
+        m_peaks.push_back({peakOfChannel(buf.data(), static_cast<size_t>(read),
+                                         info.channels)});
     }
 }
 

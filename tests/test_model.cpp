@@ -32,6 +32,12 @@ private slots:
     void projectJsonRoundTrip();
     void projectSaveLoadRoundTrip();
     void projectLoadCreatesMissingBuses();
+    void removeBusRemapsOutputs();
+    void audioBusSerialization();
+    void instrumentSerialization();
+    void trackSerialization();
+    void audioEventSerialization();
+    void midiEventSerialization();
 };
 
 void TestModel::projectDefaults() {
@@ -514,6 +520,151 @@ void TestModel::projectLoadCreatesMissingBuses() {
     QCOMPARE(p.buses()[0].removable, false);
     QCOMPARE(p.buses()[1].name, QString("Metronome"));
     QCOMPARE(p.buses()[1].removable, false);
+}
+
+void TestModel::removeBusRemapsOutputs() {
+    Project p;
+    AudioBus b1;
+    b1.name = "B1";
+    p.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.name = "B2";
+    p.addBus(std::move(b2)); // index 3
+
+    Track* t = p.addTrack("T");
+    t->setOutputBusIndex(3); // -> B2
+
+    QVERIFY(p.removeBus(2)); // remove B1
+    QCOMPARE(p.buses().size(), size_t(3));
+    QCOMPARE(t->outputBusIndex(), 2); // shifted down
+
+    Track* t2 = p.addTrack("T2");
+    t2->setOutputBusIndex(2); // currently B2
+    QVERIFY(p.removeBus(2));
+    QCOMPARE(t2->outputBusIndex(), 0); // removed bus remaps to master
+}
+
+void TestModel::audioBusSerialization() {
+    AudioBus bus;
+    bus.name = "FX";
+    bus.volume = 0.6f;
+    bus.pan = 0.2f;
+    bus.outputBusIndex = 1;
+    bus.solo = true;
+    bus.muted = false;
+    bus.removable = true;
+
+    AudioBus restored = AudioBus::fromJson(bus.toJson());
+    QCOMPARE(restored.name, QString("FX"));
+    QCOMPARE(restored.volume, 0.6f);
+    QCOMPARE(restored.pan, 0.2f);
+    QCOMPARE(restored.outputBusIndex, 1);
+    QCOMPARE(restored.solo, true);
+    QCOMPARE(restored.muted, false);
+    QCOMPARE(restored.removable, true);
+}
+
+void TestModel::instrumentSerialization() {
+    Instrument inst;
+    inst.setName("Lead");
+    inst.setVolume(0.4f);
+    inst.setPan(-0.3f);
+    inst.setOutputBusIndex(2);
+    inst.setMuted(true);
+    inst.setSolo(false);
+
+    Instrument restored = Instrument::fromJson(inst.toJson());
+    QCOMPARE(restored.name(), QString("Lead"));
+    QCOMPARE(restored.volume(), 0.4f);
+    QCOMPARE(restored.pan(), -0.3f);
+    QCOMPARE(restored.outputBusIndex(), 2);
+    QCOMPARE(restored.isMuted(), true);
+    QCOMPARE(restored.isSolo(), false);
+}
+
+void TestModel::trackSerialization() {
+    Track t("Guitar", 2);
+    t.setVolume(0.5f);
+    t.setPan(-0.25f);
+    t.setMuted(true);
+    AudioEvent ev;
+    ev.setStartSample(10);
+    ev.setDurationSample(20);
+    t.addEvent(ev);
+
+    Track rt;
+    rt.fromJson(t.toJson());
+    QCOMPARE(rt.name(), QString("Guitar"));
+    QCOMPARE(rt.type(), Track::Type::Audio);
+    QCOMPARE(rt.channels(), 2);
+    QCOMPARE(rt.volume(), 0.5f);
+    QCOMPARE(rt.pan(), -0.25f);
+    QCOMPARE(rt.isMuted(), true);
+    QCOMPARE(rt.events().size(), size_t(1));
+    QCOMPARE(rt.events()[0].startSample(), int64_t(10));
+    QCOMPARE(rt.events()[0].id(), int64_t(1)); // ids re-assigned on load
+
+    Track m("Keys", Track::Type::Midi);
+    auto mclip = std::make_shared<MidiClip>();
+    mclip->addNote(60, 100, 0, 240);
+    MidiEvent mev;
+    mev.setClip(mclip);
+    mev.setStartSample(0);
+    mev.setDurationSample(1000);
+    m.addMidiEvent(mev);
+
+    Track rm;
+    rm.fromJson(m.toJson());
+    QCOMPARE(rm.type(), Track::Type::Midi);
+    QCOMPARE(rm.midiEvents().size(), size_t(1));
+    QVERIFY(rm.midiEvents()[0].clip());
+    QCOMPARE(rm.midiEvents()[0].clip()->notes().size(), size_t(1));
+}
+
+void TestModel::audioEventSerialization() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QString clipPath = dir.path() + "/clip.wav";
+    auto clip = std::make_shared<AudioClip>(std::vector<float>(1024, 0.3f), 44100, 1);
+    QVERIFY(clip->saveToFile(clipPath));
+    clip->setFilePath(clipPath);
+
+    AudioEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(100);
+    ev.setOffsetSample(50);
+    ev.setDurationSample(200);
+    ev.setSourceFrames(1024);
+    ev.takes().push_back(clip);
+
+    QJsonObject obj = ev.toJson(dir.path());
+    QCOMPARE(obj["clipPath"].toString(), QString("clip.wav")); // stored relative
+
+    AudioEvent restored = AudioEvent::fromJson(obj, dir.path());
+    QVERIFY(restored.clip());
+    QVERIFY(restored.clip()->isValid());
+    QCOMPARE(restored.startSample(), int64_t(100));
+    QCOMPARE(restored.offsetSample(), int64_t(50));
+    QCOMPARE(restored.durationSample(), int64_t(200));
+    QCOMPARE(restored.sourceFrames(), int64_t(1024));
+    QCOMPARE(restored.takes().size(), size_t(1));
+}
+
+void TestModel::midiEventSerialization() {
+    MidiEvent ev;
+    auto clip = std::make_shared<MidiClip>();
+    clip->addNote(60, 100, 0, 240);
+    clip->setLengthTicks(960);
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(1000);
+
+    MidiEvent restored = MidiEvent::fromJson(ev.toJson());
+    QVERIFY(restored.clip());
+    QCOMPARE(restored.clip()->notes().size(), size_t(1));
+    QCOMPARE(restored.clip()->lengthTicks(), int64_t(960));
+    QCOMPARE(restored.startSample(), int64_t(0));
+    QCOMPARE(restored.durationSample(), int64_t(1000));
 }
 
 QTEST_MAIN(TestModel)

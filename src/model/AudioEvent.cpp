@@ -1,5 +1,8 @@
 #include "AudioEvent.h"
 #include "AudioClip.h"
+#include "JsonUtils.h"
+#include "EventTakeUtils.h"
+#include <QJsonArray>
 
 bool AudioEvent::isValid() const {
     return activeClip() && activeClip()->isValid();
@@ -10,20 +13,65 @@ int64_t AudioEvent::endSample() const {
 }
 
 void AudioEvent::addTake(std::shared_ptr<AudioClip> takeClip) {
-    m_takes.push_back(takeClip);
-    m_activeTakeIndex = static_cast<int>(m_takes.size()) - 1;
-    m_clip = takeClip;
+    eventAddTake(m_takes, m_clip, std::move(takeClip), m_activeTakeIndex);
 }
 
 void AudioEvent::setActiveTake(int index) {
-    if (index >= 0 && index < static_cast<int>(m_takes.size())) {
-        m_activeTakeIndex = index;
-        m_clip = m_takes[index];
-    }
+    eventSetActiveTake(m_takes, m_clip, m_activeTakeIndex, index);
 }
 
 const std::shared_ptr<AudioClip>& AudioEvent::activeClip() const {
-    if (m_activeTakeIndex >= 0 && m_activeTakeIndex < static_cast<int>(m_takes.size()))
-        return m_takes[m_activeTakeIndex];
-    return m_clip;
+    return eventActiveClip(m_takes, m_clip, m_activeTakeIndex);
+}
+
+QJsonObject AudioEvent::toJson(const QString& projectDir) const {
+    QJsonObject eObj;
+    if (m_clip) {
+        eObj["clipPath"] = relativeToProject(m_clip->filePath(), projectDir);
+        eObj["clipSampleRate"] = m_clip->sampleRate();
+    }
+    eObj["startSample"] = static_cast<qint64>(m_startSample);
+    eObj["offsetSample"] = static_cast<qint64>(m_offsetSample);
+    eObj["durationSample"] = static_cast<qint64>(m_durationSample);
+    eObj["sourceFrames"] = static_cast<qint64>(m_sourceFrames);
+
+    if (!m_takes.empty()) {
+        QJsonArray takesArr;
+        for (const auto& take : m_takes)
+            takesArr.append(relativeToProject(take->filePath(), projectDir));
+        eObj["takes"] = takesArr;
+        eObj["activeTakeIndex"] = m_activeTakeIndex;
+    }
+    return eObj;
+}
+
+AudioEvent AudioEvent::fromJson(const QJsonObject& eObj, const QString& projectDir) {
+    AudioEvent event;
+    QString clipPath = eObj["clipPath"].toString();
+    if (!clipPath.isEmpty()) {
+        auto clip = std::make_shared<AudioClip>(resolveProjectPath(clipPath, projectDir));
+        if (clip->isValid())
+            event.setClip(clip);
+    }
+    event.setStartSample(jsonInt64(eObj, "startSample"));
+    event.setOffsetSample(jsonInt64(eObj, "offsetSample"));
+    event.setDurationSample(jsonInt64(eObj, "durationSample"));
+    event.setSourceFrames(eObj.contains("sourceFrames")
+        ? jsonInt64(eObj, "sourceFrames")
+        : event.durationSample());
+
+    if (eObj.contains("takes")) {
+        const QJsonArray takesArr = eObj["takes"].toArray();
+        for (const auto& takeVal : takesArr) {
+            QString takePath = takeVal.toString();
+            if (!takePath.isEmpty()) {
+                auto takeClip = std::make_shared<AudioClip>(resolveProjectPath(takePath, projectDir));
+                if (takeClip->isValid())
+                    event.takes().push_back(takeClip);
+            }
+        }
+        event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
+        eventApplyActiveTake(event.takes(), event.m_clip, event.m_activeTakeIndex);
+    }
+    return event;
 }

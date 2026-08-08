@@ -1,5 +1,6 @@
 #include "Project.h"
 #include "AudioClip.h"
+#include "JsonUtils.h"
 #include "core/Constants.h"
 #include <QDir>
 #include <QFile>
@@ -11,24 +12,44 @@
 #include <QStandardPaths>
 #include <cmath>
 
-Project::Project()
-    : m_name("Untitled")
-{
+namespace {
+
+AudioBus makeDefaultMasterBus() {
     AudioBus master;
     master.name = "Master";
     master.volume = 1.0f;
     master.pan = 0.0f;
     master.outputBusIndex = -1;
     master.removable = false;
-    m_buses.push_back(std::move(master));
+    return master;
+}
 
+AudioBus makeDefaultMetronomeBus() {
     AudioBus metro;
     metro.name = "Metronome";
     metro.volume = static_cast<float>(vvvdaw::DefaultVolume);
     metro.pan = 0.0f;
     metro.outputBusIndex = 0;
     metro.removable = false;
-    m_buses.push_back(std::move(metro));
+    return metro;
+}
+
+// After removing bus `removed`, remap a stored bus index that pointed at or
+// past it: the removed bus becomes the master (0), others shift down.
+void remapBusIndexAfterRemoval(int& index, int removed) {
+    if (index == removed)
+        index = 0;
+    else if (index > removed)
+        --index;
+}
+
+} // namespace
+
+Project::Project()
+    : m_name("Untitled")
+{
+    m_buses.push_back(makeDefaultMasterBus());
+    m_buses.push_back(makeDefaultMetronomeBus());
 }
 
 bool Project::load(const QString& filePath) {
@@ -167,24 +188,18 @@ bool Project::removeBus(int index) {
     m_buses.erase(m_buses.begin() + index);
 
     for (auto& track : m_tracks) {
-        if (track.outputBusIndex() == index)
-            track.setOutputBusIndex(0);
-        else if (track.outputBusIndex() > index)
-            track.setOutputBusIndex(track.outputBusIndex() - 1);
+        int busIdx = track.outputBusIndex();
+        remapBusIndexAfterRemoval(busIdx, index);
+        track.setOutputBusIndex(busIdx);
     }
 
-    for (auto& bus : m_buses) {
-        if (bus.outputBusIndex == index)
-            bus.outputBusIndex = 0;
-        else if (bus.outputBusIndex > index)
-            bus.outputBusIndex -= 1;
-    }
+    for (auto& bus : m_buses)
+        remapBusIndexAfterRemoval(bus.outputBusIndex, index);
 
     for (auto& instrument : m_instruments) {
-        if (instrument.outputBusIndex() == index)
-            instrument.setOutputBusIndex(0);
-        else if (instrument.outputBusIndex() > index)
-            instrument.setOutputBusIndex(instrument.outputBusIndex() - 1);
+        int busIdx = instrument.outputBusIndex();
+        remapBusIndexAfterRemoval(busIdx, index);
+        instrument.setOutputBusIndex(busIdx);
     }
 
     return true;
@@ -197,15 +212,6 @@ QString Project::audioDirectory() const {
     }
     QFileInfo fi(m_filePath);
     return fi.absolutePath() + "/audio";
-}
-
-static QString relativePath(const QString& filePath, const QString& projectDir) {
-    QFileInfo fi(filePath);
-    QString absPath = fi.absoluteFilePath();
-    QString absProj = QFileInfo(projectDir).absoluteFilePath();
-    if (absPath.startsWith(absProj + "/"))
-        return absPath.mid(absProj.length() + 1);
-    return absPath;
 }
 
 void Project::rescaleTimeline(double factor) {
@@ -258,115 +264,18 @@ QJsonObject Project::toJson() const {
                      : QFileInfo(m_filePath).absolutePath();
 
     QJsonArray tracksArr;
-    for (const auto& track : m_tracks) {
-        QJsonObject tObj;
-        tObj["name"] = track.name();
-        tObj["type"] = track.type() == Track::Type::Midi ? "midi" : "audio";
-        tObj["channels"] = track.channels();
-        tObj["inputDeviceId"] = track.inputDeviceId();
-        tObj["inputChannel"] = track.inputChannel();
-        tObj["outputBusIndex"] = track.outputBusIndex();
-        tObj["pan"] = track.pan();
-        tObj["volume"] = track.volume();
-        tObj["muted"] = track.isMuted();
-        tObj["solo"] = track.isSolo();
-
-        if (track.type() == Track::Type::Midi) {
-            tObj["midiOutputDeviceId"] = track.midiOutputDeviceId();
-            if (!track.midiOutputDeviceName().isEmpty())
-                tObj["midiOutputDeviceName"] = track.midiOutputDeviceName();
-            tObj["instrumentIndex"] = track.instrumentIndex();
-        }
-
-        QJsonArray eventsArr;
-        for (const auto& event : track.events()) {
-            QJsonObject eObj;
-            if (event.clip()) {
-                QString clipPath = event.clip()->filePath();
-                if (!projDir.isEmpty())
-                    clipPath = relativePath(clipPath, projDir);
-                eObj["clipPath"] = clipPath;
-                eObj["clipSampleRate"] = event.clip()->sampleRate();
-            }
-            eObj["startSample"] = static_cast<qint64>(event.startSample());
-            eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
-            eObj["durationSample"] = static_cast<qint64>(event.durationSample());
-            eObj["sourceFrames"] = static_cast<qint64>(event.sourceFrames());
-
-            if (!event.takes().empty()) {
-                QJsonArray takesArr;
-                for (const auto& take : event.takes()) {
-                    QString takePath = take->filePath();
-                    if (!projDir.isEmpty())
-                        takePath = relativePath(takePath, projDir);
-                    takesArr.append(takePath);
-                }
-                eObj["takes"] = takesArr;
-                eObj["activeTakeIndex"] = event.activeTakeIndex();
-            }
-
-            eventsArr.append(eObj);
-        }
-        tObj["events"] = eventsArr;
-
-        if (track.type() == Track::Type::Midi) {
-            QJsonArray midiEventsArr;
-            for (const auto& event : track.midiEvents()) {
-                QJsonObject eObj;
-                eObj["startSample"] = static_cast<qint64>(event.startSample());
-                eObj["offsetSample"] = static_cast<qint64>(event.offsetSample());
-                eObj["durationSample"] = static_cast<qint64>(event.durationSample());
-                if (event.clip())
-                    eObj["clip"] = event.clip()->toJson();
-                if (!event.takes().empty()) {
-                    QJsonArray takesArr;
-                    for (const auto& take : event.takes())
-                        takesArr.append(take->toJson());
-                    eObj["takes"] = takesArr;
-                    eObj["activeTakeIndex"] = event.activeTakeIndex();
-                }
-                midiEventsArr.append(eObj);
-            }
-            tObj["midiEvents"] = midiEventsArr;
-        }
-
-        if (track.pluginChain().count() > 0)
-            tObj["plugins"] = track.pluginChain().toJson();
-        tracksArr.append(tObj);
-    }
+    for (const auto& track : m_tracks)
+        tracksArr.append(track.toJson(projDir));
     obj["tracks"] = tracksArr;
 
     QJsonArray busesArr;
-    for (const auto& bus : m_buses) {
-        QJsonObject bObj;
-        bObj["name"] = bus.name;
-        bObj["pan"] = bus.pan;
-        bObj["volume"] = bus.volume;
-        bObj["outputBusIndex"] = bus.outputBusIndex;
-        bObj["solo"] = bus.solo;
-        bObj["muted"] = bus.muted;
-        bObj["removable"] = bus.removable;
-        if (bus.pluginChain.count() > 0)
-            bObj["plugins"] = bus.pluginChain.toJson();
-        busesArr.append(bObj);
-    }
+    for (const auto& bus : m_buses)
+        busesArr.append(bus.toJson());
     obj["buses"] = busesArr;
 
     QJsonArray instrumentsArr;
-    for (const auto& instrument : m_instruments) {
-        QJsonObject iObj;
-        iObj["name"] = instrument.name();
-        iObj["pan"] = instrument.pan();
-        iObj["volume"] = instrument.volume();
-        iObj["outputBusIndex"] = instrument.outputBusIndex();
-        iObj["solo"] = instrument.isSolo();
-        iObj["muted"] = instrument.isMuted();
-        if (instrument.synth())
-            iObj["synth"] = instrument.synth()->stateToJson();
-        if (instrument.effects().count() > 0)
-            iObj["effects"] = instrument.effects().toJson();
-        instrumentsArr.append(iObj);
-    }
+    for (const auto& instrument : m_instruments)
+        instrumentsArr.append(instrument.toJson());
     obj["instruments"] = instrumentsArr;
 
     return obj;
@@ -382,12 +291,12 @@ void Project::fromJson(const QJsonObject& obj) {
     m_timeSigDen = obj["timeSigDen"].toInt(4);
 
     if (obj.contains("loopStart") && obj.contains("loopEnd")) {
-        m_loopStart = static_cast<int64_t>(obj["loopStart"].toVariant().toLongLong());
-        m_loopEnd = static_cast<int64_t>(obj["loopEnd"].toVariant().toLongLong());
+        m_loopStart = jsonInt64(obj, "loopStart");
+        m_loopEnd = jsonInt64(obj, "loopEnd");
     }
     if (obj.contains("recordRegionStart") && obj.contains("recordRegionEnd")) {
-        m_recordRegionStart = static_cast<int64_t>(obj["recordRegionStart"].toVariant().toLongLong());
-        m_recordRegionEnd = static_cast<int64_t>(obj["recordRegionEnd"].toVariant().toLongLong());
+        m_recordRegionStart = jsonInt64(obj, "recordRegionStart");
+        m_recordRegionEnd = jsonInt64(obj, "recordRegionEnd");
     }
 
     QString projDir = m_filePath.isEmpty() ? QString()
@@ -396,148 +305,28 @@ void Project::fromJson(const QJsonObject& obj) {
     m_tracks.clear();
     const QJsonArray tracksArr = obj["tracks"].toArray();
     for (const auto& tVal : tracksArr) {
-        QJsonObject tObj = tVal.toObject();
-        bool isMidi = tObj["type"].toString() == "midi";
-        Track track(isMidi ? Track::Type::Midi : Track::Type::Audio,
-                    tObj["name"].toString());
-        track.setChannels(tObj["channels"].toInt(2));
-        track.setInputDeviceId(tObj["inputDeviceId"].toInt(-1));
-        track.setInputChannel(tObj["inputChannel"].toInt(0));
-        track.setOutputBusIndex(tObj["outputBusIndex"].toInt(0));
-        track.setPan(static_cast<float>(tObj["pan"].toDouble(0.0)));
-        track.setVolume(static_cast<float>(tObj["volume"].toDouble(vvvdaw::DefaultVolume)));
-        track.setMuted(tObj["muted"].toBool(false));
-        track.setSolo(tObj["solo"].toBool(false));
-
-        if (isMidi) {
-            track.setMidiOutputDeviceId(tObj["midiOutputDeviceId"].toInt(-1));
-            track.setMidiOutputDeviceName(tObj["midiOutputDeviceName"].toString());
-            track.setInstrumentIndex(tObj["instrumentIndex"].toInt(-1));
-        }
-
-        const QJsonArray eventsArr = tObj["events"].toArray();
-        for (const auto& eVal : eventsArr) {
-            QJsonObject eObj = eVal.toObject();
-            AudioEvent event;
-            QString clipPath = eObj["clipPath"].toString();
-            if (!clipPath.isEmpty()) {
-                QString absPath = QDir::isAbsolutePath(clipPath)
-                    ? clipPath
-                    : QDir(projDir).absoluteFilePath(clipPath);
-                auto clip = std::make_shared<AudioClip>(absPath);
-                if (clip->isValid())
-                    event.setClip(clip);
-            }
-            event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
-            event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
-            event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
-            event.setSourceFrames(eObj.contains("sourceFrames")
-                ? static_cast<int64_t>(eObj["sourceFrames"].toVariant().toLongLong())
-                : event.durationSample());
-
-            if (eObj.contains("takes")) {
-                const QJsonArray takesArr = eObj["takes"].toArray();
-                for (const auto& takeVal : takesArr) {
-                    QString takePath = takeVal.toString();
-                    if (!takePath.isEmpty()) {
-                        QString absPath = QDir::isAbsolutePath(takePath)
-                            ? takePath
-                            : QDir(projDir).absoluteFilePath(takePath);
-                        auto takeClip = std::make_shared<AudioClip>(absPath);
-                        if (takeClip->isValid())
-                            event.takes().push_back(takeClip);
-                    }
-                }
-                event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
-                if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
-                    event.setClip(event.takes()[event.activeTakeIndex()]);
-            }
-
-            track.addEvent(event);
-        }
-
-        if (isMidi) {
-            const QJsonArray midiEventsArr = tObj["midiEvents"].toArray();
-            for (const auto& eVal : midiEventsArr) {
-                QJsonObject eObj = eVal.toObject();
-                MidiEvent event;
-                if (eObj.contains("clip")) {
-                    auto clip = std::make_shared<MidiClip>();
-                    clip->fromJson(eObj["clip"].toObject());
-                    event.setClip(clip);
-                }
-                event.setStartSample(static_cast<int64_t>(eObj["startSample"].toVariant().toLongLong()));
-                event.setOffsetSample(static_cast<int64_t>(eObj["offsetSample"].toVariant().toLongLong()));
-                event.setDurationSample(static_cast<int64_t>(eObj["durationSample"].toVariant().toLongLong()));
-
-                if (eObj.contains("takes")) {
-                    const QJsonArray takesArr = eObj["takes"].toArray();
-                    for (const auto& takeVal : takesArr) {
-                        auto takeClip = std::make_shared<MidiClip>();
-                        takeClip->fromJson(takeVal.toObject());
-                        event.takes().push_back(takeClip);
-                    }
-                    event.setActiveTakeIndex(eObj["activeTakeIndex"].toInt(-1));
-                    if (event.activeTakeIndex() >= 0 && event.activeTakeIndex() < static_cast<int>(event.takes().size()))
-                        event.setClip(event.takes()[event.activeTakeIndex()]);
-                }
-
-                track.addMidiEvent(event);
-            }
-        }
-
-        if (tObj.contains("plugins"))
-            track.pluginChain().fromJson(tObj["plugins"].toObject(), m_pluginManager);
+        Track track;
+        track.fromJson(tVal.toObject(), projDir, m_pluginManager);
         m_tracks.push_back(std::move(track));
     }
 
     m_buses.clear();
     const QJsonArray busesArr = obj["buses"].toArray();
     if (busesArr.isEmpty()) {
-        AudioBus master;
-        master.name = "Master";
-        master.volume = 1.0f;
-        master.pan = 0.0f;
-        master.outputBusIndex = -1;
-        master.removable = false;
-        m_buses.push_back(std::move(master));
+        m_buses.push_back(makeDefaultMasterBus());
     } else {
-        for (const auto& bVal : busesArr) {
-            QJsonObject bObj = bVal.toObject();
-            AudioBus bus;
-            bus.name = bObj["name"].toString("Bus");
-            bus.pan = static_cast<float>(bObj["pan"].toDouble(0.0));
-            bus.volume = static_cast<float>(bObj["volume"].toDouble(1.0));
-            bus.outputBusIndex = bObj["outputBusIndex"].toInt(0);
-            bus.solo = bObj["solo"].toBool(false);
-            bus.muted = bObj["muted"].toBool(false);
-            bus.removable = bObj["removable"].toBool(true);
-            if (bObj.contains("plugins"))
-                bus.pluginChain.fromJson(bObj["plugins"].toObject(), m_pluginManager);
-            m_buses.push_back(std::move(bus));
-        }
+        for (const auto& bVal : busesArr)
+            m_buses.push_back(AudioBus::fromJson(bVal.toObject(), m_pluginManager));
     }
 
     if (m_buses.empty() || m_buses[0].name != "Master") {
-        AudioBus master;
-        master.name = "Master";
-        master.volume = 1.0f;
-        master.pan = 0.0f;
-        master.outputBusIndex = -1;
-        master.removable = false;
-        m_buses.insert(m_buses.begin(), std::move(master));
+        m_buses.insert(m_buses.begin(), makeDefaultMasterBus());
     }
 
     bool hasMetronome = (static_cast<int>(m_buses.size()) > MetronomeBusIndex
                          && m_buses[MetronomeBusIndex].name == "Metronome");
     if (!hasMetronome) {
-        AudioBus metro;
-        metro.name = "Metronome";
-        metro.volume = static_cast<float>(vvvdaw::DefaultVolume);
-        metro.pan = 0.0f;
-        metro.outputBusIndex = 0;
-        metro.removable = false;
-        m_buses.insert(m_buses.begin() + MetronomeBusIndex, std::move(metro));
+        m_buses.insert(m_buses.begin() + MetronomeBusIndex, makeDefaultMetronomeBus());
 
         for (auto& track : m_tracks) {
             int busIdx = track.outputBusIndex();
@@ -560,24 +349,8 @@ void Project::fromJson(const QJsonObject& obj) {
 
     m_instruments.clear();
     const QJsonArray instrumentsArr = obj["instruments"].toArray();
-    for (const auto& iVal : instrumentsArr) {
-        QJsonObject iObj = iVal.toObject();
-        Instrument instrument;
-        instrument.setName(iObj["name"].toString("Instrument"));
-        instrument.setPan(static_cast<float>(iObj["pan"].toDouble(0.0)));
-        instrument.setVolume(static_cast<float>(iObj["volume"].toDouble(1.0)));
-        instrument.setOutputBusIndex(iObj["outputBusIndex"].toInt(0));
-        instrument.setSolo(iObj["solo"].toBool(false));
-        instrument.setMuted(iObj["muted"].toBool(false));
-        if (iObj.contains("synth")) {
-            auto synth = PluginChain::createInstance(iObj["synth"].toObject(), m_pluginManager);
-            if (synth)
-                instrument.setSynth(std::move(synth));
-        }
-        if (iObj.contains("effects"))
-            instrument.effects().fromJson(iObj["effects"].toObject(), m_pluginManager);
-        m_instruments.push_back(std::move(instrument));
-    }
+    for (const auto& iVal : instrumentsArr)
+        m_instruments.push_back(Instrument::fromJson(iVal.toObject(), m_pluginManager));
 }
 
 int64_t Project::snapSample(int64_t sample, int beatDivision) const {

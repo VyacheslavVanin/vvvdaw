@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <QJsonObject>
 
 class AudioClip;
 
@@ -39,6 +40,9 @@ public:
 
     int activeTakeIndex() const { return m_activeTakeIndex; }
     void setActiveTakeIndex(int idx) { m_activeTakeIndex = idx; }
+
+    QJsonObject toJson(const QString& projectDir = {}) const;
+    static AudioEvent fromJson(const QJsonObject& obj, const QString& projectDir = {});
 
 private:
     int64_t m_id = 0;

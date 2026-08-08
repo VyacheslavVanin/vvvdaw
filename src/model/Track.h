@@ -1,11 +1,14 @@
 #pragma once
 #include <QString>
+#include <QJsonObject>
 #include <vector>
 #include <cstdint>
 #include "AudioEvent.h"
 #include "MidiEvent.h"
 #include "plugin/PluginChain.h"
 #include "core/Constants.h"
+
+class PluginManager;
 
 class Track {
 public:
@@ -14,7 +17,6 @@ public:
     Track() = default;
     explicit Track(const QString& name, int channels = 2);
     Track(const QString& name, Type type);
-    Track(Type type, const QString& name);
 
     Type type() const { return m_type; }
 
@@ -78,6 +80,10 @@ public:
     void importMidiEvent(MidiEvent event);
     void removeMidiEvent(int64_t eventId);
     MidiEvent* findMidiEvent(int64_t eventId);
+
+    QJsonObject toJson(const QString& projectDir = {}) const;
+    void fromJson(const QJsonObject& obj, const QString& projectDir = {},
+                  PluginManager* manager = nullptr);
 
 private:
     Type m_type = Type::Audio;
