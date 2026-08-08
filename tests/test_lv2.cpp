@@ -1,8 +1,10 @@
 #include <QTest>
 #include <QJsonArray>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <csignal>
+#include <thread>
 #include <vector>
 
 #include "plugin/LV2Instance.h"
@@ -37,6 +39,7 @@ class TestLV2 : public QObject {
     Q_OBJECT
 private slots:
     void sigGuardRecovers();
+    void sigGuardForeignThreadCrash();
     void loadKnownPlugin();
     void activateProcessDeactivate();
     void stateRoundTrip();
@@ -54,6 +57,38 @@ void TestLV2::sigGuardRecovers() {
 
     // The guard must be reusable after a crash.
     QVERIFY(runSigGuarded([] {}));
+}
+
+void TestLV2::sigGuardForeignThreadCrash() {
+    // Regression: runSigGuarded installs its SIGSEGV handler process-wide but
+    // longjmps to a thread-local buffer. A fault on another thread (the audio
+    // callback thread in the app) must be handed off to the previously
+    // installed handler, not longjmp into the guarded thread's stack.
+    static volatile sig_atomic_t previousHandlerRan = 0;
+    struct sigaction testSa{}, oldSa{};
+    testSa.sa_handler = [](int) { previousHandlerRan = 1; };
+    sigemptyset(&testSa.sa_mask);
+    sigaction(SIGSEGV, &testSa, &oldSa);
+
+    std::atomic<bool> go{false};
+    std::atomic<bool> foreignDone{false};
+    std::thread t([&] {
+        while (!go.load()) std::this_thread::yield();
+        raise(SIGSEGV);
+        foreignDone = true;
+    });
+
+    bool guardedOk = runSigGuarded([&] {
+        go = true;
+        while (!foreignDone.load()) std::this_thread::yield();
+    });
+
+    t.join();
+    sigaction(SIGSEGV, &oldSa, nullptr);
+
+    QVERIFY(previousHandlerRan == 1); // the foreign crash reached the old handler
+    QVERIFY(guardedOk);               // the guard itself was not tripped
+    QVERIFY(runSigGuarded([] {}));    // and remains usable
 }
 
 void TestLV2::loadKnownPlugin() {
