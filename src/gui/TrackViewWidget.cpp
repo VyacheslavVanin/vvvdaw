@@ -23,8 +23,24 @@ TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
 }
 
 void TrackViewWidget::setDragPreview(const AudioEvent* event, int64_t startSample) {
-    if (m_dragPreview.event != event || m_dragPreview.startSample != startSample) {
-        m_dragPreview = {event, startSample};
+    if (m_dragPreview.audioEvent != event || m_dragPreview.midiEvent != nullptr
+        || m_dragPreview.startSample != startSample) {
+        m_dragPreview = {event, nullptr, startSample};
+        update();
+    }
+}
+
+void TrackViewWidget::setMidiDragPreview(const MidiEvent* event, int64_t startSample) {
+    if (m_dragPreview.midiEvent != event || m_dragPreview.audioEvent != nullptr
+        || m_dragPreview.startSample != startSample) {
+        m_dragPreview = {nullptr, event, startSample};
+        update();
+    }
+}
+
+void TrackViewWidget::clearDragPreview() {
+    if (m_dragPreview.audioEvent != nullptr || m_dragPreview.midiEvent != nullptr) {
+        m_dragPreview = {};
         update();
     }
 }
@@ -265,10 +281,10 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
-    // Drag preview on target track (audio only)
-    if (m_dragPreview.event && m_dragPreview.event->clip() && m_dragPreview.event->clip()->isValid()) {
+    // Drag preview on target track
+    if (m_dragPreview.midiEvent && m_dragPreview.midiEvent->clip()) {
         int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(m_dragPreview.event->durationSample() * m_pixelsPerSample);
+        int w = static_cast<int>(m_dragPreview.midiEvent->durationSample() * m_pixelsPerSample);
         if (x + w >= 0 && x <= width()) {
             QRect eventRect(x, 2, w, trackHeight - 4);
 
@@ -277,10 +293,34 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.drawRect(eventRect);
 
             {
-                auto clip = m_dragPreview.event->clip();
+                auto clip = m_dragPreview.midiEvent->clip();
+                int th = eventRect.height() - 2;
+                renderMidiPreview(painter, clip,
+                                  m_dragPreview.midiEvent->offsetSample(),
+                                  m_dragPreview.midiEvent->durationSample(),
+                                  eventRect.x() + 1, eventRect.y() + 1, w, th);
+            }
+
+            painter.setPen(QPen(QColor("#ffcc00"), 1));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(eventRect);
+        }
+    } else if (m_dragPreview.audioEvent && m_dragPreview.audioEvent->clip()
+               && m_dragPreview.audioEvent->clip()->isValid()) {
+        int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
+        int w = static_cast<int>(m_dragPreview.audioEvent->durationSample() * m_pixelsPerSample);
+        if (x + w >= 0 && x <= width()) {
+            QRect eventRect(x, 2, w, trackHeight - 4);
+
+            painter.setPen(QPen(QColor("#ffcc00"), 2));
+            painter.setBrush(QColor("#1a3344"));
+            painter.drawRect(eventRect);
+
+            {
+                auto clip = m_dragPreview.audioEvent->clip();
                 int th = eventRect.height() - 2;
                 renderThumbnail(painter, clip,
-                                m_dragPreview.event->offsetSample(), m_dragPreview.event->sourceFrames(),
+                                m_dragPreview.audioEvent->offsetSample(), m_dragPreview.audioEvent->sourceFrames(),
                                 eventRect.x() + 1, eventRect.y() + 1, w, th);
             }
 

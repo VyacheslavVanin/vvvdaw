@@ -46,6 +46,7 @@ private:
     void setupTimer();
     void loadStyleSheet();
     void rebuildTracks();
+    bool moveEventToTrack(int srcIdx, int dstIdx, int64_t eventId, int64_t newStartSample);
     void refreshBusCombos();
     void syncZoom();
     void syncScrollPositions(int value);

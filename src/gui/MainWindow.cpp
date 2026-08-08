@@ -935,6 +935,36 @@ void MainWindow::rebuildTracks() {
     syncAfterRebuild();
 }
 
+bool MainWindow::moveEventToTrack(int srcIdx, int dstIdx, int64_t eventId, int64_t newStartSample) {
+    if (srcIdx == dstIdx || srcIdx < 0 || dstIdx < 0
+        || srcIdx >= static_cast<int>(m_project.tracks().size())
+        || dstIdx >= static_cast<int>(m_project.tracks().size()))
+        return false;
+
+    Track& src = m_project.tracks()[srcIdx];
+    Track& dst = m_project.tracks()[dstIdx];
+    if (src.type() != dst.type())
+        return false;
+
+    if (src.type() == Track::Type::Midi) {
+        MidiEvent* ev = src.findMidiEvent(eventId);
+        if (!ev) return false;
+        ev->setStartSample(newStartSample);
+        dst.importMidiEvent(*ev);
+        src.removeMidiEvent(eventId);
+    } else {
+        AudioEvent* ev = src.findEvent(eventId);
+        if (!ev) return false;
+        ev->setStartSample(newStartSample);
+        dst.importEvent(*ev);
+        src.removeEvent(eventId);
+    }
+
+    m_trackRows[srcIdx].view->updateFromTrack();
+    m_trackRows[dstIdx].view->updateFromTrack();
+    return true;
+}
+
 void MainWindow::teardownTrackRows() {
     if (!m_trackSplitters.empty())
         m_savedPluginListWidth = m_trackSplitters.front()->sizes().value(0, 200);
@@ -1183,15 +1213,25 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
                 [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
                 (int64_t eventId, int64_t currentStartSample, QPoint globalPos) {
             QWidget* widget = QApplication::widgetAt(globalPos);
-            AudioEvent* ev = m_project.tracks()[srcIdx].findEvent(eventId);
+            Track& src = m_project.tracks()[srcIdx];
+            const bool srcIsMidi = (src.type() == Track::Type::Midi);
+            AudioEvent* audioEv = srcIsMidi ? nullptr : src.findEvent(eventId);
+            MidiEvent* midiEv = srcIsMidi ? src.findMidiEvent(eventId) : nullptr;
+            const bool hasDrag = (audioEv != nullptr || midiEv != nullptr);
+
             bool onDifferentTrack = false;
             for (size_t t = 0; t < m_trackRows.size(); ++t) {
                 bool isTarget = (m_trackRows[t].view == widget && static_cast<int>(t) != srcIdx);
-                if (isTarget && ev) {
-                    m_trackRows[t].view->setDragPreview(ev, currentStartSample);
+                bool compatible = isTarget && hasDrag
+                                  && (m_project.tracks()[t].type() == src.type());
+                if (compatible) {
+                    if (audioEv)
+                        m_trackRows[t].view->setDragPreview(audioEv, currentStartSample);
+                    else
+                        m_trackRows[t].view->setMidiDragPreview(midiEv, currentStartSample);
                     onDifferentTrack = true;
                 } else {
-                    m_trackRows[t].view->setDragPreview(nullptr, 0);
+                    m_trackRows[t].view->clearDragPreview();
                 }
             }
             m_trackRows[srcIdx].view->setDragSourceVisible(!onDifferentTrack);
@@ -1201,23 +1241,14 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
                 [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
                 (int64_t eventId, int64_t newStartSample, QPoint globalPos) {
             for (auto& r : m_trackRows) {
-                r.view->setDragPreview(nullptr, 0);
+                r.view->clearDragPreview();
                 r.view->setDragSourceVisible(true);
             }
 
             QWidget* widget = QApplication::widgetAt(globalPos);
             for (size_t t = 0; t < m_trackRows.size(); ++t) {
                 if (m_trackRows[t].view == widget && static_cast<int>(t) != srcIdx) {
-                    Track& src = m_project.tracks()[srcIdx];
-                    Track& dst = m_project.tracks()[t];
-                    AudioEvent* ev = src.findEvent(eventId);
-                    if (ev) {
-                        ev->setStartSample(newStartSample);
-                        dst.importEvent(*ev);
-                        src.removeEvent(eventId);
-                        m_trackRows[srcIdx].view->updateFromTrack();
-                        m_trackRows[t].view->updateFromTrack();
-                    }
+                    moveEventToTrack(srcIdx, static_cast<int>(t), eventId, newStartSample);
                     break;
                 }
             }

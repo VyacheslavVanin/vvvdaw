@@ -31,6 +31,11 @@ private slots:
     void rebuildAfterTrackChanges();
     void rebuildWithBusesAndInstruments();
     void addTrackViaSignal();
+    void moveAudioEventBetweenAudioTracks();
+    void moveMidiEventBetweenMidiTracks();
+    void midiCrossTrackMoveKeepsSiblingEvents();
+    void rejectAudioEventToMidiTrack();
+    void rejectMidiEventToAudioTrack();
 };
 
 void MainWindowTest::initTestCase() {
@@ -135,6 +140,130 @@ void MainWindowTest::addTrackViaSignal() {
     QCoreApplication::processEvents();
     QCOMPARE(window.m_trackRows.size(), size_t(2));
     QCOMPARE(window.m_project.tracks().size(), size_t(2));
+}
+
+void MainWindowTest::moveAudioEventBetweenAudioTracks() {
+    Project project;
+    project.addTrack("A1");
+    project.addTrack("A2");
+    Track& src = project.tracks()[0];
+    Track& dst = project.tracks()[1];
+    AudioEvent ev;
+    ev.setStartSample(100);
+    src.addEvent(ev);
+    const int64_t id = src.events().front().id();
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QVERIFY(window.moveEventToTrack(0, 1, id, 500));
+    QVERIFY(src.events().empty());
+    QCOMPARE(dst.events().size(), size_t(1));
+    QCOMPARE(dst.events().front().id(), id);
+    QCOMPARE(dst.events().front().startSample(), int64_t(500));
+}
+
+void MainWindowTest::moveMidiEventBetweenMidiTracks() {
+    Project project;
+    project.addMidiTrack("M1");
+    project.addMidiTrack("M2");
+    Track& src = project.tracks()[0];
+    Track& dst = project.tracks()[1];
+    MidiEvent ev;
+    ev.setStartSample(100);
+    src.addMidiEvent(ev);
+    const int64_t id = src.midiEvents().front().id();
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QVERIFY(window.moveEventToTrack(0, 1, id, 500));
+    QVERIFY(src.midiEvents().empty());
+    QCOMPARE(dst.midiEvents().size(), size_t(1));
+    QCOMPARE(dst.midiEvents().front().id(), id);
+    QCOMPARE(dst.midiEvents().front().startSample(), int64_t(500));
+}
+
+void MainWindowTest::midiCrossTrackMoveKeepsSiblingEvents() {
+    Project project;
+    project.addMidiTrack("M1");
+    project.addMidiTrack("M2");
+    Track& a = project.tracks()[0];
+    Track& b = project.tracks()[1];
+
+    MidiEvent ea;
+    ea.setStartSample(0);
+    a.addMidiEvent(ea);
+    MidiEvent eb;
+    eb.setStartSample(100);
+    a.addMidiEvent(eb);
+    MidiEvent ec;
+    ec.setStartSample(0);
+    b.addMidiEvent(ec);
+    QCOMPARE(a.midiEvents().size(), size_t(2));
+    QCOMPARE(b.midiEvents().size(), size_t(1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    // A's first event (id 1) collides with B's own first event (id 1) when moved in.
+    const int64_t aFirstId = a.midiEvents()[0].id();
+    QVERIFY(window.moveEventToTrack(0, 1, aFirstId, 500));
+    QCOMPARE(b.midiEvents().size(), size_t(2));
+    QVERIFY(b.midiEvents()[0].id() != b.midiEvents()[1].id());
+
+    // Moving one of B's two events out must not take the sibling along.
+    const int64_t moveOutId = b.midiEvents()[0].id();
+    QVERIFY(window.moveEventToTrack(1, 0, moveOutId, 600));
+    QCOMPARE(b.midiEvents().size(), size_t(1)); // sibling survives
+    QCOMPARE(a.midiEvents().size(), size_t(2));
+}
+
+void MainWindowTest::rejectAudioEventToMidiTrack() {
+    Project project;
+    project.addTrack("A1");
+    project.addMidiTrack("M1");
+    Track& src = project.tracks()[0];
+    Track& dst = project.tracks()[1];
+    AudioEvent ev;
+    ev.setStartSample(100);
+    src.addEvent(ev);
+    const int64_t id = src.events().front().id();
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QVERIFY(!window.moveEventToTrack(0, 1, id, 500));
+    QCOMPARE(src.events().size(), size_t(1));
+    QCOMPARE(src.events().front().startSample(), int64_t(100));
+    QVERIFY(dst.events().empty());
+    QVERIFY(dst.midiEvents().empty());
+}
+
+void MainWindowTest::rejectMidiEventToAudioTrack() {
+    Project project;
+    project.addMidiTrack("M1");
+    project.addTrack("A1");
+    Track& src = project.tracks()[0];
+    Track& dst = project.tracks()[1];
+    MidiEvent ev;
+    ev.setStartSample(100);
+    src.addMidiEvent(ev);
+    const int64_t id = src.midiEvents().front().id();
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QVERIFY(!window.moveEventToTrack(0, 1, id, 500));
+    QCOMPARE(src.midiEvents().size(), size_t(1));
+    QCOMPARE(src.midiEvents().front().startSample(), int64_t(100));
+    QVERIFY(dst.events().empty());
+    QVERIFY(dst.midiEvents().empty());
 }
 
 QTEST_MAIN(MainWindowTest)

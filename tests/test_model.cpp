@@ -20,6 +20,9 @@ private slots:
     void addRemoveBus();
     void addRemoveInstrument();
     void trackEventManagement();
+    void importAssignsUniqueIds();
+    void importAdvancesNextIdCounter();
+    void removeRemovesOnlyMatchingId();
     void audioEventTakes();
     void midiEventTakes();
     void midiClipNotes();
@@ -139,6 +142,71 @@ void TestModel::trackEventManagement() {
     QCOMPARE(t.midiEvents()[0].id(), int64_t(1));
     t.removeMidiEvent(1);
     QVERIFY(t.midiEvents().empty());
+}
+
+void TestModel::importAssignsUniqueIds() {
+    Track t("T", 2);
+    AudioEvent e1;
+    e1.setId(1);
+    t.importEvent(e1);
+    AudioEvent e2;
+    e2.setId(1); // collides with the existing id 1 -> must be reassigned
+    t.importEvent(e2);
+    QCOMPARE(t.events().size(), size_t(2));
+    QVERIFY(t.events()[0].id() != t.events()[1].id());
+
+    Track m("M", Track::Type::Midi);
+    MidiEvent me1;
+    me1.setId(1);
+    m.importMidiEvent(me1);
+    MidiEvent me2;
+    me2.setId(1);
+    m.importMidiEvent(me2);
+    QCOMPARE(m.midiEvents().size(), size_t(2));
+    QVERIFY(m.midiEvents()[0].id() != m.midiEvents()[1].id());
+}
+
+void TestModel::importAdvancesNextIdCounter() {
+    Track t("T", 2);
+    AudioEvent high;
+    high.setId(42);
+    t.importEvent(high);
+    QCOMPARE(t.events()[0].id(), int64_t(42)); // preserved, no collision
+    AudioEvent next;
+    t.addEvent(next);
+    QVERIFY(t.events().back().id() > 42);
+
+    Track m("M", Track::Type::Midi);
+    MidiEvent mHigh;
+    mHigh.setId(42);
+    m.importMidiEvent(mHigh);
+    QCOMPARE(m.midiEvents()[0].id(), int64_t(42));
+    MidiEvent mNext;
+    m.addMidiEvent(mNext);
+    QVERIFY(m.midiEvents().back().id() > 42);
+}
+
+void TestModel::removeRemovesOnlyMatchingId() {
+    Track m("M", Track::Type::Midi);
+    MidiEvent a;
+    a.setId(1);
+    a.setStartSample(0);
+    m.importMidiEvent(a);
+    MidiEvent b;
+    b.setId(2);
+    b.setStartSample(100);
+    m.importMidiEvent(b);
+    MidiEvent c;
+    c.setId(1); // collides -> gets a fresh id, sibling id 1 must be safe
+    c.setStartSample(200);
+    m.importMidiEvent(c);
+    QCOMPARE(m.midiEvents().size(), size_t(3));
+
+    const int64_t victimId = m.midiEvents()[0].id();
+    m.removeMidiEvent(victimId);
+    QCOMPARE(m.midiEvents().size(), size_t(2)); // only the matching event is removed
+    for (const auto& ev : m.midiEvents())
+        QVERIFY(ev.id() != victimId);
 }
 
 void TestModel::audioEventTakes() {

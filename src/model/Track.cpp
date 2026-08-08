@@ -18,6 +18,11 @@ void Track::addEvent(AudioEvent event) {
 }
 
 void Track::importEvent(AudioEvent event) {
+    if (findEvent(event.id()) != nullptr) {
+        event.setId(m_nextEventId++);
+    } else if (event.id() >= m_nextEventId) {
+        m_nextEventId = event.id() + 1;
+    }
     m_events.push_back(std::move(event));
 }
 
@@ -39,6 +44,11 @@ void Track::addMidiEvent(MidiEvent event) {
 }
 
 void Track::importMidiEvent(MidiEvent event) {
+    if (findMidiEvent(event.id()) != nullptr) {
+        event.setId(m_nextMidiEventId++);
+    } else if (event.id() >= m_nextMidiEventId) {
+        m_nextMidiEventId = event.id() + 1;
+    }
     m_midiEvents.push_back(std::move(event));
 }
 

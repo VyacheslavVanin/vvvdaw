@@ -31,6 +31,8 @@ public:
     int selectedEventIndex() const { return m_selectedEventIndex; }
     void setAlternateRow(bool alternate) { m_alternateRow = alternate; update(); }
     void setDragPreview(const AudioEvent* event, int64_t startSample);
+    void setMidiDragPreview(const MidiEvent* event, int64_t startSample);
+    void clearDragPreview();
     void setDragSourceVisible(bool visible) {
         if (m_dragSourceVisible != visible) { m_dragSourceVisible = visible; update(); }
     }
@@ -138,7 +140,8 @@ private:
     static constexpr int EdgeHandleWidth = 6;
 
     struct DragPreview {
-        const AudioEvent* event = nullptr;
+        const AudioEvent* audioEvent = nullptr;
+        const MidiEvent* midiEvent = nullptr;
         int64_t startSample = 0;
     };
     DragPreview m_dragPreview;
