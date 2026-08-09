@@ -117,6 +117,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/TrackPanelWidget.cpp
     src/gui/BusPanelWidget.cpp
     src/gui/InstrumentPanelWidget.cpp
+    src/gui/ChannelRoutingDialog.cpp
     src/gui/TrackViewWidget.cpp
     src/gui/PianoRollWidget.cpp
     src/gui/PianoRollWindow.cpp

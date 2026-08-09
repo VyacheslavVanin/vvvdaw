@@ -38,6 +38,8 @@ public:
                  int numSamples, int numChannels,
                  const MidiBuffer* midi = nullptr) override;
     bool isInstrument() const override { return m_isInstrument; }
+    int audioOutputChannels() const override;
+    std::vector<QString> audioOutputNames() const override;
 
     QString name() const override;
     QString vendor() const override;

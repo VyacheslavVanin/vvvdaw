@@ -90,3 +90,15 @@ inline void writeTrackToBus(float* busBuf, const float* trackL, const float* tra
         return std::pair<float, float>{ trackL[f], trackR[f] };
     });
 }
+
+// Accumulate one mono instrument output channel into a (stereo, interleaved)
+// bus buffer. The channel is placed centered (equal L and R gain) so multi-
+// channel instrument outputs land on the bus field without hard panning.
+inline void routeMonoToBus(float* busBuf, const float* src, unsigned long frames,
+                           float vol) {
+    for (unsigned long f = 0; f < frames; ++f) {
+        float s = src[f] * vol;
+        busBuf[f * 2]     += s;
+        busBuf[f * 2 + 1] += s;
+    }
+}

@@ -119,6 +119,9 @@ private:
                                   unsigned long frameCount, int outCh);
 
     void ensureInstrumentMidiBuffers(int instCount);
+    // Resize the multi-channel instrument scratch pool so at least `channels`
+    // deinterleaved buffers (each m_bufferSize floats) are available.
+    void ensureMultiScratch(int channels);
     void sendNoteOn(int destIndex, bool toInstrument, uint8_t channel,
                     uint8_t pitch, uint8_t velocity, int sampleOffset = 0);
     void sendNoteOff(int destIndex, bool toInstrument, uint8_t channel,
@@ -156,6 +159,11 @@ private:
     int m_instrumentCount = -1;
     std::vector<float> m_instrumentScratchL;
     std::vector<float> m_instrumentScratchR;
+    // Multi-channel instrument output scratch: [channel][sample], plus the
+    // pointer arrays handed to PluginInstance::process (in-place).
+    std::vector<std::vector<float>> m_multiScratch;
+    std::vector<float*> m_multiInBufs;
+    std::vector<float*> m_multiOutBufs;
     MidiOutputManager m_midiOutput;
     std::set<int> m_openMidiDevices;
 

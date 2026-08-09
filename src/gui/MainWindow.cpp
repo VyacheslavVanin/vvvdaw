@@ -428,6 +428,25 @@ void MainWindow::setupInstrumentPanel(QVBoxLayout* layout) {
             [this](int index, int oldVal, int newVal) {
         pushCommand(std::make_unique<SetInstrumentOutputCommand>(m_project, index, oldVal, newVal));
     });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::routingWillChange, this,
+            [this](int index, const QJsonObject& oldRouting, const QJsonObject& newRouting) {
+        pushCommand(std::make_unique<SetInstrumentRoutingCommand>(m_project, index,
+                                                                  oldRouting, newRouting));
+    });
+    connect(m_instrumentPanel, &InstrumentPanelWidget::channelBusesCreated, this,
+            [this](int index, const QJsonArray& createdBuses,
+                   const QJsonObject& oldRouting, const QJsonObject& newRouting) {
+        pushCommand(std::make_unique<AddChannelBusesCommand>(
+            m_project, index, createdBuses, oldRouting, newRouting));
+        rebuildTracks();
+        refreshBusCombos();
+        resyncPianoRollWindows();
+        m_engine.refreshMidiOutputs();
+        if (m_instrumentPanel->isVisible())
+            m_instrumentPanel->rebuild();
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
+    });
 
     connect(m_instrumentPanel, &InstrumentPanelWidget::synthAddRequested, this,
             [this](int index, const QString& type, const QString& path) {

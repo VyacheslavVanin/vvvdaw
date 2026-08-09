@@ -17,6 +17,7 @@ private slots:
     void addSourceToBusStereo();
     void writeTrackToBusMono();
     void writeTrackToBusStereo();
+    void routeMonoToBusCentered();
 };
 
 void TestAudio::ringBufferWriteRead() {
@@ -156,6 +157,17 @@ void TestAudio::writeTrackToBusStereo() {
     for (int i = 0; i < 8; i += 2) {
         QCOMPARE(bus[i], 1.0f);
         QCOMPARE(bus[i + 1], 0.5f);
+    }
+}
+
+void TestAudio::routeMonoToBusCentered() {
+    float bus[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    float src[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+    routeMonoToBus(bus, src, 4, 0.5f);
+    // Each channel lands centered (equal L/R) scaled by the volume.
+    for (int i = 0; i < 4; ++i) {
+        QCOMPARE(bus[i * 2], src[i] * 0.5f);
+        QCOMPARE(bus[i * 2 + 1], src[i] * 0.5f);
     }
 }
 

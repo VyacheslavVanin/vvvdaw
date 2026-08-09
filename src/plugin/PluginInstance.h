@@ -38,6 +38,12 @@ public:
 
     virtual bool isInstrument() const { return false; }
 
+    // Number of discrete audio output channels the plugin exposes (e.g. 16 for
+    // DrumGizmo). Used to drive multi-channel instrument routing.
+    virtual int audioOutputChannels() const { return 1; }
+    // Per-output-channel display names, empty for plugins without them.
+    virtual std::vector<QString> audioOutputNames() const { return {}; }
+
     virtual QString name() const = 0;
     virtual QString vendor() const = 0;
     virtual QString pluginId() const = 0;

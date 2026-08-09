@@ -4,7 +4,9 @@
 #include <QTemporaryDir>
 #include <QMenuBar>
 #include <QListWidget>
+#include <QTableWidget>
 #include <algorithm>
+#include <memory>
 #include <portaudio.h>
 
 #include "core/Settings.h"
@@ -14,6 +16,7 @@
 #include "model/AudioBus.h"
 #include "model/Instrument.h"
 #include "model/TemplateStore.h"
+#include "plugin/PluginInstance.h"
 #include "gui/MainWindow.h"
 #include "gui/StartDialog.h"
 #include "gui/TrackPanelWidget.h"
@@ -22,6 +25,7 @@
 #include "gui/MeasureRuler.h"
 #include "gui/BusPanelWidget.h"
 #include "gui/InstrumentPanelWidget.h"
+#include "gui/ChannelRoutingDialog.h"
 
 namespace {
 QComboBox* findComboContaining(QWidget* parent, const QString& text) {
@@ -32,7 +36,42 @@ QComboBox* findComboContaining(QWidget* parent, const QString& text) {
                 return cb;
     return nullptr;
 }
-}
+
+// Minimal instrument plugin stub with a configurable output channel count,
+// used to exercise the channel routing UI without loading a real plugin.
+class StubSynth : public PluginInstance {
+public:
+    int channels = 2;
+
+    int audioOutputChannels() const override { return channels; }
+    std::vector<QString> audioOutputNames() const override {
+        return { "Kick", "Snare", "HiHat" };
+    }
+
+    bool load(const QString&) override { return true; }
+    bool activate(double, int) override { return true; }
+    bool deactivate() override { return true; }
+    bool process(float**, float**, int, int, const MidiBuffer*) override { return true; }
+    QString name() const override { return "Stub"; }
+    QString vendor() const override { return "Test"; }
+    QString pluginId() const override { return "stub"; }
+    QString filePath() const override { return "stub"; }
+    bool isActive() const override { return true; }
+    void setEnabled(bool) override {}
+    bool isEnabled() const override { return true; }
+    int latencySamples() const override { return 0; }
+    std::vector<PluginPortInfo> ports() const override { return {}; }
+    void setParameter(int, float) override {}
+    float getParameter(int) const override { return 0.0f; }
+    bool hasEditor() const override { return false; }
+    void* createEditor(void*) override { return nullptr; }
+    void destroyEditor() override {}
+    void resizeEditor(int, int) override {}
+    bool getEditorSize(int&, int&) const override { return false; }
+    QJsonObject stateToJson() const override { return {}; }
+    void stateFromJson(const QJsonObject&) override {}
+};
+} // namespace
 
 // Integration tests for MainWindow::setupUi / rebuildTracks. They run on the
 // offscreen Qt platform and a real PortAudio initialization so that device
@@ -54,6 +93,8 @@ private slots:
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
     void audioTrackOutComboListsBuses();
+    void instrumentOutComboShowsMultiChannel();
+    void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
     void instrumentRenameRefreshesMidiTrackOutCombo();
     void busRenameRefreshesBusAndInstrumentOutCombos();
@@ -353,6 +394,97 @@ void MainWindowTest::audioTrackOutComboListsBuses() {
         QVERIFY(!midiOut->itemText(i).contains("Master"));
     }
     QVERIFY(foundInst);
+}
+
+void MainWindowTest::instrumentOutComboShowsMultiChannel() {
+    Project project;
+    Instrument inst;
+    inst.setName("Pad");
+    inst.setOutputBusIndex(1);
+    project.addInstrument(std::move(inst));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_instrumentPanel->rebuild();
+
+    auto* panel = window.m_instrumentPanel;
+
+    // The out combo offers a "Multi Channel" entry; single-bus instruments
+    // keep the plain bus selection.
+    QComboBox* out = nullptr;
+    for (QComboBox* cb : panel->findChildren<QComboBox*>()) {
+        bool hasMulti = false;
+        for (int i = 0; i < cb->count(); ++i) {
+            if (cb->itemData(i).toInt() == -1 && cb->itemText(i) == "Multi Channel")
+                hasMulti = true;
+        }
+        if (hasMulti) { out = cb; break; }
+    }
+    QVERIFY(out);
+    QCOMPARE(out->currentData().toInt(), 1); // routed to bus 1, not multi
+
+    // An instrument in multi-channel mode selects the "Multi Channel" entry.
+    std::vector<Instrument::ChannelRoute> routes;
+    Instrument::ChannelRoute r;
+    r.busIndex = 0;
+    r.name = "Ch0";
+    routes.push_back(r);
+    project.instruments()[0].setMultiChannel(true);
+    project.instruments()[0].setChannelRoutes(routes);
+    window.m_instrumentPanel->rebuild();
+
+    QComboBox* multiOut = nullptr;
+    for (QComboBox* cb : panel->findChildren<QComboBox*>()) {
+        if (cb->currentData().toInt() == -1) {
+            multiOut = cb;
+            break;
+        }
+    }
+    QVERIFY(multiOut);
+    QCOMPARE(multiOut->currentText(), QString("Multi Channel"));
+}
+
+void MainWindowTest::channelRoutingDialogCreatesBuses() {
+    Project project;
+    Instrument inst;
+    inst.setName("Drums");
+    auto synth = std::make_unique<StubSynth>();
+    synth->channels = 3;
+    inst.setSynth(std::move(synth));
+    project.addInstrument(std::move(inst));
+
+    const int busCountBefore = static_cast<int>(project.buses().size()); // 2
+
+    ChannelRoutingDialog dialog(project, project.instruments()[0],
+                                project.instruments()[0].synth());
+
+    auto* createBtn = dialog.findChild<QPushButton*>("createBusesButton");
+    QVERIFY(createBtn);
+    createBtn->click();
+
+    // One new bus per channel, each channel assigned to its own bus.
+    QCOMPARE(project.buses().size(), size_t(busCountBefore + 3));
+    QCOMPARE(dialog.createdBusCount(), 3);
+
+    auto* table = dialog.findChild<QTableWidget*>();
+    QVERIFY(table);
+    QCOMPARE(table->rowCount(), 3);
+    for (int c = 0; c < 3; ++c) {
+        auto* combo = qobject_cast<QComboBox*>(table->cellWidget(c, 1));
+        QVERIFY(combo);
+        QCOMPARE(combo->currentData().toInt(), busCountBefore + c);
+    }
+
+    // Buses are named after the (default) channel names.
+    QCOMPARE(project.buses()[busCountBefore].name(), QString("Kick"));
+    QCOMPARE(project.buses()[busCountBefore + 1].name(), QString("Snare"));
+    QCOMPARE(project.buses()[busCountBefore + 2].name(), QString("HiHat"));
+
+    // Rejecting the dialog rolls the created buses back out of the project.
+    dialog.reject();
+    QCOMPARE(project.buses().size(), size_t(busCountBefore));
+    QCOMPARE(dialog.createdBusCount(), 0);
 }
 
 void MainWindowTest::busRenameRefreshesTrackOutCombo() {

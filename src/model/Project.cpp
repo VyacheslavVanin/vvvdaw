@@ -239,6 +239,11 @@ bool Project::removeBus(int index) {
         int busIdx = instrument.outputBusIndex();
         remapBusIndexAfterRemoval(busIdx, index);
         instrument.setOutputBusIndex(busIdx);
+        for (auto& route : instrument.channelRoutes()) {
+            int routeBus = route.busIndex;
+            remapBusIndexAfterRemoval(routeBus, index);
+            route.busIndex = routeBus;
+        }
     }
 
     return true;

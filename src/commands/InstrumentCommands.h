@@ -4,6 +4,7 @@
 #include "model/Instrument.h"
 #include "SetValueCommand.h"
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QString>
 
 class Project;
@@ -68,4 +69,41 @@ private:
     PluginManager* m_manager = nullptr;
     double m_sampleRate;
     int m_bufferSize;
+};
+
+class SetInstrumentRoutingCommand : public UndoCommand {
+public:
+    SetInstrumentRoutingCommand(Project& project, int index,
+                                QJsonObject oldRouting, QJsonObject newRouting);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 79; }
+private:
+    Project& m_project;
+    int m_index;
+    QJsonObject m_oldRouting;
+    QJsonObject m_newRouting;
+};
+
+// Records buses created by the channel-routing dialog ("create bus per
+// channel") together with the routing change that assigns each channel to its
+// own new bus. The dialog adds the buses to the project before the command is
+// pushed, so execute() only acts on redo; undo() reverts the routing and
+// removes the created buses again.
+class AddChannelBusesCommand : public UndoCommand {
+public:
+    AddChannelBusesCommand(Project& project, int instrumentIndex,
+                           QJsonArray createdBuses,
+                           QJsonObject routingBefore, QJsonObject routingAfter);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 80; }
+private:
+    Project& m_project;
+    int m_instrumentIndex;
+    QJsonArray m_createdBuses;
+    QJsonObject m_routingBefore;
+    QJsonObject m_routingAfter;
+    int m_busCountBefore = -1;
+    bool m_redoing = false;
 };

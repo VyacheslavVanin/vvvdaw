@@ -618,6 +618,33 @@ void AudioEngine::processInstruments(Project* proj, unsigned long frameCount) {
 
         int busIdx = inst.outputBusIndex();
         if (busIdx < 0 || busIdx >= busCount) busIdx = 0;
+
+        // Multi-channel routing: run the synth (and effects) with one buffer
+        // per output channel, then accumulate each mapped channel into its bus.
+        if (inst.isMultiChannel()) {
+            int outCh = inst.synth()->audioOutputChannels();
+            if (outCh < 1) outCh = 1;
+            ensureMultiScratch(outCh);
+            for (int c = 0; c < outCh; ++c)
+                std::fill(m_multiScratch[c].begin(), m_multiScratch[c].begin() + frameCount, 0.0f);
+
+            inst.synth()->process(m_multiInBufs.data(), m_multiOutBufs.data(),
+                                  frameCount, outCh, &m_instrumentMidi[i]);
+            if (inst.effects().count() > 0)
+                inst.effects().process(m_multiInBufs.data(), m_multiOutBufs.data(),
+                                       frameCount, outCh);
+
+            const auto& routes = inst.channelRoutes();
+            int nRoutes = std::min<int>(outCh, static_cast<int>(routes.size()));
+            for (int c = 0; c < nRoutes; ++c) {
+                int bIdx = routes[c].busIndex;
+                if (bIdx < 0 || bIdx >= busCount) bIdx = 0;
+                routeMonoToBus(m_busBuffers[bIdx].data(), m_multiScratch[c].data(),
+                               frameCount, inst.volume());
+            }
+            continue;
+        }
+
         float* busBuf = m_busBuffers[busIdx].data();
 
         std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.begin() + frameCount, 0.0f);
@@ -872,6 +899,21 @@ void AudioEngine::ensureInstrumentMidiBuffers(int instCount) {
     }
 }
 
+void AudioEngine::ensureMultiScratch(int channels) {
+    if (channels <= 0) return;
+    if (static_cast<int>(m_multiScratch.size()) < channels) {
+        m_multiScratch.resize(static_cast<size_t>(channels));
+        m_multiInBufs.resize(static_cast<size_t>(channels));
+        m_multiOutBufs.resize(static_cast<size_t>(channels));
+    }
+    for (int c = 0; c < channels; ++c) {
+        if (m_multiScratch[c].size() < static_cast<size_t>(m_bufferSize))
+            m_multiScratch[c].resize(static_cast<size_t>(m_bufferSize), 0.0f);
+        m_multiInBufs[c] = m_multiScratch[c].data();
+        m_multiOutBufs[c] = m_multiScratch[c].data();
+    }
+}
+
 void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
                                            unsigned long frameCount, int outCh) {
     int busCount = static_cast<int>(proj->buses().size());
@@ -1016,18 +1058,35 @@ void AudioEngine::releaseInstruments() {
         if (m_instrumentMidi[i].empty()) continue;
         if (!inst.synth() || !inst.synth()->isActive()) continue;
 
+        const bool multi = inst.isMultiChannel();
+        int outCh = multi ? inst.synth()->audioOutputChannels() : 2;
+        if (outCh < 1) outCh = 1;
+        if (multi)
+            ensureMultiScratch(outCh);
+
+        float** inB = multi ? m_multiInBufs.data() : inBufs;
+        float** outB = multi ? m_multiOutBufs.data() : outBufs;
+
         for (int b = 0; b < maxReleaseBlocks; ++b) {
-            std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.end(), 0.0f);
-            std::fill(m_instrumentScratchR.begin(), m_instrumentScratchR.end(), 0.0f);
+            if (multi) {
+                for (int c = 0; c < outCh; ++c)
+                    std::fill(m_multiScratch[c].begin(), m_multiScratch[c].end(), 0.0f);
+            } else {
+                std::fill(m_instrumentScratchL.begin(), m_instrumentScratchL.end(), 0.0f);
+                std::fill(m_instrumentScratchR.begin(), m_instrumentScratchR.end(), 0.0f);
+            }
             const MidiBuffer* buf = (b == 0) ? &m_instrumentMidi[i] : &emptyBuf;
-            inst.synth()->process(inBufs, outBufs, m_bufferSize, 2, buf);
+            inst.synth()->process(inB, outB, m_bufferSize, outCh, buf);
             if (inst.effects().count() > 0)
-                inst.effects().process(inBufs, outBufs, m_bufferSize, 2);
+                inst.effects().process(inB, outB, m_bufferSize, outCh);
 
             float peak = 0.0f;
-            for (int s = 0; s < m_bufferSize; ++s) {
-                peak = std::max(peak, std::abs(m_instrumentScratchL[s]));
-                peak = std::max(peak, std::abs(m_instrumentScratchR[s]));
+            for (int c = 0; c < outCh; ++c) {
+                const float* chan = multi ? m_multiScratch[c].data()
+                                          : (c == 0 ? m_instrumentScratchL.data()
+                                                    : m_instrumentScratchR.data());
+                for (int s = 0; s < m_bufferSize; ++s)
+                    peak = std::max(peak, std::abs(chan[s]));
             }
             if (peak < kSilenceThreshold)
                 break;

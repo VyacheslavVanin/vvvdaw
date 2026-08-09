@@ -330,12 +330,17 @@ bool VST3Instance::load(const QString& path) {
                 m_inputBusChannels.push_back(2);
         }
         m_outputBusChannels.clear();
+        m_outputBusNames.clear();
         for (int32 i = 0; i < nOut; ++i) {
             BusInfo bi{};
-            if (m_component->getBusInfo(kAudio, kOutput, i, bi) == kResultTrue)
+            if (m_component->getBusInfo(kAudio, kOutput, i, bi) == kResultTrue) {
                 m_outputBusChannels.push_back(bi.channelCount);
-            else
+                m_outputBusNames.push_back(QString::fromUtf16(
+                    reinterpret_cast<const char16_t*>(bi.name)));
+            } else {
                 m_outputBusChannels.push_back(2);
+                m_outputBusNames.push_back(QString("Output %1").arg(i + 1));
+            }
         }
     }
 
@@ -401,12 +406,15 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     }
 
     std::vector<AudioBusBuffers> outBuses(numOutBuses);
+    int32 channelOffset = 0;
     for (int32 i = 0; i < numOutBuses; ++i) {
         int32 busChannels = (i < static_cast<int32>(m_outputBusChannels.size()))
                                 ? m_outputBusChannels[i] : numChannels;
-        outBuses[i].numChannels = std::min(busChannels, numChannels);
+        int32 available = std::max<int32>(0, numChannels - channelOffset);
+        outBuses[i].numChannels = std::min(busChannels, available);
         outBuses[i].silenceFlags = 0;
-        outBuses[i].channelBuffers32 = outputBuffers;
+        outBuses[i].channelBuffers32 = outputBuffers ? outputBuffers + channelOffset : nullptr;
+        channelOffset += busChannels;
     }
 
     ProcessData data;
@@ -465,6 +473,32 @@ QString VST3Instance::filePath() const { return m_filePath; }
 bool VST3Instance::isActive() const { return m_active; }
 void VST3Instance::setEnabled(bool enabled) { m_enabled = enabled; }
 bool VST3Instance::isEnabled() const { return m_enabled; }
+
+int VST3Instance::audioOutputChannels() const {
+    int total = 0;
+    for (auto cc : m_outputBusChannels)
+        total += cc;
+    return total;
+}
+
+std::vector<QString> VST3Instance::audioOutputNames() const {
+    std::vector<QString> names;
+    for (size_t b = 0; b < m_outputBusChannels.size(); ++b) {
+        int cc = m_outputBusChannels[b];
+        QString busName = (b < m_outputBusNames.size() && !m_outputBusNames[b].isEmpty())
+                              ? m_outputBusNames[b]
+                              : QString("Output %1").arg(b + 1);
+        for (int j = 0; j < cc; ++j) {
+            if (cc == 1)
+                names.push_back(busName);
+            else if (cc == 2)
+                names.push_back(busName + (j == 0 ? " L" : " R"));
+            else
+                names.push_back(QString("%1 %2").arg(busName).arg(j + 1));
+        }
+    }
+    return names;
+}
 
 int VST3Instance::latencySamples() const {
     if (m_audioProcessor) return m_audioProcessor->getLatencySamples();

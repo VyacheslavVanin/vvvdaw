@@ -648,6 +648,22 @@ bool LV2Instance::isActive() const { return m_active; }
 void LV2Instance::setEnabled(bool enabled) { m_enabled = enabled; }
 bool LV2Instance::isEnabled() const { return m_enabled; }
 
+int LV2Instance::audioOutputChannels() const {
+    return static_cast<int>(m_audioOutPorts.size());
+}
+
+std::vector<QString> LV2Instance::audioOutputNames() const {
+    std::vector<QString> names;
+    names.reserve(m_audioOutPorts.size());
+    for (const auto& pi : m_portInfos) {
+        if (pi.type == PluginPortInfo::Type::Audio &&
+            pi.direction == PluginPortInfo::Direction::Output) {
+            names.push_back(pi.name);
+        }
+    }
+    return names;
+}
+
 void LV2Instance::requestPatchGet(int atomBufIndex) {
     if (atomBufIndex < 0 || atomBufIndex >= static_cast<int>(m_atomPorts.size())) return;
     if (!m_atomPorts[atomBufIndex].isInput) return;

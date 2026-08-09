@@ -40,8 +40,10 @@ private slots:
     void projectSaveLoadRoundTrip();
     void projectLoadCreatesMissingBuses();
     void removeBusRemapsOutputs();
+    void removeBusRemapsChannelRoutes();
     void audioBusSerialization();
     void instrumentSerialization();
+    void instrumentRoutingSerialization();
     void trackSerialization();
     void audioEventSerialization();
     void midiEventSerialization();
@@ -658,6 +660,37 @@ void TestModel::removeBusRemapsOutputs() {
     QCOMPARE(t2->outputBusIndex(), 0); // removed bus remaps to master
 }
 
+void TestModel::removeBusRemapsChannelRoutes() {
+    Project p;
+    AudioBus b1;
+    b1.setName("B1");
+    p.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("B2");
+    p.addBus(std::move(b2)); // index 3
+
+    Instrument inst;
+    inst.setMultiChannel(true);
+    std::vector<Instrument::ChannelRoute> routes;
+    Instrument::ChannelRoute r0;
+    r0.busIndex = 3; // -> B2
+    r0.name = "Kick";
+    Instrument::ChannelRoute r1;
+    r1.busIndex = 2; // -> B1
+    r1.name = "Snare";
+    routes.push_back(r0);
+    routes.push_back(r1);
+    inst.setChannelRoutes(routes);
+    p.addInstrument(std::move(inst));
+
+    QVERIFY(p.removeBus(2)); // remove B1
+    const auto& insts = p.instruments();
+    QVERIFY(insts[0].isMultiChannel());
+    QCOMPARE(insts[0].channelRoutes().size(), size_t(2));
+    QCOMPARE(insts[0].channelRoutes()[0].busIndex, 2); // B2 shifted down
+    QCOMPARE(insts[0].channelRoutes()[1].busIndex, 0); // removed bus remaps to master
+}
+
 void TestModel::audioBusSerialization() {
     AudioBus bus;
     bus.setName("FX");
@@ -694,6 +727,34 @@ void TestModel::instrumentSerialization() {
     QCOMPARE(restored.outputBusIndex(), 2);
     QCOMPARE(restored.isMuted(), true);
     QCOMPARE(restored.isSolo(), false);
+}
+
+void TestModel::instrumentRoutingSerialization() {
+    Instrument inst;
+    inst.setMultiChannel(true);
+    std::vector<Instrument::ChannelRoute> routes;
+    Instrument::ChannelRoute r0;
+    r0.busIndex = 2;
+    r0.name = "Kick";
+    Instrument::ChannelRoute r1;
+    r1.busIndex = 3;
+    r1.name = "Snare";
+    routes.push_back(r0);
+    routes.push_back(r1);
+    inst.setChannelRoutes(routes);
+
+    Instrument restored = Instrument::fromJson(inst.toJson());
+    QVERIFY(restored.isMultiChannel());
+    QCOMPARE(restored.channelRoutes().size(), size_t(2));
+    QCOMPARE(restored.channelRoutes()[0].busIndex, 2);
+    QCOMPARE(restored.channelRoutes()[0].name, QString("Kick"));
+    QCOMPARE(restored.channelRoutes()[1].busIndex, 3);
+    QCOMPARE(restored.channelRoutes()[1].name, QString("Snare"));
+
+    // Legacy instruments (no routing block) default to single-bus mode.
+    Instrument legacy = Instrument::fromJson(QJsonObject());
+    QVERIFY(!legacy.isMultiChannel());
+    QVERIFY(legacy.channelRoutes().empty());
 }
 
 void TestModel::trackSerialization() {

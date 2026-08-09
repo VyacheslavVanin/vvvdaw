@@ -32,6 +32,8 @@ private slots:
     void addInstrumentCommand();
     void removeInstrumentCommand();
     void setInstrumentCommands();
+    void setInstrumentRoutingCommand();
+    void addChannelBusesCommand();
     void setTempoCommand();
     void setTempoCommandMerges();
     void setTimeSigCommand();
@@ -260,6 +262,101 @@ void TestCommands::setInstrumentCommands() {
     QCOMPARE(p.instruments()[0].pan(), 0.0f);
     stack.undo();
     QCOMPARE(p.instruments()[0].volume(), 1.0f);
+}
+
+void TestCommands::setInstrumentRoutingCommand() {
+    Project p;
+    Instrument inst;
+    p.addInstrument(std::move(inst));
+
+    QJsonObject oldRouting = p.instruments()[0].routingToJson();
+
+    std::vector<Instrument::ChannelRoute> routes;
+    Instrument::ChannelRoute r0;
+    r0.busIndex = 1;
+    r0.name = "Kick";
+    Instrument::ChannelRoute r1;
+    r1.busIndex = 0;
+    r1.name = "Snare";
+    routes.push_back(r0);
+    routes.push_back(r1);
+    p.instruments()[0].setMultiChannel(true);
+    p.instruments()[0].setChannelRoutes(routes);
+    QJsonObject newRouting = p.instruments()[0].routingToJson();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<SetInstrumentRoutingCommand>(p, 0, oldRouting, newRouting));
+    QVERIFY(p.instruments()[0].isMultiChannel());
+    QCOMPARE(p.instruments()[0].channelRoutes().size(), size_t(2));
+
+    stack.undo();
+    QVERIFY(!p.instruments()[0].isMultiChannel());
+    QVERIFY(p.instruments()[0].channelRoutes().empty());
+
+    stack.redo();
+    QVERIFY(p.instruments()[0].isMultiChannel());
+    QCOMPARE(p.instruments()[0].channelRoutes().size(), size_t(2));
+    QCOMPARE(p.instruments()[0].channelRoutes()[0].name, QString("Kick"));
+    QCOMPARE(p.instruments()[0].channelRoutes()[1].busIndex, 0);
+}
+
+void TestCommands::addChannelBusesCommand() {
+    Project p;
+    Instrument inst;
+    inst.setMultiChannel(true);
+    std::vector<Instrument::ChannelRoute> routes;
+    Instrument::ChannelRoute r0;
+    r0.busIndex = 0;
+    r0.name = "Ch0";
+    routes.push_back(r0);
+    inst.setChannelRoutes(routes);
+    p.addInstrument(std::move(inst));
+
+    const int busCountBefore = static_cast<int>(p.buses().size()); // 2 (Master, Metronome)
+    QJsonObject oldRouting = p.instruments()[0].routingToJson();
+
+    // Simulate the dialog: append two buses and route channel 0/1 to them.
+    AudioBus b0;
+    b0.setName("Kick");
+    p.addBus(std::move(b0));
+    AudioBus b1;
+    b1.setName("Snare");
+    p.addBus(std::move(b1));
+    std::vector<Instrument::ChannelRoute> newRoutes;
+    Instrument::ChannelRoute nr0;
+    nr0.busIndex = busCountBefore;
+    nr0.name = "Ch0";
+    Instrument::ChannelRoute nr1;
+    nr1.busIndex = busCountBefore + 1;
+    nr1.name = "Ch1";
+    newRoutes.push_back(nr0);
+    newRoutes.push_back(nr1);
+    p.instruments()[0].setChannelRoutes(newRoutes);
+
+    QJsonObject newRouting = p.instruments()[0].routingToJson();
+    QJsonArray createdBuses;
+    createdBuses.append(p.buses()[busCountBefore].toJson());
+    createdBuses.append(p.buses()[busCountBefore + 1].toJson());
+
+    UndoStack stack;
+    stack.push(std::make_unique<AddChannelBusesCommand>(
+        p, 0, createdBuses, oldRouting, newRouting));
+
+    // Buses were added live by the dialog; the command records the state.
+    QCOMPARE(p.buses().size(), size_t(busCountBefore + 2));
+    QCOMPARE(p.instruments()[0].channelRoutes().size(), size_t(2));
+
+    stack.undo();
+    QCOMPARE(p.buses().size(), size_t(busCountBefore));
+    QCOMPARE(p.instruments()[0].channelRoutes().size(), size_t(1));
+    QCOMPARE(p.instruments()[0].channelRoutes()[0].busIndex, 0);
+
+    stack.redo();
+    QCOMPARE(p.buses().size(), size_t(busCountBefore + 2));
+    QCOMPARE(p.buses()[busCountBefore].name(), QString("Kick"));
+    QCOMPARE(p.buses()[busCountBefore + 1].name(), QString("Snare"));
+    QCOMPARE(p.instruments()[0].channelRoutes().size(), size_t(2));
+    QCOMPARE(p.instruments()[0].channelRoutes()[1].busIndex, busCountBefore + 1);
 }
 
 void TestCommands::setTempoCommand() {

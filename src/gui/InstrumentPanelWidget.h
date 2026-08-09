@@ -5,6 +5,8 @@
 #include <QSlider>
 #include <QPushButton>
 #include <QHBoxLayout>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <vector>
 
 class Project;
@@ -42,6 +44,9 @@ signals:
     void muteWillChange(int index, bool oldVal, bool newVal);
     void nameWillChange(int index, const QString& oldName, const QString& newName);
     void outputWillChange(int index, int oldVal, int newVal);
+    void routingWillChange(int index, const QJsonObject& oldRouting, const QJsonObject& newRouting);
+    void channelBusesCreated(int index, const QJsonArray& createdBuses,
+                             const QJsonObject& oldRouting, const QJsonObject& newRouting);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -61,6 +66,8 @@ private:
     };
 
     void openSynthDialog(int index);
+    void openChannelRoutingDialog(int index);
+    void updateOutComboSelection(const InstrumentRow& row, int instIndex);
 
     Project& m_project;
     PluginManager* m_pluginManager = nullptr;

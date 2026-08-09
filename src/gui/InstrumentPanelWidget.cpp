@@ -1,5 +1,6 @@
 #include "InstrumentPanelWidget.h"
 #include "PluginListWidget.h"
+#include "ChannelRoutingDialog.h"
 #include "model/Project.h"
 #include "model/Instrument.h"
 #include "model/AudioBus.h"
@@ -166,17 +167,12 @@ void InstrumentPanelWidget::rebuild() {
             "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
         );
         row.outCombo->addItem("Master", 0);
+        row.outCombo->addItem("Multi Channel", -1);
         for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
             if (j == 0) continue;
             row.outCombo->addItem(buses[j].name(), j);
         }
-        int outTarget = instrument.outputBusIndex();
-        for (int c = 0; c < row.outCombo->count(); ++c) {
-            if (row.outCombo->itemData(c).toInt() == outTarget) {
-                row.outCombo->setCurrentIndex(c);
-                break;
-            }
-        }
+        updateOutComboSelection(row, i);
         outRow->addWidget(row.outCombo, 1);
         layout->addLayout(outRow);
 
@@ -276,19 +272,26 @@ void InstrumentPanelWidget::rebuild() {
         connect(row.outCombo, QOverload<int>::of(&QComboBox::activated), this,
                 [this, row, instIndex](int comboIdx) {
             int targetBusIdx = row.outCombo->itemData(comboIdx).toInt();
+            if (targetBusIdx == -1) {
+                openChannelRoutingDialog(instIndex);
+                return;
+            }
             if (instrumentCycleCheck(m_project.buses(), targetBusIdx)) {
-                int outTarget = m_project.instruments()[instIndex].outputBusIndex();
-                for (int c = 0; c < row.outCombo->count(); ++c) {
-                    if (row.outCombo->itemData(c).toInt() == outTarget) {
-                        row.outCombo->setCurrentIndex(c);
-                        break;
-                    }
-                }
+                updateOutComboSelection(row, instIndex);
                 return;
             }
             int oldVal = m_project.instruments()[instIndex].outputBusIndex();
+            // Leaving multi-channel mode: keep the routes but stop routing the
+            // synth outputs individually.
+            auto& inst = m_project.instruments()[instIndex];
+            if (inst.isMultiChannel()) {
+                QJsonObject oldRouting = inst.routingToJson();
+                inst.setMultiChannel(false);
+                QJsonObject newRouting = inst.routingToJson();
+                emit routingWillChange(instIndex, oldRouting, newRouting);
+            }
             emit outputWillChange(instIndex, oldVal, targetBusIdx);
-            m_project.instruments()[instIndex].setOutputBusIndex(targetBusIdx);
+            inst.setOutputBusIndex(targetBusIdx);
             emit instrumentChanged();
         });
 
@@ -325,6 +328,44 @@ void InstrumentPanelWidget::refreshOutCombos() {
             if (busIdx < 0 || busIdx >= static_cast<int>(buses.size())) continue;
             combo->setItemText(c, buses[busIdx].name());
         }
+    }
+}
+
+void InstrumentPanelWidget::updateOutComboSelection(const InstrumentRow& row, int instIndex) {
+    QComboBox* combo = row.outCombo;
+    if (!combo) return;
+    const auto& inst = m_project.instruments()[instIndex];
+    int target = inst.isMultiChannel() ? -1 : inst.outputBusIndex();
+    for (int c = 0; c < combo->count(); ++c) {
+        if (combo->itemData(c).toInt() == target) {
+            combo->setCurrentIndex(c);
+            return;
+        }
+    }
+    combo->setCurrentIndex(0);
+}
+
+void InstrumentPanelWidget::openChannelRoutingDialog(int index) {
+    auto& inst = m_project.instruments()[index];
+    if (!inst.synth())
+        return;
+
+    QJsonObject oldRouting = inst.routingToJson();
+    ChannelRoutingDialog dialog(m_project, inst, inst.synth(), this);
+    if (dialog.exec() == QDialog::Accepted) {
+        dialog.applyTo(inst);
+        QJsonObject newRouting = inst.routingToJson();
+        if (dialog.createdBusCount() > 0) {
+            QJsonArray createdBuses;
+            for (int busIdx : dialog.createdBusIndices())
+                createdBuses.append(m_project.buses()[busIdx].toJson());
+            emit channelBusesCreated(index, createdBuses, oldRouting, newRouting);
+        } else {
+            emit routingWillChange(index, oldRouting, newRouting);
+        }
+        emit instrumentChanged();
+    } else {
+        updateOutComboSelection(m_instrumentRows[index], index);
     }
 }
 

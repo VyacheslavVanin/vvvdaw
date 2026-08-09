@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <csignal>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -21,6 +22,7 @@ namespace {
 
 constexpr const char* kZamCompUri = "urn:zamaudio:ZamComp";
 constexpr const char* kHardLimiterUri = "http://plugin.org.uk/swh-plugins/hardLimiter";
+constexpr const char* kDrumGizmoUri = "http://drumgizmo.org/lv2";
 constexpr int kSampleRate = 48000;
 constexpr int kBlockSize = 512;
 constexpr int kNumChannels = 2;
@@ -30,6 +32,13 @@ bool allFinite(const std::vector<float>& a, const std::vector<float>& b) {
         if (!std::isfinite(v)) return false;
     for (float v : b)
         if (!std::isfinite(v)) return false;
+    return true;
+}
+
+bool allFinite(const std::vector<std::vector<float>>& channels) {
+    for (const auto& ch : channels)
+        for (float v : ch)
+            if (!std::isfinite(v)) return false;
     return true;
 }
 
@@ -46,6 +55,8 @@ private slots:
     void stateToJsonWithoutStateExtension();
     void stateSerializationSurvivesBuggyPlugin();
     void genericScanSmoke();
+    void multiChannelOutputDiscovery();
+    void multiChannelProcess();
 };
 
 void TestLV2::sigGuardRecovers() {
@@ -321,6 +332,72 @@ void TestLV2::genericScanSmoke() {
     lilv_world_free(world);
     QVERIFY2(total > 0, "no LV2 plugins discovered in Lilv world");
     QVERIFY2(processed > 0, "no loadable LV2 effect plugin found");
+}
+
+void TestLV2::multiChannelOutputDiscovery() {
+    LV2Instance inst;
+    if (!inst.load(kDrumGizmoUri))
+        QSKIP("DrumGizmo LV2 plugin not installed");
+
+    QVERIFY(inst.isInstrument());
+    int outCh = inst.audioOutputChannels();
+    QVERIFY2(outCh >= 2, qPrintable(QString("expected multi-channel output, got %1").arg(outCh)));
+
+    auto names = inst.audioOutputNames();
+    QCOMPARE(static_cast<int>(names.size()), outCh);
+    for (const auto& n : names)
+        QVERIFY(!n.isEmpty());
+
+    // The reported channel count must match the audio output ports.
+    auto ports = inst.ports();
+    int audioOut = 0;
+    for (const auto& p : ports) {
+        if (p.type == PluginPortInfo::Type::Audio &&
+            p.direction == PluginPortInfo::Direction::Output)
+            ++audioOut;
+    }
+    QCOMPARE(outCh, audioOut);
+}
+
+void TestLV2::multiChannelProcess() {
+    LV2Instance inst;
+    if (!inst.load(kDrumGizmoUri))
+        QSKIP("DrumGizmo LV2 plugin not installed");
+
+    QVERIFY(inst.activate(kSampleRate, kBlockSize));
+    QVERIFY(inst.isActive());
+
+    const int outCh = inst.audioOutputChannels();
+    QVERIFY(outCh >= 2);
+
+    // Multi-channel in-place processing: every output channel must be written
+    // (not silently discarded) and stay finite while the plugin runs.
+    std::vector<std::vector<float>> in(outCh, std::vector<float>(kBlockSize, 0.0f));
+    std::vector<std::vector<float>> out(outCh, std::vector<float>(kBlockSize, 0.0f));
+    std::vector<float*> inBufs(outCh);
+    std::vector<float*> outBufs(outCh);
+    for (int c = 0; c < outCh; ++c) {
+        inBufs[c] = in[c].data();
+        outBufs[c] = out[c].data();
+    }
+
+    MidiBuffer midi;
+    midi.push_back({ 0, 0x90, 36, 100 }); // kick note-on
+
+    for (int block = 0; block < 4; ++block) {
+        for (auto& ch : out)
+            std::fill(ch.begin(), ch.end(), 0.0f);
+        QVERIFY(inst.process(inBufs.data(), outBufs.data(), kBlockSize, outCh, &midi));
+        QVERIFY(allFinite(out));
+    }
+
+    // The buffers are distinct: no channel aliases another.
+    std::set<const float*> distinct;
+    for (int c = 0; c < outCh; ++c)
+        distinct.insert(outBufs[c]);
+    QCOMPARE(static_cast<int>(distinct.size()), outCh);
+
+    QVERIFY(inst.deactivate());
 }
 
 QTEST_MAIN(TestLV2)
