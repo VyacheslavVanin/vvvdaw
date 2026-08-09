@@ -150,6 +150,7 @@ void BusPanelWidget::rebuild() {
 
         row.nameEdit = new QLineEdit(bus.name(), controls);
         row.nameEdit->setReadOnly(true);
+        row.nameEdit->setAlignment(Qt::AlignCenter);
         row.nameEdit->setStyleSheet(
             "QLineEdit { background: transparent; border: none; font-weight: bold; font-size: 9px; color: #ccc; }"
             "QLineEdit:focus { background: #333; border: 1px solid #6688cc; }"
