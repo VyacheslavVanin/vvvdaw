@@ -7,6 +7,8 @@
 #include <QListWidget>
 #include <QTableWidget>
 #include <QPixmap>
+#include <QTimer>
+#include <QContextMenuEvent>
 #include <algorithm>
 #include <memory>
 #include <portaudio.h>
@@ -107,6 +109,9 @@ private slots:
     void mainWindowRestoresPanelStateFromSettings();
     void mainWindowRestoresSizeFromSettings();
     void panelTogglesAndGripUpdateSettings();
+    void pluginListRowsStayCompact();
+    void pluginListHasNoRemoveButton();
+    void pluginListContextMenuRemovesPlugin();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -705,6 +710,87 @@ void MainWindowTest::busLevelMeterIsNarrow() {
     meter->setClipping(true);
     QPixmap pm = meter->grab();
     QVERIFY(!pm.isNull());
+}
+
+void MainWindowTest::pluginListRowsStayCompact() {
+    AudioBus bus;
+    for (int i = 0; i < 3; ++i) {
+        auto synth = std::make_unique<StubSynth>();
+        bus.pluginChain().addPlugin(std::move(synth));
+    }
+
+    PluginListWidget list;
+    list.setBus(&bus);
+    list.rebuild();
+    list.resize(240, 200);
+    list.show();
+    QCoreApplication::processEvents();
+
+    // Each plugin row keeps a compact height instead of stretching to fill
+    // the whole list (which would give ~66 px per row here).
+    int rowCount = 0;
+    for (QPushButton* b : list.findChildren<QPushButton*>()) {
+        if (b->text() == "ON" || b->text() == "OFF") {
+            ++rowCount;
+            QVERIFY(b->parentWidget()->height() <= 30);
+        }
+    }
+    QCOMPARE(rowCount, 3);
+}
+
+void MainWindowTest::pluginListHasNoRemoveButton() {
+    AudioBus bus;
+    auto synth = std::make_unique<StubSynth>();
+    bus.pluginChain().addPlugin(std::move(synth));
+
+    PluginListWidget list;
+    list.setBus(&bus);
+    list.rebuild();
+
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        QVERIFY(b->text() != "x"); // deletion is done via the context menu
+}
+
+void MainWindowTest::pluginListContextMenuRemovesPlugin() {
+    AudioBus bus;
+    auto synth = std::make_unique<StubSynth>();
+    bus.pluginChain().addPlugin(std::move(synth));
+
+    PluginListWidget list;
+    list.setBus(&bus);
+    list.rebuild();
+    list.resize(240, 120);
+    list.show();
+    QCoreApplication::processEvents();
+
+    QPushButton* enableBtn = nullptr;
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON") { enableBtn = b; break; }
+    QVERIFY(enableBtn);
+    QWidget* row = enableBtn->parentWidget();
+    QCOMPARE(bus.pluginChain().count(), 1);
+
+    // Drive the context menu: open it on the row and trigger "Remove Plugin".
+    QTimer::singleShot(0, [] {
+        QMenu* menu = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets())
+            if (auto* m = qobject_cast<QMenu*>(w)) { menu = m; break; }
+        if (!menu) return;
+        for (QAction* a : menu->actions()) {
+            if (a->text().contains("Remove")) {
+                a->trigger();
+                break;
+            }
+        }
+        menu->close();
+    });
+
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, row->rect().center(),
+                         row->mapToGlobal(row->rect().center()));
+    QApplication::sendEvent(row, &ev);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(bus.pluginChain().count(), 0);
 }
 
 void MainWindowTest::mainWindowRestoresPanelStateFromSettings() {

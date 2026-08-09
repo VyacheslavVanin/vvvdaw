@@ -9,6 +9,7 @@
 #include <QPointF>
 #include <vector>
 
+class QLayoutItem;
 class PluginChain;
 class PluginInstance;
 class PluginManager;
@@ -70,4 +71,7 @@ private:
     std::vector<QWidget*> m_rows;
     int m_dragFromIndex = -1;
     QPointF m_dragStartPos;
+    // Spacer absorbing surplus vertical space so plugin rows keep a compact
+    // height instead of stretching to fill the list.
+    QLayoutItem* m_trailingStretch = nullptr;
 };

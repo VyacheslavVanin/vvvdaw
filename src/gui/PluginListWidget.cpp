@@ -17,6 +17,8 @@
 #include <QDrag>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QContextMenuEvent>
+#include <QSpacerItem>
 #include <QApplication>
 #include <algorithm>
 
@@ -107,16 +109,29 @@ void PluginListWidget::rebuild() {
     }
     m_rows.clear();
 
+    if (m_trailingStretch) {
+        m_containerLayout->removeItem(m_trailingStretch);
+        delete m_trailingStretch;
+        m_trailingStretch = nullptr;
+    }
+
     auto* chain = targetChain();
     if (!chain) return;
 
     for (int i = 0; i < chain->count(); ++i)
         buildRow(chain->plugin(i), i);
+
+    m_trailingStretch = new QSpacerItem(0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    m_containerLayout->addItem(m_trailingStretch);
 }
 
 void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     auto* row = new QWidget();
     row->setAcceptDrops(false);
+    // Keep each plugin row at its natural height; the trailing stretch in the
+    // container absorbs surplus space so rows do not grow to fill the list.
+    row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    row->setMinimumHeight(22);
     auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(2, 1, 2, 1);
     layout->setSpacing(4);
@@ -135,18 +150,6 @@ void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     auto* nameLabel = new QLabel(plugin->name(), row);
     nameLabel->setStyleSheet("color: #ddd; font-size: 10px;");
     layout->addWidget(nameLabel, 1);
-
-    auto* removeBtn = new QPushButton("x", row);
-    removeBtn->setFixedWidth(20);
-    removeBtn->setFixedHeight(18);
-    removeBtn->setStyleSheet(
-        "QPushButton { background: #443333; color: #cc8888; border: 1px solid #554444; font-size: 10px; font-weight: bold; }"
-        "QPushButton:hover { background: #663333; color: #ff8888; }"
-    );
-    connect(removeBtn, &QPushButton::clicked, this, [this, index]() {
-        onRemoveClicked(index);
-    });
-    layout->addWidget(removeBtn);
 
     row->setStyleSheet("background: #333; border-radius: 3px; padding: 1px;");
     row->setCursor(Qt::OpenHandCursor);
@@ -241,6 +244,21 @@ void PluginListWidget::onRemoveClicked(int index) {
 bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
     auto* w = qobject_cast<QWidget*>(obj);
     if (!w) return QWidget::eventFilter(obj, event);
+
+    if (event->type() == QEvent::ContextMenu) {
+        auto* ce = static_cast<QContextMenuEvent*>(event);
+        int idx = rowAtPos(w->pos());
+        auto* chain = targetChain();
+        if (idx >= 0 && chain && idx < chain->count()) {
+            QMenu menu(w);
+            QAction* removeAction = menu.addAction("Remove Plugin");
+            connect(removeAction, &QAction::triggered, this, [this, idx] {
+                onRemoveClicked(idx);
+            });
+            menu.exec(ce->globalPos());
+        }
+        return true;
+    }
 
     if (event->type() == QEvent::MouseButtonDblClick) {
         auto* me = static_cast<QMouseEvent*>(event);
