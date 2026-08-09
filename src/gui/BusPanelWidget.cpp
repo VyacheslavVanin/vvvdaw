@@ -2,6 +2,7 @@
 #include "BusLevelMeter.h"
 #include "PluginListWidget.h"
 #include "audio/AudioEngine.h"
+#include "audio/AudioUtils.h"
 #include "model/Project.h"
 #include "model/AudioBus.h"
 #include "plugin/PluginChain.h"
@@ -17,6 +18,23 @@
 #include <QListWidget>
 #include <QContextMenuEvent>
 #include <QPushButton>
+#include <cmath>
+
+namespace {
+
+// Map a linear volume to the dB-scaled fader position (value 0..100 <-> -60..0 dB).
+int volumeToSlider(float linearVolume) {
+    float db = linearToDecibels(linearVolume);
+    return static_cast<int>(std::lround((db + 60.0f) * 100.0f / 60.0f));
+}
+
+// Map a dB-scaled fader position (value 0..100 <-> -60..0 dB) to linear volume.
+float sliderToVolume(int value) {
+    float db = -60.0f + 60.0f * value / 100.0f;
+    return decibelsToLinear(db);
+}
+
+} // namespace
 
 static bool wouldCreateCycle(const std::vector<AudioBus>& buses, int fromIndex, int toIndex) {
     if (toIndex < 0) return false;
@@ -190,14 +208,18 @@ void BusPanelWidget::rebuild() {
 
         row.levelMeter = new BusLevelMeter(controls);
         row.levelMeter->setObjectName("levelMeter");
-        row.levelMeter->setFixedWidth(34);
+        row.levelMeter->setFixedWidth(30);
+        row.levelMeter->setVolume(bus.volume());
         meterRow->addWidget(row.levelMeter, 1);
 
         row.volumeSlider = new QSlider(Qt::Vertical, controls);
         row.volumeSlider->setObjectName("volumeSlider");
         row.volumeSlider->setRange(0, 100);
-        row.volumeSlider->setValue(static_cast<int>(bus.volume() * 100));
+        // The slider shares the meter's dB scale: value 0..100 <-> -60..0 dB.
+        row.volumeSlider->setValue(volumeToSlider(bus.volume()));
         row.volumeSlider->setFixedWidth(26);
+        row.volumeSlider->setTickPosition(QSlider::TicksLeft);
+        row.volumeSlider->setTickInterval(20); // 20 units = 12 dB
         row.volumeSlider->setStyleSheet(
             "QSlider::groove:vertical { background: #444; width: 3px; border-radius: 1px; }"
             "QSlider::handle:vertical { background: #aaa; height: 5px; margin: 0 -2px; border-radius: 2px; }"
@@ -344,11 +366,12 @@ void BusPanelWidget::rebuild() {
         });
 
         connect(row.volumeSlider, &QSlider::valueChanged, this,
-                [this, busIndex](int val) {
+                [this, row, busIndex](int val) {
             float oldVal = m_project.buses()[busIndex].volume();
-            float newVal = val / 100.0f;
+            float newVal = sliderToVolume(val);
             emit busVolumeWillChange(busIndex, oldVal, newVal);
             m_project.buses()[busIndex].setVolume(newVal);
+            row.levelMeter->setVolume(newVal);
             emit busChanged();
         });
 

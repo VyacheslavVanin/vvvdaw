@@ -19,6 +19,7 @@ private slots:
     void writeTrackToBusStereo();
     void routeMonoToBusCentered();
     void linearToDecibelsMapping();
+    void decibelsToLinearMapping();
     void busBufferPeakMax();
     void computeBusSoloPassSetLeaf();
     void computeBusSoloPassSetMaster();
@@ -186,6 +187,24 @@ void TestAudio::linearToDecibelsMapping() {
     // Above 0 dB is clamped to 0, very quiet signals clamp to -60.
     QCOMPARE(linearToDecibels(2.0f), 0.0f);
     QCOMPARE(linearToDecibels(1e-6f), -60.0f);
+}
+
+void TestAudio::decibelsToLinearMapping() {
+    // Endpoints of the clamped scale.
+    QCOMPARE(decibelsToLinear(0.0f), 1.0f);
+    QCOMPARE(decibelsToLinear(-60.0f), 0.0f);
+    QCOMPARE(decibelsToLinear(-90.0f), 0.0f); // below range clamps to silence
+    QCOMPARE(decibelsToLinear(12.0f), 1.0f); // above range clamps to unity
+
+    // 20 dB / 10 ratio, exact powers of ten.
+    QVERIFY(std::abs(decibelsToLinear(-20.0f) - 0.1f) < 1e-6f);
+    QVERIFY(std::abs(decibelsToLinear(-40.0f) - 0.01f) < 1e-7f);
+    QVERIFY(std::abs(decibelsToLinear(-6.0f) - 0.501187f) < 1e-4f);
+
+    // Round trips: converting to dB and back reproduces the linear value.
+    for (float db : { -50.0f, -40.0f, -20.0f, -10.0f, -3.0f })
+        QVERIFY(std::abs(linearToDecibels(decibelsToLinear(db)) - db) < 1e-3f);
+    QVERIFY(std::abs(decibelsToLinear(linearToDecibels(0.5f)) - 0.5f) < 1e-3f);
 }
 
 void TestAudio::busBufferPeakMax() {

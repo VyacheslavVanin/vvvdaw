@@ -114,6 +114,16 @@ inline float linearToDecibels(float linear) {
     return db;
 }
 
+// Inverse of linearToDecibels for the same clamped [-60, 0] dB range.
+// -60 dB maps to true silence (0), 0 dB to unity (1).
+inline float decibelsToLinear(float db) {
+    if (db <= -60.0f)
+        return 0.0f;
+    if (db >= 0.0f)
+        return 1.0f;
+    return std::pow(10.0f, db / 20.0f);
+}
+
 // Peak of an interleaved (stereo, L/R per frame) bus buffer.
 inline float busBufferPeak(const float* interleaved, unsigned long frames) {
     float peak = 0.0f;

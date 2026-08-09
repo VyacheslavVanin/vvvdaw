@@ -5,12 +5,14 @@
 #include <QMenuBar>
 #include <QListWidget>
 #include <QTableWidget>
+#include <QPixmap>
 #include <algorithm>
 #include <memory>
 #include <portaudio.h>
 
 #include "core/Settings.h"
 #include "audio/AudioEngine.h"
+#include "audio/AudioUtils.h"
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
@@ -99,6 +101,8 @@ private slots:
     void busPanelStripsStayFixedWidth();
     void busPanelPluginToggleRevealsPluginList();
     void busPanelPluginPanelStaysOpenAcrossRebuild();
+    void busVolumeSliderFollowsMeterDbScale();
+    void busLevelMeterIsNarrow();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -637,6 +641,66 @@ void MainWindowTest::busPanelPluginPanelStaysOpenAcrossRebuild() {
     QVERIFY(lists[0]->isHidden());
     QVERIFY(!toggles[1]->isChecked());
     QVERIFY(lists[1]->isHidden());
+}
+
+void MainWindowTest::busVolumeSliderFollowsMeterDbScale() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    b1.setVolume(0.5f); // -6.02 dB
+    project.addBus(std::move(b1)); // Master, Metronome, FX
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    const auto sliders = window.m_busPanel->findChildren<QSlider*>("volumeSlider");
+    QCOMPARE(sliders.size(), 3);
+    QSlider* slider = sliders[2]; // third row = FX bus
+    AudioBus& fx = window.m_project.buses()[2];
+
+    // The slider position is derived from the linear volume through the meter's
+    // dB scale: 0.5 (-6.02 dB) sits ~90 of 100.
+    QVERIFY(std::abs(slider->value() - 90) <= 1);
+
+    // Full scale = 0 dB = unity.
+    slider->setValue(100);
+    QCOMPARE(fx.volume(), 1.0f);
+
+    // Bottom of the fader = -60 dB = silence.
+    slider->setValue(0);
+    QCOMPARE(fx.volume(), 0.0f);
+
+    // Midpoint = -30 dB, matching the same point on the meter scale.
+    slider->setValue(50);
+    QVERIFY(std::abs(fx.volume() - decibelsToLinear(-30.0f)) < 1e-3f);
+}
+
+void MainWindowTest::busLevelMeterIsNarrow() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    const auto meters = window.m_busPanel->findChildren<BusLevelMeter*>("levelMeter");
+    QCOMPARE(meters.size(), 3);
+    for (BusLevelMeter* m : meters)
+        QVERIFY(m->maximumWidth() < 34); // indicator bar column is narrower
+
+    // Painting the dB scale plus the volume marker must not crash.
+    BusLevelMeter* meter = meters[0];
+    meter->resize(30, 120);
+    meter->setPeak(0.5f);
+    meter->setVolume(0.5f);
+    meter->setClipping(true);
+    QPixmap pm = meter->grab();
+    QVERIFY(!pm.isNull());
 }
 
 void MainWindowTest::busRenameRefreshesTrackOutCombo() {
