@@ -96,6 +96,7 @@ private slots:
     void shiftDragOnAudioDoesNotDuplicate();
     void audioTrackOutComboListsBuses();
     void busPanelStripHasCompactControls();
+    void busPanelStripsStayFixedWidth();
     void busPanelPluginToggleRevealsPluginList();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
@@ -529,6 +530,43 @@ void MainWindowTest::busPanelStripHasCompactControls() {
     QCOMPARE(lists.size(), 3);
     for (QWidget* l : lists)
         QVERIFY(l->isHidden());
+}
+
+void MainWindowTest::busPanelStripsStayFixedWidth() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+
+    auto stripWidths = [&window]() {
+        std::vector<int> widths;
+        const auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+        for (QPushButton* t : toggles)
+            widths.push_back(t->parentWidget()->parentWidget()->width());
+        return widths;
+    };
+
+    window.resize(500, 400);
+    window.show();
+    QCoreApplication::processEvents();
+    const auto narrow = stripWidths();
+    QCOMPARE(narrow.size(), 3);
+
+    window.resize(1200, 400);
+    QCoreApplication::processEvents();
+    const auto wide = stripWidths();
+    QCOMPARE(wide.size(), 3);
+
+    // Strips must not stretch when the window widens.
+    for (size_t i = 0; i < narrow.size(); ++i)
+        QCOMPARE(wide[i], narrow[i]);
 }
 
 void MainWindowTest::busPanelPluginToggleRevealsPluginList() {

@@ -94,6 +94,10 @@ void BusPanelWidget::rebuild() {
         QColor stripColor = (i % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333");
 
         row.widget = new QWidget(m_container);
+        // Fixed horizontal policy: the strip must keep its sizeHint width
+        // (narrow controls) no matter how wide the panel gets, and only widen
+        // when the plugin panel is actually revealed (sizeHint then grows).
+        row.widget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
         row.widget->setAutoFillBackground(true);
         QPalette wp = row.widget->palette();
         wp.setColor(QPalette::Window, stripColor);
