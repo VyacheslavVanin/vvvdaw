@@ -33,6 +33,7 @@
 #include "gui/InstrumentPanelWidget.h"
 #include "gui/PluginListWidget.h"
 #include "gui/PluginWindow.h"
+#include "gui/PianoRollWindow.h"
 #include "gui/ChannelRoutingDialog.h"
 
 namespace {
@@ -114,6 +115,7 @@ private slots:
     void pluginListHasNoRemoveButton();
     void pluginListContextMenuRemovesPlugin();
     void pluginWindowStaysOnTop();
+    void pianoRollWindowStaysOnTop();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -799,6 +801,28 @@ void MainWindowTest::pluginWindowStaysOnTop() {
     auto plugin = std::make_unique<StubSynth>();
     PluginWindow window(plugin.get(), 3, nullptr);
     QVERIFY(window.windowFlags() & Qt::WindowStaysOnTopHint);
+}
+
+void MainWindowTest::pianoRollWindowStaysOnTop() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    Track& track = project.tracks()[0];
+    auto clip = std::make_shared<MidiClip>();
+    clip->addNote(60, 100, 0, 960);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addMidiEvent(ev);
+    const int64_t id = track.midiEvents().front().id();
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.openPianoRoll(0, id);
+
+    QCOMPARE(window.m_pianoRollWindows.size(), size_t(1));
+    QVERIFY(window.m_pianoRollWindows[0]->windowFlags() & Qt::WindowStaysOnTopHint);
 }
 
 void MainWindowTest::mainWindowRestoresPanelStateFromSettings() {

@@ -39,7 +39,7 @@ private:
 
 PianoRollWindow::PianoRollWindow(Project& project, UndoStack& undo, AudioEngine& engine,
                                  int trackIndex, int64_t eventId, QWidget* parent)
-    : QWidget(parent, Qt::Window)
+    : QWidget(parent, Qt::Window | Qt::WindowStaysOnTopHint)
     , m_project(project)
     , m_engine(engine)
     , m_trackIndex(trackIndex)
