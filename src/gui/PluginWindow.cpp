@@ -14,7 +14,7 @@ PluginWindow::PluginWindow(PluginInstance* plugin,
     setWindowTitle(m_plugin ? m_plugin->name() : "Plugin");
     setMinimumSize(100, 100);
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowFlags(windowFlags() | Qt::Window);
+    setWindowFlags(windowFlags() | Qt::Window | Qt::WindowStaysOnTopHint);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

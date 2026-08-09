@@ -32,6 +32,7 @@
 #include "gui/BusLevelMeter.h"
 #include "gui/InstrumentPanelWidget.h"
 #include "gui/PluginListWidget.h"
+#include "gui/PluginWindow.h"
 #include "gui/ChannelRoutingDialog.h"
 
 namespace {
@@ -112,6 +113,7 @@ private slots:
     void pluginListRowsStayCompact();
     void pluginListHasNoRemoveButton();
     void pluginListContextMenuRemovesPlugin();
+    void pluginWindowStaysOnTop();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -791,6 +793,12 @@ void MainWindowTest::pluginListContextMenuRemovesPlugin() {
     QCoreApplication::processEvents();
 
     QCOMPARE(bus.pluginChain().count(), 0);
+}
+
+void MainWindowTest::pluginWindowStaysOnTop() {
+    auto plugin = std::make_unique<StubSynth>();
+    PluginWindow window(plugin.get(), 3, nullptr);
+    QVERIFY(window.windowFlags() & Qt::WindowStaysOnTopHint);
 }
 
 void MainWindowTest::mainWindowRestoresPanelStateFromSettings() {
