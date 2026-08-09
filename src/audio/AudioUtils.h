@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <vector>
 
 // Compute per-channel gain factors from a stereo pan value [-1, 1].
 // -1 = full left, 0 = center, +1 = full right.
@@ -101,4 +102,70 @@ inline void routeMonoToBus(float* busBuf, const float* src, unsigned long frames
         busBuf[f * 2]     += s;
         busBuf[f * 2 + 1] += s;
     }
+}
+
+// Convert a linear amplitude to decibels, clamped to [-60, 0] dB for metering.
+inline float linearToDecibels(float linear) {
+    if (linear <= 0.0f)
+        return -60.0f;
+    float db = 20.0f * std::log10(linear);
+    if (db < -60.0f) db = -60.0f;
+    if (db > 0.0f) db = 0.0f;
+    return db;
+}
+
+// Peak of an interleaved (stereo, L/R per frame) bus buffer.
+inline float busBufferPeak(const float* interleaved, unsigned long frames) {
+    float peak = 0.0f;
+    for (unsigned long f = 0; f < frames; ++f) {
+        float l = std::fabs(interleaved[f * 2]);
+        float r = std::fabs(interleaved[f * 2 + 1]);
+        peak = std::max(peak, std::max(l, r));
+    }
+    return peak;
+}
+
+// Which buses stay audible when at least one bus is soloed. `outputTo[i]` is
+// the parent bus index of bus i (or < 0 / >= n for "to output device") and
+// `solo[i]` whether bus i is soloed. A bus passes through when it is:
+//   - itself soloed,
+//   - on the route from a soloed bus up to the output (an ancestor, needed so
+//     the soloed signal can actually reach the speakers), or
+//   - feeding a soloed bus (a descendant in the reverse graph), so the soloed
+//     bus receives the sources that contribute to it.
+// Everything else is silenced. Returns a pass/no-pass flag per bus index.
+inline std::vector<bool> computeBusSoloPassSet(const std::vector<int>& outputTo,
+                                               const std::vector<bool>& solo,
+                                               int busCount) {
+    std::vector<bool> pass(static_cast<size_t>(busCount), false);
+
+    // Soloed buses and every ancestor along their route to the output.
+    for (int i = 0; i < busCount; ++i) {
+        if (!solo[i]) continue;
+        std::vector<bool> visited(static_cast<size_t>(busCount), false);
+        int cur = i;
+        while (cur >= 0 && cur < busCount && !visited[cur]) {
+            visited[cur] = true;
+            pass[cur] = true;
+            if (cur == outputTo[cur]) break; // self-loop guard
+            cur = outputTo[cur];
+        }
+    }
+
+    // Buses that (transitively) feed into a soloed bus.
+    for (int i = 0; i < busCount; ++i) {
+        std::vector<bool> visited(static_cast<size_t>(busCount), false);
+        int cur = i;
+        bool feedsSolo = false;
+        while (cur >= 0 && cur < busCount && !visited[cur]) {
+            if (solo[cur]) { feedsSolo = true; break; }
+            visited[cur] = true;
+            if (cur == outputTo[cur]) break; // self-loop guard
+            cur = outputTo[cur];
+        }
+        if (feedsSolo)
+            pass[i] = true;
+    }
+
+    return pass;
 }

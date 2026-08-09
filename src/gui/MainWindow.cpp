@@ -268,6 +268,7 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
     // Bus panel
     m_busPanel = new BusPanelWidget(m_project, this);
     m_busPanel->setPluginManager(&m_pluginManager);
+    m_busPanel->setAudioEngine(&m_engine);
     m_busPanel->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
     m_busPanel->setFixedHeight(200);
     m_busPanel->hide();

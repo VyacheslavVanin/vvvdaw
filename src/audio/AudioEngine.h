@@ -2,6 +2,7 @@
 #include <portaudio.h>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -62,6 +63,13 @@ public:
     void deactivateAllPlugins();
     void activatePluginChain(PluginChain& chain);
 
+    // Post-fader output metering for bus `busIndex` (linear amplitude peak and
+    // a latched clip flag). Safe to call from the GUI thread while the audio
+    // thread runs; clearBusMeterClip() resets the latched clip after display.
+    float busMeterPeak(int busIndex) const;
+    bool busMeterClipping(int busIndex) const;
+    void clearBusMeterClip(int busIndex);
+
     void refreshMidiOutputs();
     void panicMidi();
 
@@ -89,6 +97,9 @@ private:
                           int64_t pos, int outCh, const float* input, int inCh,
                           bool monitoringOnly = false);
     void rebuildBusGraph(Project* proj);
+    // Audio-thread helper: update the per-bus meter peak and latch the clip
+    // flag (index bounds-checked; resize races are handled by m_meterMutex).
+    void setBusMeter(int busIndex, float peak, bool clipped);
     int64_t advancePlayhead(Project* proj, int64_t pos, unsigned long frameCount,
                             vvvdaw::TransportState state);
 
@@ -154,6 +165,16 @@ private:
     std::vector<std::vector<float>> m_busBuffers;
     std::vector<int> m_busProcessOrder;
     int m_busCount = 0;
+    // Per-bus post-fader output metering (written on the audio thread, read on
+    // the GUI thread). Guarded by m_meterMutex only around the resize. Deque is
+    // used because std::atomic members are neither copyable nor movable, which
+    // std::vector would require.
+    struct BusMeterState {
+        std::atomic<float> peak{0.0f};
+        std::atomic<bool> clipped{false};
+    };
+    mutable std::mutex m_meterMutex;
+    std::deque<BusMeterState> m_busMeters;
 
     std::vector<MidiBuffer> m_instrumentMidi;
     int m_instrumentCount = -1;

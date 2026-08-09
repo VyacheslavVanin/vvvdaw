@@ -24,7 +24,9 @@
 #include "gui/TimelineRuler.h"
 #include "gui/MeasureRuler.h"
 #include "gui/BusPanelWidget.h"
+#include "gui/BusLevelMeter.h"
 #include "gui/InstrumentPanelWidget.h"
+#include "gui/PluginListWidget.h"
 #include "gui/ChannelRoutingDialog.h"
 
 namespace {
@@ -93,6 +95,8 @@ private slots:
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
     void audioTrackOutComboListsBuses();
+    void busPanelStripHasCompactControls();
+    void busPanelPluginToggleRevealsPluginList();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -485,6 +489,74 @@ void MainWindowTest::channelRoutingDialogCreatesBuses() {
     dialog.reject();
     QCOMPARE(project.buses().size(), size_t(busCountBefore));
     QCOMPARE(dialog.createdBusCount(), 0);
+}
+
+void MainWindowTest::busPanelStripHasCompactControls() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1)); // Master, Metronome, FX
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    // One vertical volume slider, level meter and plugin toggle per bus.
+    const auto volumeSliders = window.m_busPanel->findChildren<QSlider*>("volumeSlider");
+    QCOMPARE(volumeSliders.size(), 3);
+    for (QSlider* s : volumeSliders)
+        QCOMPARE(s->orientation(), Qt::Vertical);
+
+    const auto meters = window.m_busPanel->findChildren<BusLevelMeter*>("levelMeter");
+    QCOMPARE(meters.size(), 3);
+
+    const auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    QCOMPARE(toggles.size(), 3);
+    for (QPushButton* b : toggles)
+        QVERIFY(b->isCheckable());
+
+    // S/M buttons live below the name (one pair per bus).
+    QCOMPARE(window.m_busPanel->findChildren<QPushButton*>("soloButton").size(), 3);
+    QCOMPARE(window.m_busPanel->findChildren<QPushButton*>("muteButton").size(), 3);
+
+    // The collapsed strip is much narrower than before.
+    QWidget* strip = toggles[0]->parentWidget()->parentWidget();
+    QVERIFY(strip->sizeHint().width() <= 100);
+
+    // Plugin lists exist but are hidden until toggled.
+    const auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    QCOMPARE(lists.size(), 3);
+    for (QWidget* l : lists)
+        QVERIFY(l->isHidden());
+}
+
+void MainWindowTest::busPanelPluginToggleRevealsPluginList() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    QCOMPARE(toggles.size(), 3);
+    QCOMPARE(lists.size(), 3);
+
+    QWidget* strip = toggles[0]->parentWidget()->parentWidget();
+    const int collapsedWidth = strip->sizeHint().width();
+
+    QVERIFY(lists[0]->isHidden());
+    toggles[0]->click();
+    QVERIFY(!lists[0]->isHidden());
+    QVERIFY(strip->sizeHint().width() > collapsedWidth); // strip widens
+
+    toggles[0]->click();
+    QVERIFY(lists[0]->isHidden());
 }
 
 void MainWindowTest::busRenameRefreshesTrackOutCombo() {

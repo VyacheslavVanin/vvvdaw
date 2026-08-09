@@ -369,6 +369,13 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
     for (int i = 0; i < busCount; ++i)
         m_busBuffers[i].resize(static_cast<size_t>(m_bufferSize) * 2, 0.0f);
 
+    {
+        std::lock_guard<std::mutex> lock(m_meterMutex);
+        m_busMeters.clear();
+        for (int i = 0; i < busCount; ++i)
+            m_busMeters.emplace_back();
+    }
+
     std::vector<int> inDegree(busCount, 0);
     for (int i = 0; i < busCount; ++i) {
         int parent = proj->buses()[i].outputBusIndex();
@@ -919,6 +926,21 @@ void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
     int busCount = static_cast<int>(proj->buses().size());
     bool hasBusSolo = anyBusSolo(proj);
 
+    // Under solo, a bus stays audible when it is soloed, is on the route from
+    // a soloed bus to the output, or feeds a soloed bus; everything else is
+    // silenced. Skipping only the non-soloed buses (as before) made the
+    // ancestors of a soloed bus silent too, killing all output.
+    std::vector<bool> soloPass;
+    if (hasBusSolo) {
+        std::vector<int> outputTo(static_cast<size_t>(busCount));
+        std::vector<bool> soloFlags(static_cast<size_t>(busCount), false);
+        for (int i = 0; i < busCount; ++i) {
+            outputTo[i] = proj->buses()[i].outputBusIndex();
+            soloFlags[i] = proj->buses()[i].isSolo();
+        }
+        soloPass = computeBusSoloPassSet(outputTo, soloFlags, busCount);
+    }
+
     for (int idx : m_busProcessOrder) {
         const auto& bus = proj->buses()[idx];
 
@@ -937,10 +959,18 @@ void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
             }
         }
 
-        if (bus.isMuted()) continue;
-        if (hasBusSolo && !bus.isSolo()) continue;
+        if (bus.isMuted()) {
+            setBusMeter(idx, 0.0f, false);
+            continue;
+        }
+        if (hasBusSolo && !soloPass[static_cast<size_t>(idx)]) {
+            setBusMeter(idx, 0.0f, false);
+            continue;
+        }
 
         float bVol = bus.volume();
+        float peak = busBufferPeak(m_busBuffers[idx].data(), frameCount) * bVol;
+        setBusMeter(idx, peak, peak >= 1.0f);
 
         int parentIdx = bus.outputBusIndex();
         bool routeToOutput = (parentIdx < 0 || parentIdx >= busCount);
@@ -1094,6 +1124,35 @@ void AudioEngine::releaseInstruments() {
     }
 
     m_activeMidiNotes.clear();
+}
+
+void AudioEngine::setBusMeter(int busIndex, float peak, bool clipped) {
+    if (busIndex < 0 || busIndex >= static_cast<int>(m_busMeters.size()))
+        return;
+    m_busMeters[busIndex].peak.store(peak, std::memory_order_relaxed);
+    if (clipped)
+        m_busMeters[busIndex].clipped.store(true, std::memory_order_relaxed);
+}
+
+float AudioEngine::busMeterPeak(int busIndex) const {
+    std::lock_guard<std::mutex> lock(m_meterMutex);
+    if (busIndex < 0 || busIndex >= static_cast<int>(m_busMeters.size()))
+        return 0.0f;
+    return m_busMeters[busIndex].peak.load(std::memory_order_relaxed);
+}
+
+bool AudioEngine::busMeterClipping(int busIndex) const {
+    std::lock_guard<std::mutex> lock(m_meterMutex);
+    if (busIndex < 0 || busIndex >= static_cast<int>(m_busMeters.size()))
+        return false;
+    return m_busMeters[busIndex].clipped.load(std::memory_order_relaxed);
+}
+
+void AudioEngine::clearBusMeterClip(int busIndex) {
+    std::lock_guard<std::mutex> lock(m_meterMutex);
+    if (busIndex < 0 || busIndex >= static_cast<int>(m_busMeters.size()))
+        return;
+    m_busMeters[busIndex].clipped.store(false, std::memory_order_relaxed);
 }
 
 void AudioEngine::refreshMidiOutputs() {

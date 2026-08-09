@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QHBoxLayout>
+#include <QTimer>
 #include <vector>
 
 class Project;
@@ -13,6 +14,8 @@ struct AudioBus;
 class PluginInstance;
 class PluginListWidget;
 class PluginManager;
+class AudioEngine;
+class BusLevelMeter;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -22,7 +25,11 @@ public:
     void rebuild();
     void refreshOutCombos();
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
+    void setAudioEngine(AudioEngine* engine) { m_engine = engine; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
+
+    static constexpr int kControlsWidth = 68;
+    static constexpr int kPluginPanelWidth = 240;
 
 signals:
     void busChanged();
@@ -53,14 +60,20 @@ private:
         QComboBox* outCombo = nullptr;
         QSlider* panSlider = nullptr;
         QSlider* volumeSlider = nullptr;
+        BusLevelMeter* levelMeter = nullptr;
+        QPushButton* pluginToggle = nullptr;
         PluginListWidget* pluginList = nullptr;
     };
 
+    void updateMeters();
+
     Project& m_project;
     PluginManager* m_pluginManager = nullptr;
+    AudioEngine* m_engine = nullptr;
     double m_sampleRate = 48000;
     int m_bufferSize = 512;
     QWidget* m_container = nullptr;
     QHBoxLayout* m_containerLayout = nullptr;
     std::vector<BusRow> m_busRows;
+    QTimer* m_meterTimer = nullptr;
 };

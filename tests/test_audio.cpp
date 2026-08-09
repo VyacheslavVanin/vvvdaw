@@ -18,6 +18,11 @@ private slots:
     void writeTrackToBusMono();
     void writeTrackToBusStereo();
     void routeMonoToBusCentered();
+    void linearToDecibelsMapping();
+    void busBufferPeakMax();
+    void computeBusSoloPassSetLeaf();
+    void computeBusSoloPassSetMaster();
+    void computeBusSoloPassSetChain();
 };
 
 void TestAudio::ringBufferWriteRead() {
@@ -169,6 +174,59 @@ void TestAudio::routeMonoToBusCentered() {
         QCOMPARE(bus[i * 2], src[i] * 0.5f);
         QCOMPARE(bus[i * 2 + 1], src[i] * 0.5f);
     }
+}
+
+void TestAudio::linearToDecibelsMapping() {
+    QCOMPARE(linearToDecibels(0.0f), -60.0f);
+    QCOMPARE(linearToDecibels(1.0f), 0.0f);
+    QVERIFY(std::abs(linearToDecibels(0.1f) - (-20.0f)) < 1e-4f);
+    QVERIFY(std::abs(linearToDecibels(0.5f) - (-6.0206f)) < 1e-3f);
+    // Above 0 dB is clamped to 0, very quiet signals clamp to -60.
+    QCOMPARE(linearToDecibels(2.0f), 0.0f);
+    QCOMPARE(linearToDecibels(1e-6f), -60.0f);
+}
+
+void TestAudio::busBufferPeakMax() {
+    float buf[8] = { 0.1f, -0.2f, 0.5f, 0.3f, -0.9f, 0.4f, 0.0f, 0.2f };
+    QCOMPARE(busBufferPeak(buf, 4), 0.9f);
+    float silent[4] = { 0, 0, 0, 0 };
+    QCOMPARE(busBufferPeak(silent, 2), 0.0f);
+}
+
+void TestAudio::computeBusSoloPassSetLeaf() {
+    // master(0, -> device), metronome(1, -> master), fx(2, -> master).
+    std::vector<int> outputTo = { -1, 0, 0 };
+    std::vector<bool> solo = { false, false, true };
+    auto pass = computeBusSoloPassSet(outputTo, solo, 3);
+    QVERIFY(pass[2]); // soloed fx
+    QVERIFY(pass[0]); // master carries fx to the output
+    QVERIFY(!pass[1]); // metronome is silenced
+}
+
+void TestAudio::computeBusSoloPassSetMaster() {
+    std::vector<int> outputTo = { -1, 0, 0 };
+    std::vector<bool> solo = { true, false, false };
+    auto pass = computeBusSoloPassSet(outputTo, solo, 3);
+    // Everything feeds master, so soling master keeps the whole mix audible.
+    QVERIFY(pass[0]);
+    QVERIFY(pass[1]);
+    QVERIFY(pass[2]);
+}
+
+void TestAudio::computeBusSoloPassSetChain() {
+    // A(0, -> device), B(1, -> A), C(2, -> B), D(3, -> device).
+    std::vector<int> outputTo = { -1, 0, 1, -1 };
+    std::vector<bool> solo = { false, false, true, false };
+    auto pass = computeBusSoloPassSet(outputTo, solo, 4);
+    QVERIFY(pass[2]); // soloed C
+    QVERIFY(pass[1]); // B feeds C and carries its signal onward
+    QVERIFY(pass[0]); // A is C's route to the output
+    QVERIFY(!pass[3]); // unrelated bus D is silenced
+
+    // Without any solo the set is empty (the engine only consults it under solo).
+    std::vector<bool> none = { false, false, false, false };
+    auto empty = computeBusSoloPassSet(outputTo, none, 4);
+    QVERIFY(!empty[0] && !empty[1] && !empty[2] && !empty[3]);
 }
 
 QTEST_MAIN(TestAudio)
