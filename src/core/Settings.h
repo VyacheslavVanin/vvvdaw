@@ -39,6 +39,17 @@ public:
     QString lastProjectPath;
     std::vector<QString> pluginScanPaths;
 
+    // Main-window panel layout, restored on the next launch so the user does
+    // not have to re-arrange the panels when reopening a project.
+    bool busPanelVisible;
+    int busPanelHeight;
+    bool instrumentPanelVisible;
+    int instrumentPanelHeight;
+
+    // Main-window size, restored on the next launch.
+    int mainWindowWidth;
+    int mainWindowHeight;
+
 private:
     QString configFilePath() const;
     QJsonObject toJson() const;

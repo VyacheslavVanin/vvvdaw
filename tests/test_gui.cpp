@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QMenuBar>
+#include <QAction>
 #include <QListWidget>
 #include <QTableWidget>
 #include <QPixmap>
@@ -103,6 +104,9 @@ private slots:
     void busPanelPluginPanelStaysOpenAcrossRebuild();
     void busVolumeSliderFollowsMeterDbScale();
     void busLevelMeterIsNarrow();
+    void mainWindowRestoresPanelStateFromSettings();
+    void mainWindowRestoresSizeFromSettings();
+    void panelTogglesAndGripUpdateSettings();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -701,6 +705,107 @@ void MainWindowTest::busLevelMeterIsNarrow() {
     meter->setClipping(true);
     QPixmap pm = meter->grab();
     QVERIFY(!pm.isNull());
+}
+
+void MainWindowTest::mainWindowRestoresPanelStateFromSettings() {
+    Project project;
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+
+    Settings settings;
+    settings.busPanelVisible = true;
+    settings.busPanelHeight = 320;
+    settings.instrumentPanelVisible = true;
+    settings.instrumentPanelHeight = 260;
+
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QVERIFY(!window.m_busPanel->isHidden());
+    QCOMPARE(window.m_busPanel->maximumHeight(), 320);
+    QVERIFY(!window.m_instrumentPanel->isHidden());
+    QCOMPARE(window.m_instrumentPanel->maximumHeight(), 260);
+    QVERIFY(!window.m_busPanelGrip->isHidden());
+    QVERIFY(!window.m_instrumentPanelGrip->isHidden());
+
+    // The restored panels must actually contain their widgets (rows built
+    // during construction), not render empty until toggled.
+    QCOMPARE(window.m_busPanel->findChildren<QPushButton*>("soloButton").size(),
+             project.buses().size());
+    bool foundSynthButton = false;
+    for (QPushButton* b : window.m_instrumentPanel->findChildren<QPushButton*>())
+        if (b->text() == "No Synth") foundSynthButton = true;
+    QVERIFY(foundSynthButton);
+
+    // The View menu checkmarks reflect the restored visibility.
+    bool busChecked = false, instChecked = false;
+    for (auto* menuAction : window.menuBar()->actions()) {
+        auto* menu = menuAction->menu();
+        if (!menu) continue;
+        for (auto* action : menu->actions()) {
+            if (action->text().contains("Bus Panel")) busChecked = action->isChecked();
+            if (action->text().contains("Instrument Panel")) instChecked = action->isChecked();
+        }
+    }
+    QVERIFY(busChecked);
+    QVERIFY(instChecked);
+}
+
+void MainWindowTest::mainWindowRestoresSizeFromSettings() {
+    Project project;
+    Settings settings;
+    settings.mainWindowWidth = 1100;
+    settings.mainWindowHeight = 650;
+
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QCOMPARE(window.size().width(), 1100);
+    QCOMPARE(window.size().height(), 650);
+}
+
+void MainWindowTest::panelTogglesAndGripUpdateSettings() {
+    Project project;
+    Settings settings; // both panels hidden, default heights
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    QVERIFY(window.m_busPanel->isHidden());
+    QVERIFY(!settings.busPanelVisible);
+
+    QAction* busAction = nullptr;
+    for (auto* menuAction : window.menuBar()->actions()) {
+        auto* menu = menuAction->menu();
+        if (!menu) continue;
+        for (auto* action : menu->actions()) {
+            if (action->text().contains("Bus Panel"))
+                busAction = action;
+        }
+    }
+    QVERIFY(busAction);
+    busAction->trigger();
+    QVERIFY(settings.busPanelVisible);
+    QVERIFY(!window.m_busPanel->isHidden());
+
+    // Dragging the bus grip writes the new height into settings.
+    const int startHeight = settings.busPanelHeight;
+    window.show();
+    window.resize(1000, 800);
+    QCoreApplication::processEvents();
+
+    QWidget* grip = window.m_busPanelGrip;
+    QVERIFY(!grip->isHidden());
+    const QPoint gripCenter = grip->rect().center();
+    const QPoint above = gripCenter - QPoint(0, 40);
+
+    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, gripCenter);
+    QTest::mouseMove(grip, above);
+    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier, above);
+    QCoreApplication::processEvents();
+
+    // The drag moved the handle upward, increasing the panel height.
+    QVERIFY(settings.busPanelHeight > startHeight);
 }
 
 void MainWindowTest::busRenameRefreshesTrackOutCombo() {

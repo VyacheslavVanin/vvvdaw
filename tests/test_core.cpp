@@ -194,6 +194,8 @@ private slots:
     void recentsCappedAtTen();
     void recentsJsonRoundTrip();
     void removeRecentProject();
+    void panelStateJsonRoundTrip();
+    void windowSizeJsonRoundTrip();
 };
 
 void TestSettings::initTestCase() {
@@ -278,6 +280,58 @@ void TestSettings::removeRecentProject() {
     settings.removeRecentProject("/p/a");
     QCOMPARE(settings.recentProjects().size(), size_t(1));
     QCOMPARE(settings.recentProjects()[0].path, QString("/p/b"));
+}
+
+void TestSettings::panelStateJsonRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings::setConfigDirOverride(dir.path());
+
+    Settings settings;
+    settings.busPanelVisible = true;
+    settings.busPanelHeight = 320;
+    settings.instrumentPanelVisible = true;
+    settings.instrumentPanelHeight = 260;
+    settings.save();
+
+    Settings loaded;
+    loaded.load();
+    QVERIFY(loaded.busPanelVisible);
+    QCOMPARE(loaded.busPanelHeight, 320);
+    QVERIFY(loaded.instrumentPanelVisible);
+    QCOMPARE(loaded.instrumentPanelHeight, 260);
+
+    // Missing keys fall back to the app defaults.
+    Settings defaults;
+    QVERIFY(!defaults.busPanelVisible);
+    QCOMPARE(defaults.busPanelHeight, 200);
+    QVERIFY(!defaults.instrumentPanelVisible);
+    QCOMPARE(defaults.instrumentPanelHeight, 220);
+
+    Settings::setConfigDirOverride("");
+}
+
+void TestSettings::windowSizeJsonRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings::setConfigDirOverride(dir.path());
+
+    Settings settings;
+    settings.mainWindowWidth = 1280;
+    settings.mainWindowHeight = 720;
+    settings.save();
+
+    Settings loaded;
+    loaded.load();
+    QCOMPARE(loaded.mainWindowWidth, 1280);
+    QCOMPARE(loaded.mainWindowHeight, 720);
+
+    // Missing keys fall back to the app defaults.
+    Settings defaults;
+    QCOMPARE(defaults.mainWindowWidth, 1400);
+    QCOMPARE(defaults.mainWindowHeight, 800);
+
+    Settings::setConfigDirOverride("");
 }
 
 int main(int argc, char* argv[]) {

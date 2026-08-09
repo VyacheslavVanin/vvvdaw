@@ -25,6 +25,12 @@ Settings::Settings()
     , streamingThresholdSec(30)
     , mouseWheelScroll(false)
     , pluginKnobsPerRow(3)
+    , busPanelVisible(false)
+    , busPanelHeight(200)
+    , instrumentPanelVisible(false)
+    , instrumentPanelHeight(220)
+    , mainWindowWidth(1400)
+    , mainWindowHeight(800)
 {
 }
 
@@ -85,6 +91,12 @@ QJsonObject Settings::toJson() const {
     obj["streamingThresholdSec"] = streamingThresholdSec;
     obj["mouseWheelScroll"] = mouseWheelScroll;
     obj["pluginKnobsPerRow"] = pluginKnobsPerRow;
+    obj["busPanelVisible"] = busPanelVisible;
+    obj["busPanelHeight"] = busPanelHeight;
+    obj["instrumentPanelVisible"] = instrumentPanelVisible;
+    obj["instrumentPanelHeight"] = instrumentPanelHeight;
+    obj["mainWindowWidth"] = mainWindowWidth;
+    obj["mainWindowHeight"] = mainWindowHeight;
 
     QJsonArray pathsArr;
     for (const auto& path : pluginScanPaths)
@@ -114,6 +126,12 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
     if (obj.contains("mouseWheelScroll")) mouseWheelScroll = obj["mouseWheelScroll"].toBool(false);
     if (obj.contains("pluginKnobsPerRow")) pluginKnobsPerRow = obj["pluginKnobsPerRow"].toInt(3);
+    if (obj.contains("busPanelVisible")) busPanelVisible = obj["busPanelVisible"].toBool(false);
+    if (obj.contains("busPanelHeight")) busPanelHeight = obj["busPanelHeight"].toInt(200);
+    if (obj.contains("instrumentPanelVisible")) instrumentPanelVisible = obj["instrumentPanelVisible"].toBool(false);
+    if (obj.contains("instrumentPanelHeight")) instrumentPanelHeight = obj["instrumentPanelHeight"].toInt(220);
+    if (obj.contains("mainWindowWidth")) mainWindowWidth = obj["mainWindowWidth"].toInt(1400);
+    if (obj.contains("mainWindowHeight")) mainWindowHeight = obj["mainWindowHeight"].toInt(800);
     if (obj.contains("pluginScanPaths")) {
         pluginScanPaths.clear();
         QJsonArray arr = obj["pluginScanPaths"].toArray();

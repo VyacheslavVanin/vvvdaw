@@ -63,7 +63,8 @@ MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings
     , m_settings(settings)
 {
     setWindowTitle("vvvdaw — " + m_project.name());
-    resize(1400, 800);
+    resize(qBound(800, m_settings.mainWindowWidth, 16000),
+           qBound(500, m_settings.mainWindowHeight, 9000));
 
     m_pluginManager.loadCache();
     m_pluginManager.scanDirectories(
@@ -270,10 +271,12 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
     m_busPanel->setPluginManager(&m_pluginManager);
     m_busPanel->setAudioEngine(&m_engine);
     m_busPanel->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
-    m_busPanel->setFixedHeight(200);
-    m_busPanel->hide();
-    m_busPanelGrip->hide();
+    m_busPanel->setFixedHeight(qBound(80, m_settings.busPanelHeight, 600));
+    m_busPanel->setVisible(m_settings.busPanelVisible);
+    m_busPanelGrip->setVisible(m_settings.busPanelVisible);
     layout->addWidget(m_busPanel);
+    if (m_settings.busPanelVisible)
+        m_busPanel->rebuild();
 
     connect(m_busPanel, &BusPanelWidget::addBusRequested, this, [this] {
         executeCommand(std::make_unique<AddBusCommand>(m_project));
@@ -378,10 +381,12 @@ void MainWindow::setupInstrumentPanel(QVBoxLayout* layout) {
     m_instrumentPanel = new InstrumentPanelWidget(m_project, this);
     m_instrumentPanel->setPluginManager(&m_pluginManager);
     m_instrumentPanel->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
-    m_instrumentPanel->setFixedHeight(220);
-    m_instrumentPanel->hide();
-    m_instrumentPanelGrip->hide();
+    m_instrumentPanel->setFixedHeight(qBound(100, m_settings.instrumentPanelHeight, 600));
+    m_instrumentPanel->setVisible(m_settings.instrumentPanelVisible);
+    m_instrumentPanelGrip->setVisible(m_settings.instrumentPanelVisible);
     layout->addWidget(m_instrumentPanel);
+    if (m_settings.instrumentPanelVisible)
+        m_instrumentPanel->rebuild();
 
     connect(m_instrumentPanel, &InstrumentPanelWidget::addInstrumentRequested, this, [this] {
         executeCommand(std::make_unique<AddInstrumentCommand>(m_project));
@@ -877,8 +882,9 @@ void MainWindow::setupMenus() {
 
     auto* toggleBusPanelAction = viewMenu->addAction("Show &Bus Panel", QKeySequence("Ctrl+B"));
     toggleBusPanelAction->setCheckable(true);
-    toggleBusPanelAction->setChecked(false);
+    toggleBusPanelAction->setChecked(m_settings.busPanelVisible);
     connect(toggleBusPanelAction, &QAction::triggered, this, [this](bool checked) {
+        m_settings.busPanelVisible = checked;
         m_busPanel->setVisible(checked);
         m_busPanelGrip->setVisible(checked);
         if (checked)
@@ -887,8 +893,9 @@ void MainWindow::setupMenus() {
 
     auto* toggleInstrumentPanelAction = viewMenu->addAction("Show &Instrument Panel", QKeySequence("Ctrl+I"));
     toggleInstrumentPanelAction->setCheckable(true);
-    toggleInstrumentPanelAction->setChecked(false);
+    toggleInstrumentPanelAction->setChecked(m_settings.instrumentPanelVisible);
     connect(toggleInstrumentPanelAction, &QAction::triggered, this, [this](bool checked) {
+        m_settings.instrumentPanelVisible = checked;
         m_instrumentPanel->setVisible(checked);
         m_instrumentPanelGrip->setVisible(checked);
         if (checked)
@@ -1509,6 +1516,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
             int delta = m_gripStartY - me->globalPosition().toPoint().y();
             int newH = qBound(80, m_gripStartHeight + delta, 600);
             m_busPanel->setFixedHeight(newH);
+            m_settings.busPanelHeight = newH;
             return true;
         }
         if (event->type() == QEvent::MouseButtonRelease) {
@@ -1528,6 +1536,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
             int delta = m_gripStartY - me->globalPosition().toPoint().y();
             int newH = qBound(100, m_gripStartHeight + delta, 600);
             m_instrumentPanel->setFixedHeight(newH);
+            m_settings.instrumentPanelHeight = newH;
             return true;
         }
         if (event->type() == QEvent::MouseButtonRelease) {

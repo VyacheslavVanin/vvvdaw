@@ -133,6 +133,8 @@ int main(int argc, char* argv[]) {
         inst.effects().clear();
     }
 
+    settings.mainWindowWidth = window.width();
+    settings.mainWindowHeight = window.height();
     settings.save();
     Pa_Terminate();
     return result;
