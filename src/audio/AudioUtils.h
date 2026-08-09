@@ -125,6 +125,49 @@ inline float busBufferPeak(const float* interleaved, unsigned long frames) {
     return peak;
 }
 
+// Compute the order in which buses must be processed so that every bus is
+// mixed into its parent before the parent is processed (a topological sort of
+// the routing graph). `outputTo[i]` is the parent bus index of bus i (or
+// < 0 / >= n for "to output device"). Buses that are not routed to another
+// bus are roots and come first; any nodes left over (routing cycles) are
+// appended unchanged so every bus still appears exactly once.
+inline std::vector<int> computeBusProcessOrder(const std::vector<int>& outputTo, int busCount) {
+    std::vector<int> inDegree(static_cast<size_t>(busCount), 0);
+    for (int i = 0; i < busCount; ++i) {
+        int parent = outputTo[i];
+        if (parent >= 0 && parent < busCount && parent != i)
+            inDegree[static_cast<size_t>(parent)]++;
+    }
+
+    std::vector<int> order;
+    order.reserve(static_cast<size_t>(busCount));
+    std::vector<int> queue;
+    for (int i = 0; i < busCount; ++i) {
+        if (inDegree[static_cast<size_t>(i)] == 0)
+            queue.push_back(i);
+    }
+
+    while (!queue.empty()) {
+        int node = queue.back();
+        queue.pop_back();
+        order.push_back(node);
+
+        int parent = outputTo[node];
+        if (parent >= 0 && parent < busCount && parent != node) {
+            inDegree[static_cast<size_t>(parent)]--;
+            if (inDegree[static_cast<size_t>(parent)] == 0)
+                queue.push_back(parent);
+        }
+    }
+
+    if (static_cast<int>(order.size()) < busCount) {
+        for (int i = 0; i < busCount; ++i)
+            if (std::find(order.begin(), order.end(), i) == order.end())
+                order.push_back(i);
+    }
+    return order;
+}
+
 // Which buses stay audible when at least one bus is soloed. `outputTo[i]` is
 // the parent bus index of bus i (or < 0 / >= n for "to output device") and
 // `solo[i]` whether bus i is soloed. A bus passes through when it is:

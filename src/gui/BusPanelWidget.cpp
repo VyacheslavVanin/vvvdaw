@@ -64,6 +64,11 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
 }
 
 void BusPanelWidget::rebuild() {
+    std::vector<bool> openBefore(m_busRows.size(), false);
+    for (size_t i = 0; i < m_busRows.size(); ++i)
+        if (m_busRows[i].pluginToggle && m_busRows[i].pluginToggle->isChecked())
+            openBefore[i] = true;
+
     for (auto& row : m_busRows) {
         if (row.widget) {
             row.widget->hide();
@@ -81,6 +86,10 @@ void BusPanelWidget::rebuild() {
     }
 
     const auto& buses = m_project.buses();
+
+    m_pluginPanelsOpen.assign(buses.size(), false);
+    for (size_t i = 0; i < openBefore.size() && i < m_pluginPanelsOpen.size(); ++i)
+        m_pluginPanelsOpen[i] = openBefore[i];
 
     auto btnStyle = [](const QString& normal, const QString& checked) {
         return normal + "; padding: 0px; }"
@@ -250,12 +259,18 @@ void BusPanelWidget::rebuild() {
         row.pluginList->setPluginManager(m_pluginManager);
         row.pluginList->setAudioParams(m_sampleRate, m_bufferSize);
         row.pluginList->rebuild();
-        row.pluginList->hide();
         stripLayout->addWidget(row.pluginList);
 
-        connect(row.pluginToggle, &QPushButton::toggled, this, [row](bool checked) {
+        const bool panelOpen = (busIndex >= 0 && busIndex < static_cast<int>(m_pluginPanelsOpen.size()))
+            && m_pluginPanelsOpen[busIndex];
+        row.pluginList->setVisible(panelOpen);
+
+        connect(row.pluginToggle, &QPushButton::toggled, this, [this, busIndex, row](bool checked) {
             row.pluginList->setVisible(checked);
+            if (busIndex >= 0 && busIndex < static_cast<int>(m_pluginPanelsOpen.size()))
+                m_pluginPanelsOpen[busIndex] = checked;
         });
+        row.pluginToggle->setChecked(panelOpen);
 
         connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
                 [this, busIndex](PluginInstance* plugin) {

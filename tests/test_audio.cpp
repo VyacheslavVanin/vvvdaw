@@ -23,6 +23,8 @@ private slots:
     void computeBusSoloPassSetLeaf();
     void computeBusSoloPassSetMaster();
     void computeBusSoloPassSetChain();
+    void computeBusProcessOrderChain();
+    void computeBusProcessOrderRerouteAfterBusAdd();
 };
 
 void TestAudio::ringBufferWriteRead() {
@@ -227,6 +229,65 @@ void TestAudio::computeBusSoloPassSetChain() {
     std::vector<bool> none = { false, false, false, false };
     auto empty = computeBusSoloPassSet(outputTo, none, 4);
     QVERIFY(!empty[0] && !empty[1] && !empty[2] && !empty[3]);
+}
+
+// Every bus must be processed before the bus it feeds, so the source signal
+// is already in the parent's buffer when the parent runs. Buses routed to the
+// output device are roots and come first.
+void TestAudio::computeBusProcessOrderChain() {
+    // Master(0, -> device), Metronome(1, -> master), FX(2, -> master),
+    // Sub(3, -> FX).
+    std::vector<int> outputTo = { -1, 0, 0, 2 };
+    auto order = computeBusProcessOrder(outputTo, 4);
+
+    // All four buses appear exactly once.
+    QCOMPARE(order.size(), size_t(4));
+    std::vector<bool> seen(4, false);
+    for (int b : order)
+        seen[b] = true;
+    QVERIFY(seen[0] && seen[1] && seen[2] && seen[3]);
+
+    // Each bus precedes its parent (a valid topological order).
+    for (int i = 0; i < 4; ++i) {
+        int parent = outputTo[i];
+        if (parent < 0 || parent >= 4) continue;
+        auto itI = std::find(order.begin(), order.end(), i);
+        auto itP = std::find(order.begin(), order.end(), parent);
+        QVERIFY(itI != order.end() && itP != order.end());
+        QVERIFY(itI < itP);
+    }
+}
+
+// The reported regression: a project whose buses all feed master, then a new
+// bus is added (default route -> master) and an existing bus is re-routed into
+// it. Even though the count does not change on the re-route, the process order
+// must put the re-routed bus before the new bus so its signal reaches master.
+void TestAudio::computeBusProcessOrderRerouteAfterBusAdd() {
+    // Master(0, -> device), Metronome(1, -> master), FX(2, -> master),
+    // New(3, -> master): state right after adding bus 3.
+    std::vector<int> beforeReroute = { -1, 0, 0, 0 };
+    auto orderBefore = computeBusProcessOrder(beforeReroute, 4);
+    QCOMPARE(orderBefore.size(), size_t(4));
+
+    // Re-route FX(2) into the new bus(3): count unchanged.
+    std::vector<int> afterReroute = { -1, 0, 3, 0 };
+    auto order = computeBusProcessOrder(afterReroute, 4);
+
+    QCOMPARE(order.size(), size_t(4));
+    auto itFX = std::find(order.begin(), order.end(), 2);
+    auto itNew = std::find(order.begin(), order.end(), 3);
+    QVERIFY(itFX != order.end() && itNew != order.end());
+    QVERIFY(itFX < itNew); // FX must be processed before the new bus
+
+    // And the whole order is a valid topological order.
+    for (int i = 0; i < 4; ++i) {
+        int parent = afterReroute[i];
+        if (parent < 0 || parent >= 4) continue;
+        auto itI = std::find(order.begin(), order.end(), i);
+        auto itP = std::find(order.begin(), order.end(), parent);
+        QVERIFY(itI != order.end() && itP != order.end());
+        QVERIFY(itI < itP);
+    }
 }
 
 QTEST_MAIN(TestAudio)

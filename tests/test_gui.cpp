@@ -98,6 +98,7 @@ private slots:
     void busPanelStripHasCompactControls();
     void busPanelStripsStayFixedWidth();
     void busPanelPluginToggleRevealsPluginList();
+    void busPanelPluginPanelStaysOpenAcrossRebuild();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
     void busRenameRefreshesTrackOutCombo();
@@ -595,6 +596,47 @@ void MainWindowTest::busPanelPluginToggleRevealsPluginList() {
 
     toggles[0]->click();
     QVERIFY(lists[0]->isHidden());
+}
+
+void MainWindowTest::busPanelPluginPanelStaysOpenAcrossRebuild() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    QCOMPARE(toggles.size(), 3);
+    QCOMPARE(lists.size(), 3);
+
+    // Open the plugin panel on the FX bus (index 2).
+    QVERIFY(lists[2]->isHidden());
+    toggles[2]->click();
+    QVERIFY(!lists[2]->isHidden());
+
+    // A full panel rebuild (e.g. triggered after adding a plugin) must not
+    // collapse the explicitly opened plugin list.
+    window.m_busPanel->rebuild();
+    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    QCOMPARE(toggles.size(), 3);
+    QCOMPARE(lists.size(), 3);
+    QVERIFY(toggles[2]->isChecked());
+    QVERIFY(!lists[2]->isHidden());
+
+    // The other (never opened) panels stay collapsed.
+    QVERIFY(!toggles[0]->isChecked());
+    QVERIFY(lists[0]->isHidden());
+    QVERIFY(!toggles[1]->isChecked());
+    QVERIFY(lists[1]->isHidden());
 }
 
 void MainWindowTest::busRenameRefreshesTrackOutCombo() {

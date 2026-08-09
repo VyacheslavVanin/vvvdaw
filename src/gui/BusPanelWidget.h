@@ -75,5 +75,9 @@ private:
     QWidget* m_container = nullptr;
     QHBoxLayout* m_containerLayout = nullptr;
     std::vector<BusRow> m_busRows;
+    // Per-bus "plugin panel open" state, carried across rebuild() so a full
+    // panel refresh (e.g. after adding a plugin) does not collapse an
+    // explicitly opened plugin list.
+    std::vector<bool> m_pluginPanelsOpen;
     QTimer* m_meterTimer = nullptr;
 };

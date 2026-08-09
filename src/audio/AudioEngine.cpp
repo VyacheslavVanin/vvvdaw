@@ -376,41 +376,21 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
             m_busMeters.emplace_back();
     }
 
-    std::vector<int> inDegree(busCount, 0);
-    for (int i = 0; i < busCount; ++i) {
-        int parent = proj->buses()[i].outputBusIndex();
-        if (parent >= 0 && parent < busCount && parent != i)
-            inDegree[parent]++;
-    }
+    std::vector<int> outputTo(static_cast<size_t>(busCount));
+    for (int i = 0; i < busCount; ++i)
+        outputTo[i] = proj->buses()[i].outputBusIndex();
+    m_busOutputs = outputTo;
+    m_busProcessOrder = computeBusProcessOrder(outputTo, busCount);
+}
 
-    m_busProcessOrder.clear();
-    m_busProcessOrder.reserve(busCount);
-    std::vector<int> queue;
-    for (int i = 0; i < busCount; ++i) {
-        if (inDegree[i] == 0)
-            queue.push_back(i);
+bool AudioEngine::busRoutingChanged(const Project* proj) const {
+    const auto& buses = proj->buses();
+    if (m_busOutputs.size() != buses.size()) return true;
+    for (size_t i = 0; i < m_busOutputs.size(); ++i) {
+        if (m_busOutputs[i] != buses[i].outputBusIndex())
+            return true;
     }
-
-    while (!queue.empty()) {
-        int node = queue.back();
-        queue.pop_back();
-        m_busProcessOrder.push_back(node);
-
-        int parent = proj->buses()[node].outputBusIndex();
-        if (parent >= 0 && parent < busCount && parent != node) {
-            inDegree[parent]--;
-            if (inDegree[parent] == 0)
-                queue.push_back(parent);
-        }
-    }
-
-    if (static_cast<int>(m_busProcessOrder.size()) < busCount) {
-        for (int i = 0; i < busCount; ++i) {
-            if (std::find(m_busProcessOrder.begin(), m_busProcessOrder.end(), i) == m_busProcessOrder.end()) {
-                m_busProcessOrder.push_back(i);
-            }
-        }
-    }
+    return false;
 }
 
 void AudioEngine::clearStretchSlots() {
@@ -780,7 +760,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
     int busCount = static_cast<int>(proj->buses().size());
     if (busCount == 0) return;
 
-    if (busCount != m_busCount)
+    if (busCount != m_busCount || busRoutingChanged(proj))
         rebuildBusGraph(proj);
 
     for (int i = 0; i < busCount; ++i)

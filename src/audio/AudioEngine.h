@@ -97,6 +97,11 @@ private:
                           int64_t pos, int outCh, const float* input, int inCh,
                           bool monitoringOnly = false);
     void rebuildBusGraph(Project* proj);
+    // True when any bus's output routing differs from the last rebuilt graph.
+    // Lets the audio thread refresh the process order when a bus is re-routed
+    // without its count changing (e.g. adding a bus and routing an existing
+    // one into it), which otherwise leaves the topological order stale.
+    bool busRoutingChanged(const Project* proj) const;
     // Audio-thread helper: update the per-bus meter peak and latch the clip
     // flag (index bounds-checked; resize races are handled by m_meterMutex).
     void setBusMeter(int busIndex, float peak, bool clipped);
@@ -164,6 +169,9 @@ private:
     std::vector<float> m_busDeinterleaveR;
     std::vector<std::vector<float>> m_busBuffers;
     std::vector<int> m_busProcessOrder;
+    // Routing snapshot (outputBusIndex per bus) captured when the bus graph
+    // was last rebuilt; used by busRoutingChanged() to detect re-routes.
+    std::vector<int> m_busOutputs;
     int m_busCount = 0;
     // Per-bus post-fader output metering (written on the audio thread, read on
     // the GUI thread). Guarded by m_meterMutex only around the resize. Deque is
