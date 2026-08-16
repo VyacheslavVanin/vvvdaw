@@ -24,7 +24,9 @@ private slots:
     void computeBusSoloPassSetLeaf();
     void computeBusSoloPassSetMaster();
     void computeBusSoloPassSetChain();
-    void computeBusSoloPassSetSendFeed();
+    void computeBusSoloFeedSetReverbScenario();
+    void computeBusSoloFeedSetChain();
+    void computeBusSendTapsPrePostMute();
     void computeBusProcessOrderChain();
     void computeBusProcessOrderRerouteAfterBusAdd();
     void computeBusProcessOrderFanOut();
@@ -218,19 +220,20 @@ void TestAudio::busBufferPeakMax() {
 
 void TestAudio::computeBusSoloPassSetLeaf() {
     // master(0, -> device), metronome(1, -> master), fx(2, -> master).
-    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 } };
+    std::vector<int> outputTo = { -1, 0, 0 };
     std::vector<bool> solo = { false, false, true };
-    auto pass = computeBusSoloPassSet(targets, solo, 3);
+    auto pass = computeBusSoloPassSet(outputTo, solo, 3);
     QVERIFY(pass[2]); // soloed fx
     QVERIFY(pass[0]); // master carries fx to the output
     QVERIFY(!pass[1]); // metronome is silenced
 }
 
 void TestAudio::computeBusSoloPassSetMaster() {
-    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 } };
+    std::vector<int> outputTo = { -1, 0, 0 };
     std::vector<bool> solo = { true, false, false };
-    auto pass = computeBusSoloPassSet(targets, solo, 3);
-    // Everything feeds master, so soling master keeps the whole mix audible.
+    auto pass = computeBusSoloPassSet(outputTo, solo, 3);
+    // Everything feeds master through its main output, so soling master keeps
+    // the whole mix audible.
     QVERIFY(pass[0]);
     QVERIFY(pass[1]);
     QVERIFY(pass[2]);
@@ -238,9 +241,9 @@ void TestAudio::computeBusSoloPassSetMaster() {
 
 void TestAudio::computeBusSoloPassSetChain() {
     // A(0, -> device), B(1, -> A), C(2, -> B), D(3, -> device).
-    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 1 }, { -1 } };
+    std::vector<int> outputTo = { -1, 0, 1, -1 };
     std::vector<bool> solo = { false, false, true, false };
-    auto pass = computeBusSoloPassSet(targets, solo, 4);
+    auto pass = computeBusSoloPassSet(outputTo, solo, 4);
     QVERIFY(pass[2]); // soloed C
     QVERIFY(pass[1]); // B feeds C and carries its signal onward
     QVERIFY(pass[0]); // A is C's route to the output
@@ -248,22 +251,77 @@ void TestAudio::computeBusSoloPassSetChain() {
 
     // Without any solo the set is empty (the engine only consults it under solo).
     std::vector<bool> none = { false, false, false, false };
-    auto empty = computeBusSoloPassSet(targets, none, 4);
+    auto empty = computeBusSoloPassSet(outputTo, none, 4);
     QVERIFY(!empty[0] && !empty[1] && !empty[2] && !empty[3]);
 }
 
-// A bus that feeds a soloed bus through a send edge stays audible, so the
-// soloed bus receives its contribution.
-void TestAudio::computeBusSoloPassSetSendFeed() {
-    // master(0, -> device), metronome(1, -> master), fx(2, -> master),
-    // drums(3, -> master) with a send into soloed fx(2).
-    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 }, { 0, 2 } };
+// The reverb scenario: dry(2) sends into soloed reverb(3). The feed set keeps
+// dry alive so its send keeps feeding the reverb, while reverb is NOT in dry's
+// feed set (it does not feed dry), so soloing dry silences the reverb.
+void TestAudio::computeBusSoloFeedSetReverbScenario() {
+    // master(0, -> device), metronome(1, -> master), dry(2, -> master),
+    // reverb(3, -> master) with dry's send into reverb.
+    std::vector<int> outputTo = { -1, 0, 0, 0 };
+    std::vector<std::vector<int>> sendTargets = { {}, {}, { 3 }, {} };
+
+    // Solo reverb: dry stays in the feed set (feeds via send), metronome and
+    // master do not.
+    std::vector<bool> soloReverb = { false, false, false, true };
+    auto feed = computeBusSoloFeedSet(outputTo, sendTargets, soloReverb, 4);
+    QVERIFY(feed[3]); // soloed reverb
+    QVERIFY(feed[2]); // dry feeds reverb via its send
+    QVERIFY(!feed[1]); // metronome feeds nothing relevant
+    QVERIFY(!feed[0]); // master is a destination, not a feeder
+
+    // Solo dry: reverb is not in the feed set (it does not feed dry), so the
+    // engine will not tap dry's send into it and reverb stays silent.
+    std::vector<bool> soloDry = { false, false, true, false };
+    auto feedDry = computeBusSoloFeedSet(outputTo, sendTargets, soloDry, 4);
+    QVERIFY(feedDry[2]); // soloed dry
+    QVERIFY(!feedDry[3]); // reverb does not feed dry
+}
+
+// A bus feeding the soloed bus through its main-output chain stays in the feed
+// set, so a group bus keeps its members' input when soloed.
+void TestAudio::computeBusSoloFeedSetChain() {
+    // master(0, -> device), metronome(1, -> master), group(2, -> master),
+    // child(3, -> group).
+    std::vector<int> outputTo = { -1, 0, 0, 2 };
+    std::vector<std::vector<int>> sendTargets = { {}, {}, {}, {} };
     std::vector<bool> solo = { false, false, true, false };
-    auto pass = computeBusSoloPassSet(targets, solo, 4);
-    QVERIFY(pass[2]); // soloed fx
-    QVERIFY(pass[0]); // master carries fx to the output
-    QVERIFY(pass[3]); // drums feeds fx via the send
-    QVERIFY(!pass[1]); // metronome is silenced
+    auto feed = computeBusSoloFeedSet(outputTo, sendTargets, solo, 4);
+    QVERIFY(feed[2]); // soloed group
+    QVERIFY(feed[3]); // child feeds group via its main output
+    QVERIFY(!feed[1]); // metronome feeds master, not the group
+}
+
+// Pre-fader sends ignore the source fader and mute; post-fader sends follow the
+// fader (mute = fader 0 drops them) and are scaled by volume * level; muted
+// targets are dropped.
+void TestAudio::computeBusSendTapsPrePostMute() {
+    std::vector<int> targets = { 5, 6, 7 };
+    std::vector<float> levels = { 1.0f, 0.5f, 0.25f };
+    std::vector<bool> pre = { true, false, true };
+    std::vector<bool> targetsMuted = { false, false, true };
+
+    // Unmuted source, volume 0.8.
+    auto taps = computeBusSendTaps(targets, levels, pre, targetsMuted, 0.8f, false);
+    QCOMPARE(taps.size(), size_t(2));
+    QCOMPARE(taps[0].first, 5);
+    QVERIFY(std::abs(taps[0].second - 1.0f) < 1e-5f); // pre: level only
+    QCOMPARE(taps[1].first, 6);
+    QVERIFY(std::abs(taps[1].second - 0.4f) < 1e-5f); // post: volume * level
+
+    // Muted source: pre-fader send still flows, post-fader send is dropped.
+    auto tapsMuted = computeBusSendTaps(targets, levels, pre, targetsMuted, 0.8f, true);
+    QCOMPARE(tapsMuted.size(), size_t(1));
+    QCOMPARE(tapsMuted[0].first, 5);
+    QVERIFY(std::abs(tapsMuted[0].second - 1.0f) < 1e-5f);
+
+    // All post-fader sends follow the fader.
+    auto tapsUnity = computeBusSendTaps(targets, levels, pre, targetsMuted, 1.0f, false);
+    QCOMPARE(tapsUnity.size(), size_t(2));
+    QVERIFY(std::abs(tapsUnity[1].second - 0.5f) < 1e-5f);
 }
 
 // Every bus must be processed before every bus it feeds, so the source signal

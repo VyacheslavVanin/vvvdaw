@@ -181,24 +181,77 @@ inline std::vector<int> computeBusProcessOrder(const std::vector<std::vector<int
     return order;
 }
 
-// Which buses stay audible when at least one bus is soloed. `targets[i]` lists
-// the destinations bus i feeds (main output + send targets) and `solo[i]`
-// whether bus i is soloed. A bus passes through when it is:
-//   - itself soloed,
-//   - on a route from a soloed bus up to the output (an ancestor, following
-//     the soloed bus's feed chain), so the soloed signal can reach the
-//     speakers, or
-//   - feeding a soloed bus (the soloed bus is reachable from it through the
-//     main-output or send edges), so the soloed bus receives the sources that
-//     contribute to it.
-// Everything else is silenced. Returns a pass/no-pass flag per bus index.
-inline std::vector<bool> computeBusSoloPassSet(const std::vector<std::vector<int>>& targets,
+// Which buses are audible at the output when at least one bus is soloed.
+// `outputTo[i]` is bus i's main output (or < 0 / >= n for "to output device")
+// and `solo[i]` whether bus i is soloed. Sends do not influence this set. A bus
+// passes through when it is:
+//   - itself soloed, or
+//   - on a soloed bus's main-output chain up to the device (an ancestor), so
+//     the soloed signal can reach the speakers, or
+//   - feeding a soloed bus through its main-output chain, so the source's
+//     signal is heard through the soloed bus rather than as a separate path.
+// Buses that only send into a soloed bus do NOT pass: their own output path
+// stays muted (solo isolates), while their sends into the soloed bus are kept
+// alive via computeBusSoloFeedSet(). Returns a pass/no-pass flag per bus index.
+inline std::vector<bool> computeBusSoloPassSet(const std::vector<int>& outputTo,
                                                const std::vector<bool>& solo,
                                                int busCount) {
     std::vector<bool> pass(static_cast<size_t>(busCount), false);
 
-    // Soloed buses and every bus on their route up to the output (their forward
-    // feed chain), so the soloed signal can actually reach the speakers.
+    // Soloed buses and every ancestor on their main-output route to the output.
+    for (int i = 0; i < busCount; ++i) {
+        if (!solo[static_cast<size_t>(i)]) continue;
+        std::vector<bool> visited(static_cast<size_t>(busCount), false);
+        int cur = i;
+        while (cur >= 0 && cur < busCount && !visited[static_cast<size_t>(cur)]) {
+            visited[static_cast<size_t>(cur)] = true;
+            pass[static_cast<size_t>(cur)] = true;
+            if (cur == outputTo[static_cast<size_t>(cur)]) break; // self-loop guard
+            cur = outputTo[static_cast<size_t>(cur)];
+        }
+    }
+
+    // Buses feeding a soloed bus through their main-output chain.
+    for (int i = 0; i < busCount; ++i) {
+        std::vector<bool> visited(static_cast<size_t>(busCount), false);
+        int cur = i;
+        bool feedsSolo = false;
+        while (cur >= 0 && cur < busCount && !visited[static_cast<size_t>(cur)]) {
+            if (solo[static_cast<size_t>(cur)]) { feedsSolo = true; break; }
+            visited[static_cast<size_t>(cur)] = true;
+            if (cur == outputTo[static_cast<size_t>(cur)]) break; // self-loop guard
+            cur = outputTo[static_cast<size_t>(cur)];
+        }
+        if (feedsSolo)
+            pass[static_cast<size_t>(i)] = true;
+    }
+
+    return pass;
+}
+
+// Buses that stay "alive" when at least one bus is soloed: the soloed buses
+// themselves plus everything that (transitively) feeds them through main-output
+// or send edges. `outputTo[i]` is bus i's main output, `sendTargets[i]` its
+// sends and `solo[i]` whether bus i is soloed. Under solo the engine keeps the
+// feeding paths of these buses intact (their sends into the feed set are tapped
+// and their main outputs are routed while the parent is also in the set), so
+// the soloed bus's input chain does not go silent. Returns a flag per bus index.
+inline std::vector<bool> computeBusSoloFeedSet(const std::vector<int>& outputTo,
+                                               const std::vector<std::vector<int>>& sendTargets,
+                                               const std::vector<bool>& solo,
+                                               int busCount) {
+    // Reverse graph: which buses feed each destination directly.
+    std::vector<std::vector<int>> reverse(static_cast<size_t>(busCount));
+    for (int i = 0; i < busCount; ++i) {
+        int parent = outputTo[static_cast<size_t>(i)];
+        if (parent >= 0 && parent < busCount && parent != i)
+            reverse[static_cast<size_t>(parent)].push_back(i);
+        for (int t : sendTargets[static_cast<size_t>(i)])
+            if (t >= 0 && t < busCount && t != i)
+                reverse[static_cast<size_t>(t)].push_back(i);
+    }
+
+    std::vector<bool> feed(static_cast<size_t>(busCount), false);
     for (int i = 0; i < busCount; ++i) {
         if (!solo[static_cast<size_t>(i)]) continue;
         std::vector<bool> visited(static_cast<size_t>(busCount), false);
@@ -209,33 +262,41 @@ inline std::vector<bool> computeBusSoloPassSet(const std::vector<std::vector<int
             if (cur < 0 || cur >= busCount || visited[static_cast<size_t>(cur)])
                 continue;
             visited[static_cast<size_t>(cur)] = true;
-            pass[static_cast<size_t>(cur)] = true;
-            for (int t : targets[static_cast<size_t>(cur)])
-                if (t >= 0 && t < busCount)
-                    stack.push_back(t);
+            feed[static_cast<size_t>(cur)] = true;
+            for (int src : reverse[static_cast<size_t>(cur)])
+                stack.push_back(src);
         }
     }
+    return feed;
+}
 
-    // Buses that (transitively) feed into a soloed bus: the soloed bus is
-    // reachable from them through the main-output or send edges.
-    for (int i = 0; i < busCount; ++i) {
-        std::vector<bool> visited(static_cast<size_t>(busCount), false);
-        std::vector<int> stack = { i };
-        bool feedsSolo = false;
-        while (!stack.empty() && !feedsSolo) {
-            int cur = stack.back();
-            stack.pop_back();
-            if (cur < 0 || cur >= busCount || visited[static_cast<size_t>(cur)])
-                continue;
-            if (solo[static_cast<size_t>(cur)]) { feedsSolo = true; break; }
-            visited[static_cast<size_t>(cur)] = true;
-            for (int t : targets[static_cast<size_t>(cur)])
-                if (t >= 0 && t < busCount)
-                    stack.push_back(t);
+// Effective send taps of one bus under the current audio context. `sendTargets`
+// lists the destinations, `sendLevels` the send gains, `sendPreFaders` whether
+// each send is tapped before the bus's volume fader, and `targetsMuted` the
+// mute state of each matching destination. Pre-fader sends ignore both the
+// source fader and the source mute (they tap before the fader); post-fader
+// sends follow the fader, so a muted source (effective fader 0) drops them, and
+// otherwise they are scaled by the bus volume and the send level. Sends into
+// muted targets are dropped. Returns (target bus index, gain) pairs.
+inline std::vector<std::pair<int, float>> computeBusSendTaps(
+    const std::vector<int>& sendTargets,
+    const std::vector<float>& sendLevels,
+    const std::vector<bool>& sendPreFaders,
+    const std::vector<bool>& targetsMuted,
+    float volume, bool sourceMuted) {
+    std::vector<std::pair<int, float>> taps;
+    taps.reserve(sendTargets.size());
+    for (size_t i = 0; i < sendTargets.size(); ++i) {
+        if (i < targetsMuted.size() && targetsMuted[static_cast<size_t>(i)])
+            continue;
+        float gain;
+        if (sendPreFaders[static_cast<size_t>(i)]) {
+            gain = sendLevels[static_cast<size_t>(i)];
+        } else {
+            if (sourceMuted) continue; // mute = fader 0: post-fader sends silent
+            gain = volume * sendLevels[static_cast<size_t>(i)];
         }
-        if (feedsSolo)
-            pass[static_cast<size_t>(i)] = true;
+        taps.emplace_back(sendTargets[static_cast<size_t>(i)], gain);
     }
-
-    return pass;
+    return taps;
 }
