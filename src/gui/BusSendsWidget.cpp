@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QComboBox>
 #include <QSlider>
+#include <QLabel>
 #include <QMenu>
 #include <QEvent>
 #include <QSpacerItem>
@@ -43,7 +44,16 @@ BusSendsWidget::BusSendsWidget(QWidget* parent)
     m_containerLayout->setSpacing(1);
 
     m_scrollArea->setWidget(m_container);
-    m_mainLayout->addWidget(m_scrollArea, 1);
+
+    // Header row: optional caption on the left, the "+" add button on the
+    // right, above the list.
+    auto* header = new QHBoxLayout;
+    header->setContentsMargins(0, 0, 0, 0);
+    header->setSpacing(4);
+    m_headerLabel = new QLabel(this);
+    m_headerLabel->setStyleSheet("color: #889; font-size: 9px;");
+    m_headerLabel->hide();
+    header->addWidget(m_headerLabel, 1);
 
     m_addButton = new QPushButton("+", this);
     m_addButton->setObjectName("sendAddButton");
@@ -54,7 +64,15 @@ BusSendsWidget::BusSendsWidget(QWidget* parent)
         if (m_busIndex >= 0)
             emit sendAddRequested(m_busIndex);
     });
-    m_mainLayout->addWidget(m_addButton);
+    header->addWidget(m_addButton);
+    m_mainLayout->addLayout(header);
+
+    m_mainLayout->addWidget(m_scrollArea, 1);
+}
+
+void BusSendsWidget::setHeaderLabel(const QString& text) {
+    m_headerLabel->setText(text);
+    m_headerLabel->setVisible(!text.isEmpty());
 }
 
 AudioBus* BusSendsWidget::currentBus() const {

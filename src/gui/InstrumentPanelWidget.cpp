@@ -212,6 +212,7 @@ void InstrumentPanelWidget::rebuild() {
 
         row.pluginList = new PluginListWidget(row.widget);
         row.pluginList->setInstrument(const_cast<Instrument*>(&instrument));
+        row.pluginList->setHeaderLabel("Effects:");
         row.pluginList->setPluginManager(m_pluginManager);
         row.pluginList->setAudioParams(m_sampleRate, m_bufferSize);
         row.pluginList->rebuild();

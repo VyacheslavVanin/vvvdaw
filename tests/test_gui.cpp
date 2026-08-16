@@ -4,6 +4,7 @@
 #include <QTemporaryDir>
 #include <QMenuBar>
 #include <QAction>
+#include <QLabel>
 #include <QListWidget>
 #include <QTableWidget>
 #include <QPixmap>
@@ -107,6 +108,7 @@ private slots:
     void busPanelStripsStayFixedWidth();
     void busPanelToggleRevealsCombinedPanel();
     void busPanelPanelStaysOpenAcrossRebuild();
+    void busPanelListsHaveHeaderLabelsAndTopAdd();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -684,6 +686,55 @@ void MainWindowTest::busPanelPanelStaysOpenAcrossRebuild() {
     QVERIFY(!lists[0]->isVisible());
     QVERIFY(!toggles[1]->isChecked());
     QVERIFY(!lists[1]->isVisible());
+}
+
+void MainWindowTest::busPanelListsHaveHeaderLabelsAndTopAdd() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    toggles[2]->click(); // open the combined panel on the FX bus
+    QCoreApplication::processEvents();
+
+    auto pluginLists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(pluginLists.size(), 3);
+    QCOMPARE(sendLists.size(), 3);
+    PluginListWidget* plist = pluginLists[2];
+    BusSendsWidget* slist = sendLists[2];
+
+    // Header captions next to the add buttons.
+    QLabel* effectsLabel = nullptr;
+    QLabel* sendsLabel = nullptr;
+    for (QLabel* lb : plist->findChildren<QLabel*>())
+        if (lb->text().contains("Effects") && lb->isVisible()) { effectsLabel = lb; break; }
+    for (QLabel* lb : slist->findChildren<QLabel*>())
+        if (lb->text().contains("Sends") && lb->isVisible()) { sendsLabel = lb; break; }
+    QVERIFY(effectsLabel);
+    QVERIFY(sendsLabel);
+
+    // The "+" buttons sit in the top half, on the same row as their label.
+    QPushButton* plistAdd = nullptr;
+    for (QPushButton* b : plist->findChildren<QPushButton*>())
+        if (b->text() == "+") { plistAdd = b; break; }
+    QPushButton* sendAdd = slist->findChild<QPushButton*>("sendAddButton");
+    QVERIFY(plistAdd);
+    QVERIFY(sendAdd);
+    QVERIFY(plistAdd->y() < plist->height() / 2);
+    QVERIFY(sendAdd->y() < slist->height() / 2);
+    QCOMPARE(plistAdd->y(), effectsLabel->y());
+    QCOMPARE(sendAdd->y(), sendsLabel->y());
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {

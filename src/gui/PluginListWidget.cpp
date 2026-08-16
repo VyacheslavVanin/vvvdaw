@@ -67,14 +67,31 @@ PluginListWidget::PluginListWidget(QWidget* parent)
     m_containerLayout->setSpacing(1);
 
     m_scrollArea->setWidget(m_container);
-    m_mainLayout->addWidget(m_scrollArea, 1);
+
+    // Header row: optional caption on the left, the "+" add button on the
+    // right, above the list.
+    auto* header = new QHBoxLayout;
+    header->setContentsMargins(0, 0, 0, 0);
+    header->setSpacing(4);
+    m_headerLabel = new QLabel(this);
+    m_headerLabel->setStyleSheet("color: #889; font-size: 9px;");
+    m_headerLabel->hide();
+    header->addWidget(m_headerLabel, 1);
 
     m_addButton = new QPushButton("+", this);
     m_addButton->setFixedWidth(28);
     m_addButton->setFixedHeight(20);
     m_addButton->setToolTip("Add Plugin");
     connect(m_addButton, &QPushButton::clicked, this, &PluginListWidget::onAddClicked);
-    m_mainLayout->addWidget(m_addButton);
+    header->addWidget(m_addButton);
+    m_mainLayout->addLayout(header);
+
+    m_mainLayout->addWidget(m_scrollArea, 1);
+}
+
+void PluginListWidget::setHeaderLabel(const QString& text) {
+    m_headerLabel->setText(text);
+    m_headerLabel->setVisible(!text.isEmpty());
 }
 
 void PluginListWidget::setTrack(Track* track) {

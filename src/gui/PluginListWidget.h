@@ -28,6 +28,9 @@ public:
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
     void setInstrumentsOnly(bool only) { m_instrumentsOnly = only; }
+    // Optional caption shown in the header row next to the "+" button (e.g.
+    // "effects:"). Empty text hides the label.
+    void setHeaderLabel(const QString& text);
     void rebuild();
 
 signals:
@@ -66,6 +69,7 @@ private:
     QScrollArea* m_scrollArea = nullptr;
     QWidget* m_container = nullptr;
     QVBoxLayout* m_containerLayout = nullptr;
+    QLabel* m_headerLabel = nullptr;
     QPushButton* m_addButton = nullptr;
 
     std::vector<QWidget*> m_rows;

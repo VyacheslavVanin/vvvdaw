@@ -273,6 +273,7 @@ void BusPanelWidget::rebuild() {
 
         row.pluginList = new PluginListWidget(row.fxPanel);
         row.pluginList->setObjectName("busPluginList");
+        row.pluginList->setHeaderLabel("Effects:");
         row.pluginList->setBus(const_cast<AudioBus*>(&bus));
         row.pluginList->setPluginManager(m_pluginManager);
         row.pluginList->setAudioParams(m_sampleRate, m_bufferSize);
@@ -281,6 +282,7 @@ void BusPanelWidget::rebuild() {
 
         row.sendsList = new BusSendsWidget(row.fxPanel);
         row.sendsList->setObjectName("busSendList");
+        row.sendsList->setHeaderLabel("Sends:");
         row.sendsList->setProject(&m_project, busIndex);
         row.sendsList->rebuild();
         fxLayout->addWidget(row.sendsList, 1);

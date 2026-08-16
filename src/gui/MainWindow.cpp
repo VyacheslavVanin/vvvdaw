@@ -1143,6 +1143,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 
         row.pluginList = new PluginListWidget(m_trackContainer);
         row.pluginList->setTrack(&track);
+        row.pluginList->setHeaderLabel("Effects:");
         row.pluginList->setPluginManager(&m_pluginManager);
         row.pluginList->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
         row.pluginList->rebuild();

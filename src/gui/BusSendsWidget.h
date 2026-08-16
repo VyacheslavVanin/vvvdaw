@@ -9,6 +9,7 @@ class QScrollArea;
 class QPushButton;
 class QComboBox;
 class QSlider;
+class QLabel;
 class QLayoutItem;
 class Project;
 
@@ -25,6 +26,10 @@ public:
         m_project = project;
         m_busIndex = busIndex;
     }
+
+    // Optional caption shown in the header row next to the "+" button (e.g.
+    // "sends:"). Empty text hides the label.
+    void setHeaderLabel(const QString& text);
 
     void rebuild();
     // Rebuild every row's target combo, keeping the current selection. Needed
@@ -60,6 +65,7 @@ private:
     QScrollArea* m_scrollArea = nullptr;
     QWidget* m_container = nullptr;
     QVBoxLayout* m_containerLayout = nullptr;
+    QLabel* m_headerLabel = nullptr;
     QPushButton* m_addButton = nullptr;
     std::vector<Row> m_rows;
     QLayoutItem* m_trailingStretch = nullptr;
