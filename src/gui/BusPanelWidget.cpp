@@ -70,14 +70,10 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
 }
 
 void BusPanelWidget::rebuild() {
-    std::vector<bool> pluginOpenBefore(m_busRows.size(), false);
-    std::vector<bool> sendOpenBefore(m_busRows.size(), false);
-    for (size_t i = 0; i < m_busRows.size(); ++i) {
-        if (m_busRows[i].pluginToggle && m_busRows[i].pluginToggle->isChecked())
-            pluginOpenBefore[i] = true;
-        if (m_busRows[i].sendToggle && m_busRows[i].sendToggle->isChecked())
-            sendOpenBefore[i] = true;
-    }
+    std::vector<bool> panelOpenBefore(m_busRows.size(), false);
+    for (size_t i = 0; i < m_busRows.size(); ++i)
+        if (m_busRows[i].panelToggle && m_busRows[i].panelToggle->isChecked())
+            panelOpenBefore[i] = true;
 
     for (auto& row : m_busRows) {
         if (row.widget) {
@@ -97,12 +93,9 @@ void BusPanelWidget::rebuild() {
 
     const auto& buses = m_project.buses();
 
-    m_pluginPanelsOpen.assign(buses.size(), false);
-    m_sendPanelsOpen.assign(buses.size(), false);
-    for (size_t i = 0; i < pluginOpenBefore.size() && i < m_pluginPanelsOpen.size(); ++i)
-        m_pluginPanelsOpen[i] = pluginOpenBefore[i];
-    for (size_t i = 0; i < sendOpenBefore.size() && i < m_sendPanelsOpen.size(); ++i)
-        m_sendPanelsOpen[i] = sendOpenBefore[i];
+    m_panelOpen.assign(buses.size(), false);
+    for (size_t i = 0; i < panelOpenBefore.size() && i < m_panelOpen.size(); ++i)
+        m_panelOpen[i] = panelOpenBefore[i];
 
     auto btnStyle = [](const QString& normal, const QString& checked) {
         return normal + "; padding: 0px; }"
@@ -252,56 +245,58 @@ void BusPanelWidget::rebuild() {
         }
         outRow->addWidget(row.outCombo, 1);
 
-        row.pluginToggle = new QPushButton("Pl", controls);
-        row.pluginToggle->setObjectName("pluginToggle");
-        row.pluginToggle->setCheckable(true);
-        row.pluginToggle->setFixedSize(20, 20);
-        row.pluginToggle->setStyleSheet(
+        row.panelToggle = new QPushButton("Fx", controls);
+        row.panelToggle->setObjectName("panelToggle");
+        row.panelToggle->setCheckable(true);
+        row.panelToggle->setFixedSize(20, 20);
+        row.panelToggle->setStyleSheet(
             btnStyle(
                 "QPushButton { background: #333344; color: #88aacc; border: 1px solid #445566; font-weight: bold; font-size: 8px",
                 "QPushButton:checked { background: #224466; color: white; border: 1px solid #4488cc; font-weight: bold; font-size: 8px"
             )
         );
-        row.pluginToggle->setToolTip("Show/hide plugin chain");
-        outRow->addWidget(row.pluginToggle);
-
-        row.sendToggle = new QPushButton("Sn", controls);
-        row.sendToggle->setObjectName("sendToggle");
-        row.sendToggle->setCheckable(true);
-        row.sendToggle->setFixedSize(20, 20);
-        row.sendToggle->setStyleSheet(
-            btnStyle(
-                "QPushButton { background: #333344; color: #88ccaa; border: 1px solid #445566; font-weight: bold; font-size: 8px",
-                "QPushButton:checked { background: #226644; color: white; border: 1px solid #44ff88; font-weight: bold; font-size: 8px"
-            )
-        );
-        row.sendToggle->setToolTip("Show/hide sends");
-        outRow->addWidget(row.sendToggle);
+        row.panelToggle->setToolTip("Show/hide plugins and sends");
+        outRow->addWidget(row.panelToggle);
 
         layout->addLayout(outRow);
 
         int busIndex = i;
 
-        // --- Plugin list column (hidden until "Pl" is toggled) ---
-        row.pluginList = new PluginListWidget(row.widget);
+        // --- Combined plugins + sends panel (hidden until "Fx" is toggled) ---
+        // Plugins on top, sends below, sharing the strip's height.
+        row.fxPanel = new QWidget(row.widget);
+        row.fxPanel->setObjectName("busFxPanel");
+        row.fxPanel->setFixedWidth(kPluginPanelWidth);
+        auto* fxLayout = new QVBoxLayout(row.fxPanel);
+        fxLayout->setContentsMargins(0, 0, 0, 0);
+        fxLayout->setSpacing(2);
+
+        row.pluginList = new PluginListWidget(row.fxPanel);
         row.pluginList->setObjectName("busPluginList");
-        row.pluginList->setFixedWidth(kPluginPanelWidth);
         row.pluginList->setBus(const_cast<AudioBus*>(&bus));
         row.pluginList->setPluginManager(m_pluginManager);
         row.pluginList->setAudioParams(m_sampleRate, m_bufferSize);
         row.pluginList->rebuild();
-        stripLayout->addWidget(row.pluginList);
+        fxLayout->addWidget(row.pluginList, 1);
 
-        const bool panelOpen = (busIndex >= 0 && busIndex < static_cast<int>(m_pluginPanelsOpen.size()))
-            && m_pluginPanelsOpen[busIndex];
-        row.pluginList->setVisible(panelOpen);
+        row.sendsList = new BusSendsWidget(row.fxPanel);
+        row.sendsList->setObjectName("busSendList");
+        row.sendsList->setProject(&m_project, busIndex);
+        row.sendsList->rebuild();
+        fxLayout->addWidget(row.sendsList, 1);
 
-        connect(row.pluginToggle, &QPushButton::toggled, this, [this, busIndex, row](bool checked) {
-            row.pluginList->setVisible(checked);
-            if (busIndex >= 0 && busIndex < static_cast<int>(m_pluginPanelsOpen.size()))
-                m_pluginPanelsOpen[busIndex] = checked;
+        stripLayout->addWidget(row.fxPanel);
+
+        const bool panelOpen = (busIndex >= 0 && busIndex < static_cast<int>(m_panelOpen.size()))
+            && m_panelOpen[busIndex];
+        row.fxPanel->setVisible(panelOpen);
+
+        connect(row.panelToggle, &QPushButton::toggled, this, [this, busIndex, row](bool checked) {
+            row.fxPanel->setVisible(checked);
+            if (busIndex >= 0 && busIndex < static_cast<int>(m_panelOpen.size()))
+                m_panelOpen[busIndex] = checked;
         });
-        row.pluginToggle->setChecked(panelOpen);
+        row.panelToggle->setChecked(panelOpen);
 
         connect(row.pluginList, &PluginListWidget::openEditorRequested, this,
                 [this, busIndex](PluginInstance* plugin) {
@@ -319,25 +314,6 @@ void BusPanelWidget::rebuild() {
                 [this, busIndex](int from, int to) { emit busPluginWillBeMoved(busIndex, from, to); });
         connect(row.pluginList, &PluginListWidget::pluginWillBeToggled, this,
                 [this, busIndex]() { emit busPluginWillBeToggled(busIndex); });
-
-        // --- Sends list column (hidden until "Sn" is toggled) ---
-        row.sendsList = new BusSendsWidget(row.widget);
-        row.sendsList->setObjectName("busSendList");
-        row.sendsList->setFixedWidth(kSendPanelWidth);
-        row.sendsList->setProject(&m_project, busIndex);
-        row.sendsList->rebuild();
-        stripLayout->addWidget(row.sendsList);
-
-        const bool sendPanelOpen = (busIndex >= 0 && busIndex < static_cast<int>(m_sendPanelsOpen.size()))
-            && m_sendPanelsOpen[busIndex];
-        row.sendsList->setVisible(sendPanelOpen);
-
-        connect(row.sendToggle, &QPushButton::toggled, this, [this, busIndex, row](bool checked) {
-            row.sendsList->setVisible(checked);
-            if (busIndex >= 0 && busIndex < static_cast<int>(m_sendPanelsOpen.size()))
-                m_sendPanelsOpen[busIndex] = checked;
-        });
-        row.sendToggle->setChecked(sendPanelOpen);
 
         connect(row.sendsList, &BusSendsWidget::sendAddRequested, this,
                 [this, busIndex](int) {

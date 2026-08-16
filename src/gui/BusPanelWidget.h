@@ -31,7 +31,6 @@ public:
 
     static constexpr int kControlsWidth = 68;
     static constexpr int kPluginPanelWidth = 240;
-    static constexpr int kSendPanelWidth = 200;
 
 signals:
     void busChanged();
@@ -68,9 +67,11 @@ private:
         QSlider* panSlider = nullptr;
         QSlider* volumeSlider = nullptr;
         BusLevelMeter* levelMeter = nullptr;
-        QPushButton* pluginToggle = nullptr;
+        QPushButton* panelToggle = nullptr;
+        // Combined plugins + sends panel (plugins on top, sends below),
+        // revealed by the single panelToggle.
+        QWidget* fxPanel = nullptr;
         PluginListWidget* pluginList = nullptr;
-        QPushButton* sendToggle = nullptr;
         BusSendsWidget* sendsList = nullptr;
     };
 
@@ -84,11 +85,9 @@ private:
     QWidget* m_container = nullptr;
     QHBoxLayout* m_containerLayout = nullptr;
     std::vector<BusRow> m_busRows;
-    // Per-bus "plugin panel open" state, carried across rebuild() so a full
-    // panel refresh (e.g. after adding a plugin) does not collapse an
-    // explicitly opened plugin list.
-    std::vector<bool> m_pluginPanelsOpen;
-    // Per-bus "sends panel open" state, carried across rebuild() the same way.
-    std::vector<bool> m_sendPanelsOpen;
+    // Per-bus "plugins + sends panel open" state, carried across rebuild() so a
+    // full panel refresh (e.g. after adding a plugin or send) does not collapse
+    // an explicitly opened combined panel.
+    std::vector<bool> m_panelOpen;
     QTimer* m_meterTimer = nullptr;
 };

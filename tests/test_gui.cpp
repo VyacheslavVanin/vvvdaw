@@ -105,9 +105,8 @@ private slots:
     void audioTrackOutComboListsBuses();
     void busPanelStripHasCompactControls();
     void busPanelStripsStayFixedWidth();
-    void busPanelPluginToggleRevealsPluginList();
-    void busPanelPluginPanelStaysOpenAcrossRebuild();
-    void busPanelSendToggleRevealsSends();
+    void busPanelToggleRevealsCombinedPanel();
+    void busPanelPanelStaysOpenAcrossRebuild();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -534,7 +533,7 @@ void MainWindowTest::busPanelStripHasCompactControls() {
     const auto meters = window.m_busPanel->findChildren<BusLevelMeter*>("levelMeter");
     QCOMPARE(meters.size(), 3);
 
-    const auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    const auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
     QCOMPARE(toggles.size(), 3);
     for (QPushButton* b : toggles)
         QVERIFY(b->isCheckable());
@@ -547,11 +546,15 @@ void MainWindowTest::busPanelStripHasCompactControls() {
     QWidget* strip = toggles[0]->parentWidget()->parentWidget();
     QVERIFY(strip->sizeHint().width() <= 100);
 
-    // Plugin lists exist but are hidden until toggled.
+    // Plugin and send lists exist but are hidden until the panel is toggled.
     const auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
     QCOMPARE(lists.size(), 3);
     for (QWidget* l : lists)
-        QVERIFY(l->isHidden());
+        QVERIFY(!l->isVisible());
+    const auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(sendLists.size(), 3);
+    for (QWidget* l : sendLists)
+        QVERIFY(!l->isVisible());
 }
 
 void MainWindowTest::busPanelStripsStayFixedWidth() {
@@ -569,7 +572,7 @@ void MainWindowTest::busPanelStripsStayFixedWidth() {
 
     auto stripWidths = [&window]() {
         std::vector<int> widths;
-        const auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+        const auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
         for (QPushButton* t : toggles)
             widths.push_back(t->parentWidget()->parentWidget()->width());
         return widths;
@@ -591,7 +594,7 @@ void MainWindowTest::busPanelStripsStayFixedWidth() {
         QCOMPARE(wide[i], narrow[i]);
 }
 
-void MainWindowTest::busPanelPluginToggleRevealsPluginList() {
+void MainWindowTest::busPanelToggleRevealsCombinedPanel() {
     Project project;
     AudioBus b1;
     b1.setName("FX");
@@ -601,25 +604,43 @@ void MainWindowTest::busPanelPluginToggleRevealsPluginList() {
     AudioEngine engine;
     MainWindow window(project, engine, settings);
     window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
 
-    auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    auto panels = window.m_busPanel->findChildren<QWidget*>("busFxPanel");
     auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
     QCOMPARE(toggles.size(), 3);
+    QCOMPARE(panels.size(), 3);
     QCOMPARE(lists.size(), 3);
+    QCOMPARE(sendLists.size(), 3);
 
     QWidget* strip = toggles[0]->parentWidget()->parentWidget();
     const int collapsedWidth = strip->sizeHint().width();
 
-    QVERIFY(lists[0]->isHidden());
+    // The combined panel is hidden and hides both the plugin and send lists.
+    QVERIFY(!lists[0]->isVisible());
+    QVERIFY(!sendLists[0]->isVisible());
     toggles[0]->click();
-    QVERIFY(!lists[0]->isHidden());
+    QVERIFY(!panels[0]->isHidden());
+    QVERIFY(lists[0]->isVisible());
+    QVERIFY(sendLists[0]->isVisible());
     QVERIFY(strip->sizeHint().width() > collapsedWidth); // strip widens
 
+    // Plugins are stacked above the sends.
+    QVERIFY(lists[0]->mapTo(panels[0], QPoint(0, 0)).y()
+            < sendLists[0]->mapTo(panels[0], QPoint(0, 0)).y());
+
     toggles[0]->click();
-    QVERIFY(lists[0]->isHidden());
+    QVERIFY(panels[0]->isHidden());
+    QVERIFY(!lists[0]->isVisible());
+    QVERIFY(!sendLists[0]->isVisible());
 }
 
-void MainWindowTest::busPanelPluginPanelStaysOpenAcrossRebuild() {
+void MainWindowTest::busPanelPanelStaysOpenAcrossRebuild() {
     Project project;
     AudioBus b1;
     b1.setName("FX");
@@ -629,58 +650,40 @@ void MainWindowTest::busPanelPluginPanelStaysOpenAcrossRebuild() {
     AudioEngine engine;
     MainWindow window(project, engine, settings);
     window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
 
-    auto toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
     auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
     QCOMPARE(toggles.size(), 3);
     QCOMPARE(lists.size(), 3);
-
-    // Open the plugin panel on the FX bus (index 2).
-    QVERIFY(lists[2]->isHidden());
+    QVERIFY(!lists[2]->isVisible());
     toggles[2]->click();
-    QVERIFY(!lists[2]->isHidden());
+    QVERIFY(lists[2]->isVisible());
 
-    // A full panel rebuild (e.g. triggered after adding a plugin) must not
-    // collapse the explicitly opened plugin list.
+    // A full panel rebuild (e.g. triggered after adding a plugin or send) must
+    // not collapse the explicitly opened combined panel.
     window.m_busPanel->rebuild();
     QCoreApplication::processEvents();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
-    toggles = window.m_busPanel->findChildren<QPushButton*>("pluginToggle");
+    toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
     lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
     QCOMPARE(toggles.size(), 3);
     QCOMPARE(lists.size(), 3);
+    QCOMPARE(sendLists.size(), 3);
     QVERIFY(toggles[2]->isChecked());
-    QVERIFY(!lists[2]->isHidden());
+    QVERIFY(lists[2]->isVisible());
+    QVERIFY(sendLists[2]->isVisible());
 
     // The other (never opened) panels stay collapsed.
     QVERIFY(!toggles[0]->isChecked());
-    QVERIFY(lists[0]->isHidden());
+    QVERIFY(!lists[0]->isVisible());
     QVERIFY(!toggles[1]->isChecked());
-    QVERIFY(lists[1]->isHidden());
-}
-
-void MainWindowTest::busPanelSendToggleRevealsSends() {
-    Project project;
-    AudioBus b1;
-    b1.setName("FX");
-    project.addBus(std::move(b1));
-
-    Settings settings;
-    AudioEngine engine;
-    MainWindow window(project, engine, settings);
-    window.m_busPanel->rebuild();
-
-    auto toggles = window.m_busPanel->findChildren<QPushButton*>("sendToggle");
-    auto lists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
-    QCOMPARE(toggles.size(), 3);
-    QCOMPARE(lists.size(), 3);
-
-    QVERIFY(lists[0]->isHidden());
-    toggles[0]->click();
-    QVERIFY(!lists[0]->isHidden());
-    toggles[0]->click();
-    QVERIFY(lists[0]->isHidden());
+    QVERIFY(!lists[1]->isVisible());
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {
@@ -694,8 +697,8 @@ void MainWindowTest::busPanelSendAddAndRemove() {
     MainWindow window(project, engine, settings);
     window.m_busPanel->rebuild();
 
-    auto toggles = window.m_busPanel->findChildren<QPushButton*>("sendToggle");
-    toggles[2]->click(); // open the sends panel on the FX bus
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    toggles[2]->click(); // open the combined panel on the FX bus
     QVERIFY(project.buses()[2].sends().empty());
 
     auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
@@ -782,6 +785,10 @@ void MainWindowTest::busPanelSendContextMenuRemovesSend() {
     MainWindow window(project, engine, settings);
     window.m_busPanel->rebuild();
     window.show();
+    QCoreApplication::processEvents();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    toggles[2]->click(); // open the combined panel on the FX bus
     QCoreApplication::processEvents();
 
     auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
