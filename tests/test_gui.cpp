@@ -109,6 +109,7 @@ private slots:
     void busPanelPluginPanelStaysOpenAcrossRebuild();
     void busPanelSendToggleRevealsSends();
     void busPanelSendAddAndRemove();
+    void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
     void busLevelMeterIsNarrow();
     void mainWindowRestoresPanelStateFromSettings();
@@ -765,6 +766,58 @@ void MainWindowTest::busVolumeSliderFollowsMeterDbScale() {
     // Midpoint = -30 dB, matching the same point on the meter scale.
     slider->setValue(50);
     QVERIFY(std::abs(fx.volume() - decibelsToLinear(-30.0f)) < 1e-3f);
+}
+
+void MainWindowTest::busPanelSendContextMenuRemovesSend() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+    AudioBus::Send s;
+    s.busIndex = 0;
+    project.buses()[2].sends().push_back(s);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(sendLists.size(), 3);
+    BusSendsWidget* sendList = sendLists[2];
+    QCOMPARE(project.buses()[2].sends().size(), size_t(1));
+
+    QWidget* row = sendList->findChild<QWidget*>("sendRow");
+    QVERIFY(row);
+
+    // Drive the context menu: open it on the row and trigger "Remove Send".
+    QTimer::singleShot(0, [] {
+        QMenu* menu = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (auto* m = qobject_cast<QMenu*>(w)) {
+                for (QAction* a : m->actions())
+                    if (a->text().contains("Remove Send")) { menu = m; break; }
+            }
+            if (menu) break;
+        }
+        if (!menu) return;
+        for (QAction* a : menu->actions()) {
+            if (a->text().contains("Remove Send")) {
+                a->trigger();
+                break;
+            }
+        }
+        menu->close();
+    });
+
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, row->rect().center(),
+                         row->mapToGlobal(row->rect().center()));
+    QApplication::sendEvent(row, &ev);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(project.buses()[2].sends().size(), size_t(0));
 }
 
 void MainWindowTest::busLevelMeterIsNarrow() {

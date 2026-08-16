@@ -345,7 +345,7 @@ void BusPanelWidget::rebuild() {
             rebuild();
         });
         connect(row.sendsList, &BusSendsWidget::sendRemoveRequested, this,
-                [this, busIndex](int sendIndex) {
+                [this, busIndex](int, int sendIndex) {
             emit busSendRemoveRequested(busIndex, sendIndex);
             rebuild();
         });
