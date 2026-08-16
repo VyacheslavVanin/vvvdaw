@@ -136,17 +136,19 @@ inline float busBufferPeak(const float* interleaved, unsigned long frames) {
 }
 
 // Compute the order in which buses must be processed so that every bus is
-// mixed into its parent before the parent is processed (a topological sort of
-// the routing graph). `outputTo[i]` is the parent bus index of bus i (or
-// < 0 / >= n for "to output device"). Buses that are not routed to another
-// bus are roots and come first; any nodes left over (routing cycles) are
-// appended unchanged so every bus still appears exactly once.
-inline std::vector<int> computeBusProcessOrder(const std::vector<int>& outputTo, int busCount) {
+// mixed into its targets before any target is processed (a topological sort of
+// the routing DAG). `targets[i]` lists the destinations bus i feeds: its main
+// output (or < 0 / >= n for "to output device") plus every send target. Buses
+// that feed nobody are roots and come first; any nodes left over (routing
+// cycles) are appended unchanged so every bus still appears exactly once.
+inline std::vector<int> computeBusProcessOrder(const std::vector<std::vector<int>>& targets,
+                                               int busCount) {
     std::vector<int> inDegree(static_cast<size_t>(busCount), 0);
     for (int i = 0; i < busCount; ++i) {
-        int parent = outputTo[i];
-        if (parent >= 0 && parent < busCount && parent != i)
-            inDegree[static_cast<size_t>(parent)]++;
+        for (int t : targets[static_cast<size_t>(i)]) {
+            if (t >= 0 && t < busCount && t != i)
+                inDegree[static_cast<size_t>(t)]++;
+        }
     }
 
     std::vector<int> order;
@@ -162,11 +164,12 @@ inline std::vector<int> computeBusProcessOrder(const std::vector<int>& outputTo,
         queue.pop_back();
         order.push_back(node);
 
-        int parent = outputTo[node];
-        if (parent >= 0 && parent < busCount && parent != node) {
-            inDegree[static_cast<size_t>(parent)]--;
-            if (inDegree[static_cast<size_t>(parent)] == 0)
-                queue.push_back(parent);
+        for (int t : targets[static_cast<size_t>(node)]) {
+            if (t >= 0 && t < busCount && t != node) {
+                inDegree[static_cast<size_t>(t)]--;
+                if (inDegree[static_cast<size_t>(t)] == 0)
+                    queue.push_back(t);
+            }
         }
     }
 
@@ -178,46 +181,60 @@ inline std::vector<int> computeBusProcessOrder(const std::vector<int>& outputTo,
     return order;
 }
 
-// Which buses stay audible when at least one bus is soloed. `outputTo[i]` is
-// the parent bus index of bus i (or < 0 / >= n for "to output device") and
-// `solo[i]` whether bus i is soloed. A bus passes through when it is:
+// Which buses stay audible when at least one bus is soloed. `targets[i]` lists
+// the destinations bus i feeds (main output + send targets) and `solo[i]`
+// whether bus i is soloed. A bus passes through when it is:
 //   - itself soloed,
-//   - on the route from a soloed bus up to the output (an ancestor, needed so
-//     the soloed signal can actually reach the speakers), or
-//   - feeding a soloed bus (a descendant in the reverse graph), so the soloed
-//     bus receives the sources that contribute to it.
+//   - on a route from a soloed bus up to the output (an ancestor, following
+//     the soloed bus's feed chain), so the soloed signal can reach the
+//     speakers, or
+//   - feeding a soloed bus (the soloed bus is reachable from it through the
+//     main-output or send edges), so the soloed bus receives the sources that
+//     contribute to it.
 // Everything else is silenced. Returns a pass/no-pass flag per bus index.
-inline std::vector<bool> computeBusSoloPassSet(const std::vector<int>& outputTo,
+inline std::vector<bool> computeBusSoloPassSet(const std::vector<std::vector<int>>& targets,
                                                const std::vector<bool>& solo,
                                                int busCount) {
     std::vector<bool> pass(static_cast<size_t>(busCount), false);
 
-    // Soloed buses and every ancestor along their route to the output.
+    // Soloed buses and every bus on their route up to the output (their forward
+    // feed chain), so the soloed signal can actually reach the speakers.
     for (int i = 0; i < busCount; ++i) {
-        if (!solo[i]) continue;
+        if (!solo[static_cast<size_t>(i)]) continue;
         std::vector<bool> visited(static_cast<size_t>(busCount), false);
-        int cur = i;
-        while (cur >= 0 && cur < busCount && !visited[cur]) {
-            visited[cur] = true;
-            pass[cur] = true;
-            if (cur == outputTo[cur]) break; // self-loop guard
-            cur = outputTo[cur];
+        std::vector<int> stack = { i };
+        while (!stack.empty()) {
+            int cur = stack.back();
+            stack.pop_back();
+            if (cur < 0 || cur >= busCount || visited[static_cast<size_t>(cur)])
+                continue;
+            visited[static_cast<size_t>(cur)] = true;
+            pass[static_cast<size_t>(cur)] = true;
+            for (int t : targets[static_cast<size_t>(cur)])
+                if (t >= 0 && t < busCount)
+                    stack.push_back(t);
         }
     }
 
-    // Buses that (transitively) feed into a soloed bus.
+    // Buses that (transitively) feed into a soloed bus: the soloed bus is
+    // reachable from them through the main-output or send edges.
     for (int i = 0; i < busCount; ++i) {
         std::vector<bool> visited(static_cast<size_t>(busCount), false);
-        int cur = i;
+        std::vector<int> stack = { i };
         bool feedsSolo = false;
-        while (cur >= 0 && cur < busCount && !visited[cur]) {
-            if (solo[cur]) { feedsSolo = true; break; }
-            visited[cur] = true;
-            if (cur == outputTo[cur]) break; // self-loop guard
-            cur = outputTo[cur];
+        while (!stack.empty() && !feedsSolo) {
+            int cur = stack.back();
+            stack.pop_back();
+            if (cur < 0 || cur >= busCount || visited[static_cast<size_t>(cur)])
+                continue;
+            if (solo[static_cast<size_t>(cur)]) { feedsSolo = true; break; }
+            visited[static_cast<size_t>(cur)] = true;
+            for (int t : targets[static_cast<size_t>(cur)])
+                if (t >= 0 && t < busCount)
+                    stack.push_back(t);
         }
         if (feedsSolo)
-            pass[i] = true;
+            pass[static_cast<size_t>(i)] = true;
     }
 
     return pass;

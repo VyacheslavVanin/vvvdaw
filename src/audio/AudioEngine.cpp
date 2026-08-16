@@ -376,19 +376,31 @@ void AudioEngine::rebuildBusGraph(Project* proj) {
             m_busMeters.emplace_back();
     }
 
-    std::vector<int> outputTo(static_cast<size_t>(busCount));
-    for (int i = 0; i < busCount; ++i)
-        outputTo[i] = proj->buses()[i].outputBusIndex();
-    m_busOutputs = outputTo;
-    m_busProcessOrder = computeBusProcessOrder(outputTo, busCount);
+    std::vector<std::vector<int>> targets(static_cast<size_t>(busCount));
+    for (int i = 0; i < busCount; ++i) {
+        const auto& bus = proj->buses()[static_cast<size_t>(i)];
+        std::vector<int> dests;
+        dests.push_back(bus.outputBusIndex());
+        for (const auto& send : bus.sends())
+            dests.push_back(send.busIndex);
+        targets[static_cast<size_t>(i)] = std::move(dests);
+    }
+    m_busOutputs = targets;
+    m_busProcessOrder = computeBusProcessOrder(targets, busCount);
 }
 
 bool AudioEngine::busRoutingChanged(const Project* proj) const {
     const auto& buses = proj->buses();
     if (m_busOutputs.size() != buses.size()) return true;
     for (size_t i = 0; i < m_busOutputs.size(); ++i) {
-        if (m_busOutputs[i] != buses[i].outputBusIndex())
+        const auto& snapshot = m_busOutputs[i];
+        if (snapshot.size() != 1 + buses[i].sends().size())
             return true;
+        if (snapshot[0] != buses[i].outputBusIndex())
+            return true;
+        for (size_t s = 0; s < buses[i].sends().size(); ++s)
+            if (snapshot[1 + s] != buses[i].sends()[s].busIndex)
+                return true;
     }
     return false;
 }
@@ -912,20 +924,25 @@ void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
     // ancestors of a soloed bus silent too, killing all output.
     std::vector<bool> soloPass;
     if (hasBusSolo) {
-        std::vector<int> outputTo(static_cast<size_t>(busCount));
+        std::vector<std::vector<int>> targets(static_cast<size_t>(busCount));
         std::vector<bool> soloFlags(static_cast<size_t>(busCount), false);
         for (int i = 0; i < busCount; ++i) {
-            outputTo[i] = proj->buses()[i].outputBusIndex();
-            soloFlags[i] = proj->buses()[i].isSolo();
+            const auto& b = proj->buses()[static_cast<size_t>(i)];
+            std::vector<int> dests;
+            dests.push_back(b.outputBusIndex());
+            for (const auto& send : b.sends())
+                dests.push_back(send.busIndex);
+            targets[static_cast<size_t>(i)] = std::move(dests);
+            soloFlags[static_cast<size_t>(i)] = b.isSolo();
         }
-        soloPass = computeBusSoloPassSet(outputTo, soloFlags, busCount);
+        soloPass = computeBusSoloPassSet(targets, soloFlags, busCount);
     }
 
     for (int idx : m_busProcessOrder) {
-        const auto& bus = proj->buses()[idx];
+        const auto& bus = proj->buses()[static_cast<size_t>(idx)];
 
         if (bus.pluginChain().count() > 0) {
-            float* buf = m_busBuffers[idx].data();
+            float* buf = m_busBuffers[static_cast<size_t>(idx)].data();
             for (unsigned long f = 0; f < frameCount; ++f) {
                 m_busDeinterleaveL[f] = buf[f * 2];
                 m_busDeinterleaveR[f] = buf[f * 2 + 1];
@@ -949,14 +966,27 @@ void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
         }
 
         float bVol = bus.volume();
-        float peak = busBufferPeak(m_busBuffers[idx].data(), frameCount) * bVol;
+        float* buf = m_busBuffers[static_cast<size_t>(idx)].data();
+        float peak = busBufferPeak(buf, frameCount) * bVol;
         setBusMeter(idx, peak, peak >= 1.0f);
+
+        // Pre-fader sends: tapped after the plugin chain but before the bus's
+        // volume fader, scaled only by the send level.
+        for (const auto& send : bus.sends()) {
+            if (!send.preFader) continue;
+            int tIdx = send.busIndex;
+            if (tIdx < 0 || tIdx >= busCount) continue;
+            float* dstBuf = m_busBuffers[static_cast<size_t>(tIdx)].data();
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                dstBuf[f * 2]     += buf[f * 2]     * send.level;
+                dstBuf[f * 2 + 1] += buf[f * 2 + 1] * send.level;
+            }
+        }
 
         int parentIdx = bus.outputBusIndex();
         bool routeToOutput = (parentIdx < 0 || parentIdx >= busCount);
 
         if (routeToOutput) {
-            float* buf = m_busBuffers[idx].data();
             if (outCh >= 2) {
                 for (unsigned long f = 0; f < frameCount; ++f) {
                     float lo, ro;
@@ -970,13 +1000,25 @@ void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
                 }
             }
         } else {
-            float* srcBuf = m_busBuffers[idx].data();
-            float* dstBuf = m_busBuffers[parentIdx].data();
+            float* dstBuf = m_busBuffers[static_cast<size_t>(parentIdx)].data();
             for (unsigned long f = 0; f < frameCount; ++f) {
                 float lo, ro;
-                panStereo(srcBuf[f * 2], srcBuf[f * 2 + 1], bus.pan(), lo, ro);
+                panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan(), lo, ro);
                 dstBuf[f * 2]     += lo * bVol;
                 dstBuf[f * 2 + 1] += ro * bVol;
+            }
+        }
+
+        // Post-fader sends: tapped after the volume fader, scaled by the bus
+        // volume and the send level (pan is not applied to sends).
+        for (const auto& send : bus.sends()) {
+            if (send.preFader) continue;
+            int tIdx = send.busIndex;
+            if (tIdx < 0 || tIdx >= busCount) continue;
+            float* dstBuf = m_busBuffers[static_cast<size_t>(tIdx)].data();
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                dstBuf[f * 2]     += buf[f * 2]     * bVol * send.level;
+                dstBuf[f * 2 + 1] += buf[f * 2 + 1] * bVol * send.level;
             }
         }
     }

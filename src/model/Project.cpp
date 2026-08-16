@@ -43,6 +43,11 @@ void remapBusIndexAfterRemoval(int& index, int removed) {
         --index;
 }
 
+void remapBusSendsAfterRemoval(AudioBus& bus, int removed) {
+    for (auto& send : bus.sends())
+        remapBusIndexAfterRemoval(send.busIndex, removed);
+}
+
 } // namespace
 
 Project::Project()
@@ -233,6 +238,7 @@ bool Project::removeBus(int index) {
         int busIdx = bus.outputBusIndex();
         remapBusIndexAfterRemoval(busIdx, index);
         bus.setOutputBusIndex(busIdx);
+        remapBusSendsAfterRemoval(bus, index);
     }
 
     for (auto& instrument : m_instruments) {
@@ -382,6 +388,10 @@ void Project::fromJson(const QJsonObject& obj) {
             int parent = m_buses[i].outputBusIndex();
             if (parent >= MetronomeBusIndex)
                 m_buses[i].setOutputBusIndex(parent + 1);
+            for (auto& send : m_buses[i].sends()) {
+                if (send.busIndex >= MetronomeBusIndex)
+                    send.busIndex += 1;
+            }
         }
     }
 

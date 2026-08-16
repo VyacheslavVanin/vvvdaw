@@ -41,3 +41,50 @@ void RemoveBusCommand::undo() {
         m_project.addBus(std::move(bus));
     }
 }
+
+// --- AddBusSendCommand ---
+
+AddBusSendCommand::AddBusSendCommand(Project& project, int busIndex)
+    : m_project(project), m_busIndex(busIndex) {}
+
+void AddBusSendCommand::execute() {
+    AudioBus* bus = m_project.busAt(m_busIndex);
+    if (!bus) return;
+    AudioBus::Send send;
+    send.busIndex = 0;
+    send.level = 1.0f;
+    send.preFader = false;
+    bus->sends().push_back(send);
+    m_addedIndex = static_cast<int>(bus->sends().size()) - 1;
+}
+
+void AddBusSendCommand::undo() {
+    AudioBus* bus = m_project.busAt(m_busIndex);
+    if (!bus) return;
+    if (m_addedIndex >= 0 && m_addedIndex < static_cast<int>(bus->sends().size()))
+        bus->sends().erase(bus->sends().begin() + m_addedIndex);
+}
+
+// --- RemoveBusSendCommand ---
+
+RemoveBusSendCommand::RemoveBusSendCommand(Project& project, int busIndex, int sendIndex)
+    : m_project(project), m_busIndex(busIndex), m_sendIndex(sendIndex) {
+    if (const AudioBus* bus = m_project.busAt(busIndex)) {
+        if (sendIndex >= 0 && sendIndex < static_cast<int>(bus->sends().size()))
+            m_savedSend = bus->sends()[static_cast<size_t>(sendIndex)];
+    }
+}
+
+void RemoveBusSendCommand::execute() {
+    AudioBus* bus = m_project.busAt(m_busIndex);
+    if (!bus) return;
+    if (m_sendIndex >= 0 && m_sendIndex < static_cast<int>(bus->sends().size()))
+        bus->sends().erase(bus->sends().begin() + m_sendIndex);
+}
+
+void RemoveBusSendCommand::undo() {
+    AudioBus* bus = m_project.busAt(m_busIndex);
+    if (!bus) return;
+    if (m_sendIndex >= 0 && m_sendIndex <= static_cast<int>(bus->sends().size()))
+        bus->sends().insert(bus->sends().begin() + m_sendIndex, m_savedSend);
+}

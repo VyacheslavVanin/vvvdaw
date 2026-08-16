@@ -325,6 +325,34 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
         pushCommand(std::make_unique<SetBusOutputCommand>(m_project, busIndex, oldVal, newVal));
     });
 
+    connect(m_busPanel, &BusPanelWidget::busSendAddRequested, this, [this](int busIndex) {
+        if (busIndex < 0 || busIndex >= static_cast<int>(m_project.buses().size())) return;
+        executeCommand(std::make_unique<AddBusSendCommand>(m_project, busIndex));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busSendRemoveRequested, this,
+            [this](int busIndex, int sendIndex) {
+        if (busIndex < 0 || busIndex >= static_cast<int>(m_project.buses().size())) return;
+        if (sendIndex < 0 ||
+            sendIndex >= static_cast<int>(m_project.buses()[busIndex].sends().size())) return;
+        executeCommand(std::make_unique<RemoveBusSendCommand>(m_project, busIndex, sendIndex));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busSendTargetWillChange, this,
+            [this](int busIndex, int sendIndex, int oldBus, int newBus) {
+        pushCommand(std::make_unique<SetBusSendTargetCommand>(m_project, busIndex, sendIndex, oldBus, newBus));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busSendLevelWillChange, this,
+            [this](int busIndex, int sendIndex, float oldLevel, float newLevel) {
+        pushCommand(std::make_unique<SetBusSendLevelCommand>(m_project, busIndex, sendIndex, oldLevel, newLevel));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busSendPreWillChange, this,
+            [this](int busIndex, int sendIndex, bool oldPre, bool newPre) {
+        pushCommand(std::make_unique<SetBusSendPreCommand>(m_project, busIndex, sendIndex, oldPre, newPre));
+    });
+
     connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
             [this](int busIndex, PluginInstance* plugin) {
         Q_UNUSED(busIndex);

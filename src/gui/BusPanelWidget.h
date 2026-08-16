@@ -16,6 +16,7 @@ class PluginListWidget;
 class PluginManager;
 class AudioEngine;
 class BusLevelMeter;
+class BusSendsWidget;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -30,6 +31,7 @@ public:
 
     static constexpr int kControlsWidth = 68;
     static constexpr int kPluginPanelWidth = 240;
+    static constexpr int kSendPanelWidth = 200;
 
 signals:
     void busChanged();
@@ -47,6 +49,11 @@ signals:
     void busMuteWillChange(int busIndex, bool oldVal, bool newVal);
     void busNameWillChange(int busIndex, const QString& oldName, const QString& newName);
     void busOutputWillChange(int busIndex, int oldVal, int newVal);
+    void busSendAddRequested(int busIndex);
+    void busSendRemoveRequested(int busIndex, int sendIndex);
+    void busSendTargetWillChange(int busIndex, int sendIndex, int oldBus, int newBus);
+    void busSendLevelWillChange(int busIndex, int sendIndex, float oldLevel, float newLevel);
+    void busSendPreWillChange(int busIndex, int sendIndex, bool oldPre, bool newPre);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -63,6 +70,8 @@ private:
         BusLevelMeter* levelMeter = nullptr;
         QPushButton* pluginToggle = nullptr;
         PluginListWidget* pluginList = nullptr;
+        QPushButton* sendToggle = nullptr;
+        BusSendsWidget* sendsList = nullptr;
     };
 
     void updateMeters();
@@ -79,5 +88,7 @@ private:
     // panel refresh (e.g. after adding a plugin) does not collapse an
     // explicitly opened plugin list.
     std::vector<bool> m_pluginPanelsOpen;
+    // Per-bus "sends panel open" state, carried across rebuild() the same way.
+    std::vector<bool> m_sendPanelsOpen;
     QTimer* m_meterTimer = nullptr;
 };

@@ -169,9 +169,10 @@ private:
     std::vector<float> m_busDeinterleaveR;
     std::vector<std::vector<float>> m_busBuffers;
     std::vector<int> m_busProcessOrder;
-    // Routing snapshot (outputBusIndex per bus) captured when the bus graph
-    // was last rebuilt; used by busRoutingChanged() to detect re-routes.
-    std::vector<int> m_busOutputs;
+    // Routing snapshot (per-bus destination list: main output + send targets)
+    // captured when the bus graph was last rebuilt; used by busRoutingChanged()
+    // to detect re-routes.
+    std::vector<std::vector<int>> m_busOutputs;
     int m_busCount = 0;
     // Per-bus post-fader output metering (written on the audio thread, read on
     // the GUI thread). Guarded by m_meterMutex only around the resize. Deque is

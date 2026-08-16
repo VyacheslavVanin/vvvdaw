@@ -29,6 +29,7 @@
 #include "gui/TimelineRuler.h"
 #include "gui/MeasureRuler.h"
 #include "gui/BusPanelWidget.h"
+#include "gui/BusSendsWidget.h"
 #include "gui/BusLevelMeter.h"
 #include "gui/InstrumentPanelWidget.h"
 #include "gui/PluginListWidget.h"
@@ -106,6 +107,8 @@ private slots:
     void busPanelStripsStayFixedWidth();
     void busPanelPluginToggleRevealsPluginList();
     void busPanelPluginPanelStaysOpenAcrossRebuild();
+    void busPanelSendToggleRevealsSends();
+    void busPanelSendAddAndRemove();
     void busVolumeSliderFollowsMeterDbScale();
     void busLevelMeterIsNarrow();
     void mainWindowRestoresPanelStateFromSettings();
@@ -654,6 +657,80 @@ void MainWindowTest::busPanelPluginPanelStaysOpenAcrossRebuild() {
     QVERIFY(lists[0]->isHidden());
     QVERIFY(!toggles[1]->isChecked());
     QVERIFY(lists[1]->isHidden());
+}
+
+void MainWindowTest::busPanelSendToggleRevealsSends() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("sendToggle");
+    auto lists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(toggles.size(), 3);
+    QCOMPARE(lists.size(), 3);
+
+    QVERIFY(lists[0]->isHidden());
+    toggles[0]->click();
+    QVERIFY(!lists[0]->isHidden());
+    toggles[0]->click();
+    QVERIFY(lists[0]->isHidden());
+}
+
+void MainWindowTest::busPanelSendAddAndRemove() {
+    Project project;
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("sendToggle");
+    toggles[2]->click(); // open the sends panel on the FX bus
+    QVERIFY(project.buses()[2].sends().empty());
+
+    auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(sendLists.size(), 3);
+    auto* addBtn = sendLists[2]->findChild<QPushButton*>("sendAddButton");
+    QVERIFY(addBtn);
+    addBtn->click();
+    QCOMPARE(project.buses()[2].sends().size(), size_t(1));
+    QCOMPARE(project.buses()[2].sends()[0].busIndex, 0);
+    QCOMPARE(project.buses()[2].sends()[0].preFader, false);
+
+    // The add rebuilt the panel; flush deferred deletes and re-fetch.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(sendLists.size(), 3);
+    BusSendsWidget* sendList = sendLists[2];
+
+    const auto combos = sendList->findChildren<QComboBox*>("sendTargetCombo");
+    QCOMPARE(combos.size(), 1);
+    const auto levelSliders = sendList->findChildren<QSlider*>("sendLevelSlider");
+    QCOMPARE(levelSliders.size(), 1);
+    const auto preToggles = sendList->findChildren<QPushButton*>("sendPreToggle");
+    QCOMPARE(preToggles.size(), 1);
+
+    // Changing the level slider (dB scale) updates the model.
+    levelSliders[0]->setValue(50); // -30 dB
+    QVERIFY(std::abs(project.buses()[2].sends()[0].level - decibelsToLinear(-30.0f)) < 1e-3f);
+
+    // The Pre/Post toggle flips the pre-fader flag.
+    preToggles[0]->click();
+    QCOMPARE(project.buses()[2].sends()[0].preFader, true);
+
+    // Undoing the level, pre and add commands restores the empty list.
+    while (project.buses()[2].sends().size() > 0)
+        window.performUndo();
+    QCOMPARE(project.buses()[2].sends().size(), size_t(0));
 }
 
 void MainWindowTest::busVolumeSliderFollowsMeterDbScale() {

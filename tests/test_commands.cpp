@@ -29,6 +29,7 @@ private slots:
     void addBusCommand();
     void removeBusCommand();
     void setBusCommands();
+    void setBusSendCommands();
     void addInstrumentCommand();
     void removeInstrumentCommand();
     void setInstrumentCommands();
@@ -202,6 +203,69 @@ void TestCommands::setBusCommands() {
 
     while (stack.canUndo()) stack.undo();
     QCOMPARE(p.buses().size(), size_t(2));
+}
+
+void TestCommands::setBusSendCommands() {
+    Project p;
+    UndoStack stack;
+    AudioBus fx;
+    fx.setName("FX");
+    p.addBus(std::move(fx)); // index 2
+
+    // Add a default send (target = master, unity, post-fader).
+    stack.execute(std::make_unique<AddBusSendCommand>(p, 2));
+    QCOMPARE(p.buses().size(), size_t(3));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+    QCOMPARE(p.buses()[2].sends()[0].busIndex, 0);
+    QCOMPARE(p.buses()[2].sends()[0].level, 1.0f);
+    QCOMPARE(p.buses()[2].sends()[0].preFader, false);
+
+    // Add a second send on an out-of-range bus: no-op.
+    stack.execute(std::make_unique<AddBusSendCommand>(p, 99));
+    QCOMPARE(p.buses().size(), size_t(3));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+    stack.undo(); // undo the no-op
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+
+    // Undo the real add removes exactly the appended send.
+    stack.undo();
+    QCOMPARE(p.buses()[2].sends().size(), size_t(0));
+    stack.redo();
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+
+    // Set scalar properties on the send.
+    stack.execute(std::make_unique<SetBusSendTargetCommand>(p, 2, 0, 0, 1));
+    QCOMPARE(p.buses()[2].sends()[0].busIndex, 1);
+    stack.execute(std::make_unique<SetBusSendLevelCommand>(p, 2, 0, 1.0f, 0.25f));
+    QCOMPARE(p.buses()[2].sends()[0].level, 0.25f);
+    stack.execute(std::make_unique<SetBusSendPreCommand>(p, 2, 0, false, true));
+    QCOMPARE(p.buses()[2].sends()[0].preFader, true);
+
+    // Out-of-range send index / bus index must not crash.
+    stack.execute(std::make_unique<SetBusSendTargetCommand>(p, 2, 5, 0, 1));
+    stack.execute(std::make_unique<SetBusSendLevelCommand>(p, 99, 0, 1.0f, 0.5f));
+
+    stack.undo(); // undo the no-op level
+    stack.undo(); // undo the no-op target
+    stack.undo(); // pre toggle
+    QCOMPARE(p.buses()[2].sends()[0].preFader, false);
+    stack.undo(); // level
+    QCOMPARE(p.buses()[2].sends()[0].level, 1.0f);
+    stack.undo(); // target
+    QCOMPARE(p.buses()[2].sends()[0].busIndex, 0);
+
+    // Remove the send restores it (with its values) on undo.
+    stack.execute(std::make_unique<RemoveBusSendCommand>(p, 2, 0));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(0));
+    stack.undo();
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+    QCOMPARE(p.buses()[2].sends()[0].busIndex, 0);
+
+    // Remove on an out-of-range send index: no-op.
+    stack.execute(std::make_unique<RemoveBusSendCommand>(p, 2, 3));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+    stack.execute(std::make_unique<RemoveBusSendCommand>(p, 99, 0));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
 }
 
 void TestCommands::addInstrumentCommand() {

@@ -24,8 +24,10 @@ private slots:
     void computeBusSoloPassSetLeaf();
     void computeBusSoloPassSetMaster();
     void computeBusSoloPassSetChain();
+    void computeBusSoloPassSetSendFeed();
     void computeBusProcessOrderChain();
     void computeBusProcessOrderRerouteAfterBusAdd();
+    void computeBusProcessOrderFanOut();
 };
 
 void TestAudio::ringBufferWriteRead() {
@@ -216,18 +218,18 @@ void TestAudio::busBufferPeakMax() {
 
 void TestAudio::computeBusSoloPassSetLeaf() {
     // master(0, -> device), metronome(1, -> master), fx(2, -> master).
-    std::vector<int> outputTo = { -1, 0, 0 };
+    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 } };
     std::vector<bool> solo = { false, false, true };
-    auto pass = computeBusSoloPassSet(outputTo, solo, 3);
+    auto pass = computeBusSoloPassSet(targets, solo, 3);
     QVERIFY(pass[2]); // soloed fx
     QVERIFY(pass[0]); // master carries fx to the output
     QVERIFY(!pass[1]); // metronome is silenced
 }
 
 void TestAudio::computeBusSoloPassSetMaster() {
-    std::vector<int> outputTo = { -1, 0, 0 };
+    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 } };
     std::vector<bool> solo = { true, false, false };
-    auto pass = computeBusSoloPassSet(outputTo, solo, 3);
+    auto pass = computeBusSoloPassSet(targets, solo, 3);
     // Everything feeds master, so soling master keeps the whole mix audible.
     QVERIFY(pass[0]);
     QVERIFY(pass[1]);
@@ -236,9 +238,9 @@ void TestAudio::computeBusSoloPassSetMaster() {
 
 void TestAudio::computeBusSoloPassSetChain() {
     // A(0, -> device), B(1, -> A), C(2, -> B), D(3, -> device).
-    std::vector<int> outputTo = { -1, 0, 1, -1 };
+    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 1 }, { -1 } };
     std::vector<bool> solo = { false, false, true, false };
-    auto pass = computeBusSoloPassSet(outputTo, solo, 4);
+    auto pass = computeBusSoloPassSet(targets, solo, 4);
     QVERIFY(pass[2]); // soloed C
     QVERIFY(pass[1]); // B feeds C and carries its signal onward
     QVERIFY(pass[0]); // A is C's route to the output
@@ -246,18 +248,32 @@ void TestAudio::computeBusSoloPassSetChain() {
 
     // Without any solo the set is empty (the engine only consults it under solo).
     std::vector<bool> none = { false, false, false, false };
-    auto empty = computeBusSoloPassSet(outputTo, none, 4);
+    auto empty = computeBusSoloPassSet(targets, none, 4);
     QVERIFY(!empty[0] && !empty[1] && !empty[2] && !empty[3]);
 }
 
-// Every bus must be processed before the bus it feeds, so the source signal
-// is already in the parent's buffer when the parent runs. Buses routed to the
+// A bus that feeds a soloed bus through a send edge stays audible, so the
+// soloed bus receives its contribution.
+void TestAudio::computeBusSoloPassSetSendFeed() {
+    // master(0, -> device), metronome(1, -> master), fx(2, -> master),
+    // drums(3, -> master) with a send into soloed fx(2).
+    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 }, { 0, 2 } };
+    std::vector<bool> solo = { false, false, true, false };
+    auto pass = computeBusSoloPassSet(targets, solo, 4);
+    QVERIFY(pass[2]); // soloed fx
+    QVERIFY(pass[0]); // master carries fx to the output
+    QVERIFY(pass[3]); // drums feeds fx via the send
+    QVERIFY(!pass[1]); // metronome is silenced
+}
+
+// Every bus must be processed before every bus it feeds, so the source signal
+// is already in the target's buffer when the target runs. Buses routed to the
 // output device are roots and come first.
 void TestAudio::computeBusProcessOrderChain() {
     // Master(0, -> device), Metronome(1, -> master), FX(2, -> master),
     // Sub(3, -> FX).
-    std::vector<int> outputTo = { -1, 0, 0, 2 };
-    auto order = computeBusProcessOrder(outputTo, 4);
+    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0 }, { 2 } };
+    auto order = computeBusProcessOrder(targets, 4);
 
     // All four buses appear exactly once.
     QCOMPARE(order.size(), size_t(4));
@@ -266,14 +282,15 @@ void TestAudio::computeBusProcessOrderChain() {
         seen[b] = true;
     QVERIFY(seen[0] && seen[1] && seen[2] && seen[3]);
 
-    // Each bus precedes its parent (a valid topological order).
+    // Each bus precedes each of its targets (a valid topological order).
     for (int i = 0; i < 4; ++i) {
-        int parent = outputTo[i];
-        if (parent < 0 || parent >= 4) continue;
-        auto itI = std::find(order.begin(), order.end(), i);
-        auto itP = std::find(order.begin(), order.end(), parent);
-        QVERIFY(itI != order.end() && itP != order.end());
-        QVERIFY(itI < itP);
+        for (int t : targets[static_cast<size_t>(i)]) {
+            if (t < 0 || t >= 4) continue;
+            auto itI = std::find(order.begin(), order.end(), i);
+            auto itT = std::find(order.begin(), order.end(), t);
+            QVERIFY(itI != order.end() && itT != order.end());
+            QVERIFY(itI < itT);
+        }
     }
 }
 
@@ -284,12 +301,12 @@ void TestAudio::computeBusProcessOrderChain() {
 void TestAudio::computeBusProcessOrderRerouteAfterBusAdd() {
     // Master(0, -> device), Metronome(1, -> master), FX(2, -> master),
     // New(3, -> master): state right after adding bus 3.
-    std::vector<int> beforeReroute = { -1, 0, 0, 0 };
+    std::vector<std::vector<int>> beforeReroute = { { -1 }, { 0 }, { 0 }, { 0 } };
     auto orderBefore = computeBusProcessOrder(beforeReroute, 4);
     QCOMPARE(orderBefore.size(), size_t(4));
 
     // Re-route FX(2) into the new bus(3): count unchanged.
-    std::vector<int> afterReroute = { -1, 0, 3, 0 };
+    std::vector<std::vector<int>> afterReroute = { { -1 }, { 0 }, { 3 }, { 0 } };
     auto order = computeBusProcessOrder(afterReroute, 4);
 
     QCOMPARE(order.size(), size_t(4));
@@ -300,12 +317,40 @@ void TestAudio::computeBusProcessOrderRerouteAfterBusAdd() {
 
     // And the whole order is a valid topological order.
     for (int i = 0; i < 4; ++i) {
-        int parent = afterReroute[i];
-        if (parent < 0 || parent >= 4) continue;
-        auto itI = std::find(order.begin(), order.end(), i);
-        auto itP = std::find(order.begin(), order.end(), parent);
-        QVERIFY(itI != order.end() && itP != order.end());
-        QVERIFY(itI < itP);
+        for (int t : afterReroute[static_cast<size_t>(i)]) {
+            if (t < 0 || t >= 4) continue;
+            auto itI = std::find(order.begin(), order.end(), i);
+            auto itT = std::find(order.begin(), order.end(), t);
+            QVERIFY(itI != order.end() && itT != order.end());
+            QVERIFY(itI < itT);
+        }
+    }
+}
+
+// Splitting: one bus fans its signal out to two targets (main output + send).
+// Both targets must be processed after the source.
+void TestAudio::computeBusProcessOrderFanOut() {
+    // master(0, -> device), metronome(1, -> master), fx(2, -> master),
+    // drums(3, -> master), fx sends into drums(2) via a send (target 3).
+    std::vector<std::vector<int>> targets = { { -1 }, { 0 }, { 0, 3 }, { 0 } };
+    auto order = computeBusProcessOrder(targets, 4);
+
+    QCOMPARE(order.size(), size_t(4));
+    std::vector<bool> seen(4, false);
+    for (int b : order)
+        seen[b] = true;
+    QVERIFY(seen[0] && seen[1] && seen[2] && seen[3]);
+
+    // FX(2) is processed before both its main target (0) and its send target
+    // (3); the whole order is a valid topological order.
+    for (int i = 0; i < 4; ++i) {
+        for (int t : targets[static_cast<size_t>(i)]) {
+            if (t < 0 || t >= 4) continue;
+            auto itI = std::find(order.begin(), order.end(), i);
+            auto itT = std::find(order.begin(), order.end(), t);
+            QVERIFY(itI != order.end() && itT != order.end());
+            QVERIFY(itI < itT);
+        }
     }
 }
 

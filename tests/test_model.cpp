@@ -41,7 +41,9 @@ private slots:
     void projectLoadCreatesMissingBuses();
     void removeBusRemapsOutputs();
     void removeBusRemapsChannelRoutes();
+    void removeBusRemapsSends();
     void audioBusSerialization();
+    void audioBusSendsSerialization();
     void instrumentSerialization();
     void instrumentRoutingSerialization();
     void trackSerialization();
@@ -691,6 +693,44 @@ void TestModel::removeBusRemapsChannelRoutes() {
     QCOMPARE(insts[0].channelRoutes()[1].busIndex, 0); // removed bus remaps to master
 }
 
+void TestModel::removeBusRemapsSends() {
+    Project p;
+    AudioBus b1;
+    b1.setName("B1");
+    p.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("B2");
+    p.addBus(std::move(b2)); // index 3
+    AudioBus carrier;
+    carrier.setName("Carrier");
+    p.addBus(std::move(carrier)); // index 4
+
+    AudioBus* c = p.busAt(4);
+    std::vector<AudioBus::Send> sends;
+    AudioBus::Send s0;
+    s0.busIndex = 3; // -> B2
+    s0.level = 0.5f;
+    s0.preFader = true;
+    AudioBus::Send s1;
+    s1.busIndex = 2; // -> B1
+    s1.level = 1.0f;
+    sends.push_back(s0);
+    sends.push_back(s1);
+    c->setSends(std::move(sends));
+
+    QVERIFY(p.removeBus(2)); // remove B1
+    QCOMPARE(p.buses().size(), size_t(4));
+    const AudioBus* remapped = p.busAt(3); // carrier shifted down
+    QCOMPARE(remapped->name(), QString("Carrier"));
+    QCOMPARE(remapped->sends().size(), size_t(2));
+    QCOMPARE(remapped->sends()[0].busIndex, 2); // B2 shifted down
+    QCOMPARE(remapped->sends()[0].level, 0.5f);
+    QCOMPARE(remapped->sends()[0].preFader, true);
+    QCOMPARE(remapped->sends()[1].busIndex, 0); // removed bus remaps to master
+    QCOMPARE(remapped->sends()[1].level, 1.0f);
+    QCOMPARE(remapped->sends()[1].preFader, false);
+}
+
 void TestModel::audioBusSerialization() {
     AudioBus bus;
     bus.setName("FX");
@@ -709,6 +749,42 @@ void TestModel::audioBusSerialization() {
     QCOMPARE(restored.isSolo(), true);
     QCOMPARE(restored.isMuted(), false);
     QCOMPARE(restored.removable(), true);
+}
+
+void TestModel::audioBusSendsSerialization() {
+    AudioBus bus;
+    bus.setName("FX");
+    std::vector<AudioBus::Send> sends;
+    AudioBus::Send s0;
+    s0.busIndex = 2;
+    s0.level = 0.3f;
+    s0.preFader = false;
+    AudioBus::Send s1;
+    s1.busIndex = 0;
+    s1.level = 1.0f;
+    s1.preFader = true;
+    sends.push_back(s0);
+    sends.push_back(s1);
+    bus.setSends(std::move(sends));
+
+    AudioBus restored = AudioBus::fromJson(bus.toJson());
+    QCOMPARE(restored.sends().size(), size_t(2));
+    QCOMPARE(restored.sends()[0].busIndex, 2);
+    QCOMPARE(restored.sends()[0].level, 0.3f);
+    QCOMPARE(restored.sends()[0].preFader, false);
+    QCOMPARE(restored.sends()[1].busIndex, 0);
+    QCOMPARE(restored.sends()[1].level, 1.0f);
+    QCOMPARE(restored.sends()[1].preFader, true);
+
+    // A bus with no sends round-trips to an empty list.
+    AudioBus plain;
+    QCOMPARE(AudioBus::fromJson(plain.toJson()).sends().size(), size_t(0));
+
+    // Legacy files without a "sends" member still load (empty list).
+    QJsonObject legacy;
+    legacy["name"] = "Legacy";
+    legacy["outputBusIndex"] = 0;
+    QCOMPARE(AudioBus::fromJson(legacy).sends().size(), size_t(0));
 }
 
 void TestModel::instrumentSerialization() {

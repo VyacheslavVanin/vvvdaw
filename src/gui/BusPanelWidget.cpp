@@ -1,6 +1,7 @@
 #include "BusPanelWidget.h"
 #include "BusLevelMeter.h"
 #include "PluginListWidget.h"
+#include "BusSendsWidget.h"
 #include "audio/AudioEngine.h"
 #include "audio/AudioUtils.h"
 #include "model/Project.h"
@@ -36,19 +37,6 @@ float sliderToVolume(int value) {
 
 } // namespace
 
-static bool wouldCreateCycle(const std::vector<AudioBus>& buses, int fromIndex, int toIndex) {
-    if (toIndex < 0) return false;
-    if (toIndex == fromIndex) return true;
-    int busCount = static_cast<int>(buses.size());
-    int current = toIndex;
-    for (int step = 0; step < busCount; ++step) {
-        if (current == fromIndex) return true;
-        if (current < 0 || current >= busCount) return false;
-        current = buses[current].outputBusIndex();
-    }
-    return false;
-}
-
 BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     : QScrollArea(parent)
     , m_project(project)
@@ -82,10 +70,14 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
 }
 
 void BusPanelWidget::rebuild() {
-    std::vector<bool> openBefore(m_busRows.size(), false);
-    for (size_t i = 0; i < m_busRows.size(); ++i)
+    std::vector<bool> pluginOpenBefore(m_busRows.size(), false);
+    std::vector<bool> sendOpenBefore(m_busRows.size(), false);
+    for (size_t i = 0; i < m_busRows.size(); ++i) {
         if (m_busRows[i].pluginToggle && m_busRows[i].pluginToggle->isChecked())
-            openBefore[i] = true;
+            pluginOpenBefore[i] = true;
+        if (m_busRows[i].sendToggle && m_busRows[i].sendToggle->isChecked())
+            sendOpenBefore[i] = true;
+    }
 
     for (auto& row : m_busRows) {
         if (row.widget) {
@@ -106,8 +98,11 @@ void BusPanelWidget::rebuild() {
     const auto& buses = m_project.buses();
 
     m_pluginPanelsOpen.assign(buses.size(), false);
-    for (size_t i = 0; i < openBefore.size() && i < m_pluginPanelsOpen.size(); ++i)
-        m_pluginPanelsOpen[i] = openBefore[i];
+    m_sendPanelsOpen.assign(buses.size(), false);
+    for (size_t i = 0; i < pluginOpenBefore.size() && i < m_pluginPanelsOpen.size(); ++i)
+        m_pluginPanelsOpen[i] = pluginOpenBefore[i];
+    for (size_t i = 0; i < sendOpenBefore.size() && i < m_sendPanelsOpen.size(); ++i)
+        m_sendPanelsOpen[i] = sendOpenBefore[i];
 
     auto btnStyle = [](const QString& normal, const QString& checked) {
         return normal + "; padding: 0px; }"
@@ -240,7 +235,7 @@ void BusPanelWidget::rebuild() {
         row.outCombo->addItem("Output Device", -1);
         for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
             if (j == i) continue;
-            bool cycle = wouldCreateCycle(buses, i, j);
+            bool cycle = wouldCreateBusCycle(buses, i, j);
             row.outCombo->addItem(buses[j].name(), j);
             int lastIdx = row.outCombo->count() - 1;
             if (cycle) {
@@ -269,6 +264,19 @@ void BusPanelWidget::rebuild() {
         );
         row.pluginToggle->setToolTip("Show/hide plugin chain");
         outRow->addWidget(row.pluginToggle);
+
+        row.sendToggle = new QPushButton("Sn", controls);
+        row.sendToggle->setObjectName("sendToggle");
+        row.sendToggle->setCheckable(true);
+        row.sendToggle->setFixedSize(20, 20);
+        row.sendToggle->setStyleSheet(
+            btnStyle(
+                "QPushButton { background: #333344; color: #88ccaa; border: 1px solid #445566; font-weight: bold; font-size: 8px",
+                "QPushButton:checked { background: #226644; color: white; border: 1px solid #44ff88; font-weight: bold; font-size: 8px"
+            )
+        );
+        row.sendToggle->setToolTip("Show/hide sends");
+        outRow->addWidget(row.sendToggle);
 
         layout->addLayout(outRow);
 
@@ -312,6 +320,48 @@ void BusPanelWidget::rebuild() {
         connect(row.pluginList, &PluginListWidget::pluginWillBeToggled, this,
                 [this, busIndex]() { emit busPluginWillBeToggled(busIndex); });
 
+        // --- Sends list column (hidden until "Sn" is toggled) ---
+        row.sendsList = new BusSendsWidget(row.widget);
+        row.sendsList->setObjectName("busSendList");
+        row.sendsList->setFixedWidth(kSendPanelWidth);
+        row.sendsList->setProject(&m_project, busIndex);
+        row.sendsList->rebuild();
+        stripLayout->addWidget(row.sendsList);
+
+        const bool sendPanelOpen = (busIndex >= 0 && busIndex < static_cast<int>(m_sendPanelsOpen.size()))
+            && m_sendPanelsOpen[busIndex];
+        row.sendsList->setVisible(sendPanelOpen);
+
+        connect(row.sendToggle, &QPushButton::toggled, this, [this, busIndex, row](bool checked) {
+            row.sendsList->setVisible(checked);
+            if (busIndex >= 0 && busIndex < static_cast<int>(m_sendPanelsOpen.size()))
+                m_sendPanelsOpen[busIndex] = checked;
+        });
+        row.sendToggle->setChecked(sendPanelOpen);
+
+        connect(row.sendsList, &BusSendsWidget::sendAddRequested, this,
+                [this, busIndex](int) {
+            emit busSendAddRequested(busIndex);
+            rebuild();
+        });
+        connect(row.sendsList, &BusSendsWidget::sendRemoveRequested, this,
+                [this, busIndex](int sendIndex) {
+            emit busSendRemoveRequested(busIndex, sendIndex);
+            rebuild();
+        });
+        connect(row.sendsList, &BusSendsWidget::sendTargetWillChange, this,
+                [this, busIndex](int, int sendIndex, int oldBus, int newBus) {
+            emit busSendTargetWillChange(busIndex, sendIndex, oldBus, newBus);
+        });
+        connect(row.sendsList, &BusSendsWidget::sendLevelWillChange, this,
+                [this, busIndex](int, int sendIndex, float oldLevel, float newLevel) {
+            emit busSendLevelWillChange(busIndex, sendIndex, oldLevel, newLevel);
+        });
+        connect(row.sendsList, &BusSendsWidget::sendPreWillChange, this,
+                [this, busIndex](int, int sendIndex, bool oldPre, bool newPre) {
+            emit busSendPreWillChange(busIndex, sendIndex, oldPre, newPre);
+        });
+
         connect(row.soloButton, &QPushButton::toggled, this, [this, busIndex](bool checked) {
             bool oldVal = m_project.buses()[busIndex].isSolo();
             emit busSoloWillChange(busIndex, oldVal, checked);
@@ -341,7 +391,7 @@ void BusPanelWidget::rebuild() {
         connect(row.outCombo, QOverload<int>::of(&QComboBox::activated), this,
                 [this, row, busIndex](int comboIdx) {
             int targetBusIdx = row.outCombo->itemData(comboIdx).toInt();
-            if (targetBusIdx >= 0 && wouldCreateCycle(m_project.buses(), busIndex, targetBusIdx)) {
+            if (targetBusIdx >= 0 && wouldCreateBusCycle(m_project.buses(), busIndex, targetBusIdx)) {
                 int outTarget = m_project.buses()[busIndex].outputBusIndex();
                 for (int c = 0; c < row.outCombo->count(); ++c) {
                     if (row.outCombo->itemData(c).toInt() == outTarget) {
@@ -405,9 +455,11 @@ void BusPanelWidget::refreshOutCombos() {
         for (int c = 0; c < combo->count(); ++c) {
             int busIdx = combo->itemData(c).toInt();
             if (busIdx < 0 || busIdx >= static_cast<int>(buses.size())) continue;
-            bool cycle = wouldCreateCycle(buses, from, busIdx);
+            bool cycle = wouldCreateBusCycle(buses, from, busIdx);
             combo->setItemText(c, cycle ? buses[busIdx].name() + " (x)" : buses[busIdx].name());
         }
+        if (m_busRows[from].sendsList)
+            m_busRows[from].sendsList->refreshTargetCombos();
     }
 }
 
