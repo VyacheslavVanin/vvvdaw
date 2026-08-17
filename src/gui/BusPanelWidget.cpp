@@ -191,6 +191,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
         "QLineEdit:focus { background: #333; border: 1px solid #6688cc; }"
     );
     layout->addWidget(row.nameEdit);
+    row.nameEdit->installEventFilter(this);
 
     auto* smRow = new QHBoxLayout;
     smRow->setSpacing(2);
@@ -628,6 +629,7 @@ void BusPanelWidget::startBusDrag(int busIndex) {
 void BusPanelWidget::handleBusDrop(const QPoint& pos, const std::vector<int>& dragged) {
     if (dragged.empty()) return;
 
+    int busCount = static_cast<int>(m_project.buses().size());
     int target = busIndexAt(pos);
     std::vector<int> oldOrder = m_project.busDisplayOrder();
     std::vector<int> newOrder = oldOrder;
@@ -638,26 +640,39 @@ void BusPanelWidget::handleBusDrop(const QPoint& pos, const std::vector<int>& dr
             oldParents.emplace_back(b, bus->outputBusIndex());
     }
 
-    if (target > 0 && m_project.isBusFolder(target)) {
-        // Drop on a folder: move the dragged buses into it (cycle-safe).
-        for (int b : dragged) {
-            if (b == target || wouldCreateBusCycle(m_project.buses(), b, target))
-                continue;
-            newParents.emplace_back(b, target);
+    if (target >= 0 && target < busCount) {
+        // Drop on a strip: the dragged buses become siblings of the target. A
+        // folder target takes them in; otherwise the target's parent becomes
+        // their new parent, so dropping within a folder keeps the folder while
+        // dropping onto a top-level strip moves them out to the master level.
+        int newParent;
+        if (target == 0) {
+            newParent = 0; // master level
+        } else if (m_project.isBusFolder(target)) {
+            newParent = target;
+        } else {
+            newParent = m_project.buses()[target].outputBusIndex();
+            if (newParent < 0 || newParent >= busCount)
+                newParent = 0;
         }
-        auto orderIt = std::find(oldOrder.begin(), oldOrder.end(), target);
-        int beforeIndex = -1;
-        if (orderIt != oldOrder.end() && orderIt + 1 != oldOrder.end())
-            beforeIndex = *(orderIt + 1);
-        newOrder = moveOrderElements(oldOrder, dragged, beforeIndex);
-    } else if (target > 0) {
-        // Drop on a regular strip: reorder the dragged buses before it.
-        newOrder = moveOrderElements(oldOrder, dragged, target);
+        for (int b : dragged) {
+            if (b == newParent || wouldCreateBusCycle(m_project.buses(), b, newParent))
+                continue;
+            newParents.emplace_back(b, newParent);
+        }
+        if (target != 0 && m_project.isBusFolder(target)) {
+            auto orderIt = std::find(oldOrder.begin(), oldOrder.end(), target);
+            int beforeIndex = -1;
+            if (orderIt != oldOrder.end() && orderIt + 1 != oldOrder.end())
+                beforeIndex = *(orderIt + 1);
+            newOrder = moveOrderElements(oldOrder, dragged, beforeIndex);
+        } else {
+            newOrder = moveOrderElements(oldOrder, dragged, target);
+        }
     } else {
-        // Drop on empty space: move the dragged buses out to the master level.
-        for (int b : dragged)
-            if (b != 0)
-                newParents.emplace_back(b, 0);
+        // Drop on empty space (e.g. a gap between strips): reorder the dragged
+        // buses to the end of their current parent's group without changing the
+        // parent, so an imprecise drop never ejects a bus out of its folder.
         newOrder = moveOrderElements(oldOrder, dragged, -1);
     }
 
@@ -700,8 +715,12 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
                 handleStripClick(idx, me->modifiers());
                 m_dragSource = idx;
                 m_dragStartPos = me->globalPosition().toPoint();
-                // Accept so the press does not propagate up to the strip /
-                // container filters (which would toggle selection twice).
+                // A QLineEdit (bus name) accepts the press itself and takes
+                // focus, so let it through (it does not propagate upward). For
+                // plain widgets accept to stop the upward propagation that
+                // would otherwise toggle the selection twice.
+                if (qobject_cast<QLineEdit*>(obj))
+                    return false;
                 return true;
             }
         }

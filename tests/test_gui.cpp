@@ -110,6 +110,7 @@ private slots:
     void busPanelPanelStaysOpenAcrossRebuild();
     void busPanelListsHaveHeaderLabelsAndTopAdd();
     void busPanelSelection();
+    void busPanelNameEditing();
     void busPanelFolderFoldUnfold();
     void busPanelContextMenuHasPutToFolder();
     void busPanelSendAddAndRemove();
@@ -792,6 +793,29 @@ void MainWindowTest::busPanelSelection() {
     QCOMPARE(sel.size(), size_t(2));
     QVERIFY(std::find(sel.begin(), sel.end(), 2) != sel.end());
     QVERIFY(std::find(sel.begin(), sel.end(), 3) != sel.end());
+}
+
+void MainWindowTest::busPanelNameEditing() {
+    Project project;
+    AudioBus b1;
+    b1.setName("B1");
+    project.addBus(std::move(b1)); // index 2
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    auto edits = window.m_busPanel->findChildren<QLineEdit*>();
+    QVERIFY(edits.size() >= 3);
+    QLineEdit* name = edits[2]; // B1
+    QVERIFY(name->isReadOnly());
+
+    // Double-click makes the name editable (cursor appears).
+    QMouseEvent dbl(QEvent::MouseButtonDblClick, QPointF(5, 5), QPointF(5, 5),
+                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(name, &dbl);
+    QVERIFY(!name->isReadOnly());
 }
 
 void MainWindowTest::busPanelFolderFoldUnfold() {
