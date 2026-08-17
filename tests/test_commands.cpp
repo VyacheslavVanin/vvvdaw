@@ -30,6 +30,7 @@ private slots:
     void removeBusCommand();
     void setBusCommands();
     void setBusSendCommands();
+    void busFolderCommands();
     void addInstrumentCommand();
     void removeInstrumentCommand();
     void setInstrumentCommands();
@@ -266,6 +267,54 @@ void TestCommands::setBusSendCommands() {
     QCOMPARE(p.buses()[2].sends().size(), size_t(1));
     stack.execute(std::make_unique<RemoveBusSendCommand>(p, 99, 0));
     QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+}
+
+void TestCommands::busFolderCommands() {
+    Project p;
+    UndoStack stack;
+    AudioBus a;
+    a.setName("A");
+    p.addBus(std::move(a)); // index 2
+    AudioBus b;
+    b.setName("B");
+    p.addBus(std::move(b)); // index 3
+
+    // Collapse a folder.
+    stack.execute(std::make_unique<SetBusFolderCollapsedCommand>(p, 2, false, true));
+    QCOMPARE(p.buses()[2].folderCollapsed(), true);
+    stack.undo();
+    QCOMPARE(p.buses()[2].folderCollapsed(), false);
+
+    // Reorder the display order.
+    stack.execute(std::make_unique<ReorderBusesCommand>(
+        p, std::vector<int>{ 0, 1, 2, 3 }, std::vector<int>{ 0, 1, 3, 2 }));
+    QCOMPARE(p.busDisplayOrder(), (std::vector<int>{ 0, 1, 3, 2 }));
+    stack.undo();
+    QCOMPARE(p.busDisplayOrder(), (std::vector<int>{ 0, 1, 2, 3 }));
+
+    // Move bus A into bus B (a folder move that also re-routes A's output).
+    stack.execute(std::make_unique<MoveBusesCommand>(
+        p, std::vector<int>{ 0, 1, 2, 3 }, std::vector<int>{ 0, 1, 3, 2 },
+        std::vector<std::pair<int, int>>{ { 2, 0 } },
+        std::vector<std::pair<int, int>>{ { 2, 3 } }));
+    QCOMPARE(p.buses()[2].outputBusIndex(), 3); // A -> B
+    QCOMPARE(p.busDisplayOrder(), (std::vector<int>{ 0, 1, 3, 2 }));
+    stack.undo();
+    QCOMPARE(p.buses()[2].outputBusIndex(), 0);
+    QCOMPARE(p.busDisplayOrder(), (std::vector<int>{ 0, 1, 2, 3 }));
+
+    // Create a folder bus and route the child into it.
+    int busCount = static_cast<int>(p.buses().size()); // 4
+    stack.execute(std::make_unique<CreateBusFolderCommand>(p, QString("Folder"),
+                                                           std::vector<int>{ 2 }));
+    QCOMPARE(p.buses().size(), size_t(busCount + 1));
+    int folderIdx = static_cast<int>(p.buses().size()) - 1;
+    QCOMPARE(p.buses()[folderIdx].name(), QString("Folder"));
+    QCOMPARE(p.buses()[2].outputBusIndex(), folderIdx); // A moved into the folder
+    QVERIFY(p.isBusFolder(folderIdx));
+    stack.undo();
+    QCOMPARE(p.buses().size(), size_t(busCount));
+    QCOMPARE(p.buses()[2].outputBusIndex(), 0); // A restored to master
 }
 
 void TestCommands::addInstrumentCommand() {

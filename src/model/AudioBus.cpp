@@ -42,6 +42,7 @@ QJsonObject AudioBus::toJson() const {
     obj["solo"] = m_solo;
     obj["muted"] = m_muted;
     obj["removable"] = m_removable;
+    obj["folderCollapsed"] = m_folderCollapsed;
     if (m_pluginChain.count() > 0)
         obj["plugins"] = m_pluginChain.toJson();
     if (!m_sends.empty()) {
@@ -67,6 +68,7 @@ AudioBus AudioBus::fromJson(const QJsonObject& obj, PluginManager* manager) {
     bus.setSolo(obj["solo"].toBool(false));
     bus.setMuted(obj["muted"].toBool(false));
     bus.setRemovable(obj["removable"].toBool(true));
+    bus.setFolderCollapsed(obj["folderCollapsed"].toBool(false));
     if (obj.contains("plugins"))
         bus.pluginChain().fromJson(obj["plugins"].toObject(), manager);
     if (obj.contains("sends")) {

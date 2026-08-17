@@ -109,6 +109,9 @@ private slots:
     void busPanelToggleRevealsCombinedPanel();
     void busPanelPanelStaysOpenAcrossRebuild();
     void busPanelListsHaveHeaderLabelsAndTopAdd();
+    void busPanelSelection();
+    void busPanelFolderFoldUnfold();
+    void busPanelContextMenuHasPutToFolder();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -735,6 +738,132 @@ void MainWindowTest::busPanelListsHaveHeaderLabelsAndTopAdd() {
     QVERIFY(sendAdd->y() < slist->height() / 2);
     QCOMPARE(plistAdd->y(), effectsLabel->y());
     QCOMPARE(sendAdd->y(), sendsLabel->y());
+}
+
+// Send a left-button press to a widget (used to drive strip selection).
+static void pressLeft(QWidget* w, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(5, 5), w->mapToGlobal(QPoint(5, 5)),
+                      Qt::LeftButton, Qt::LeftButton, mods);
+    QApplication::sendEvent(w, &press);
+}
+
+void MainWindowTest::busPanelSelection() {
+    Project project;
+    AudioBus b1;
+    b1.setName("B1");
+    project.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("B2");
+    project.addBus(std::move(b2)); // index 3
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    QCOMPARE(toggles.size(), 4); // Master, Metronome, B1, B2
+    QWidget* c2 = toggles[2]->parentWidget(); // B1 controls
+    QWidget* c3 = toggles[3]->parentWidget(); // B2 controls
+
+    // Plain click selects a single bus.
+    pressLeft(c2);
+    auto sel = window.m_busPanel->selectedBusIndices();
+    QCOMPARE(sel.size(), size_t(1));
+    QCOMPARE(sel[0], 2);
+
+    // Ctrl-click adds another bus to the selection.
+    pressLeft(c3, Qt::ControlModifier);
+    sel = window.m_busPanel->selectedBusIndices();
+    QCOMPARE(sel.size(), size_t(2));
+    QVERIFY(std::find(sel.begin(), sel.end(), 2) != sel.end());
+    QVERIFY(std::find(sel.begin(), sel.end(), 3) != sel.end());
+
+    // Ctrl-click again removes it.
+    pressLeft(c3, Qt::ControlModifier);
+    sel = window.m_busPanel->selectedBusIndices();
+    QCOMPARE(sel.size(), size_t(1));
+    QCOMPARE(sel[0], 2);
+
+    // Re-anchor on bus 2, then shift-click selects the range 2..3.
+    pressLeft(c2);
+    pressLeft(c3, Qt::ShiftModifier);
+    sel = window.m_busPanel->selectedBusIndices();
+    QCOMPARE(sel.size(), size_t(2));
+    QVERIFY(std::find(sel.begin(), sel.end(), 2) != sel.end());
+    QVERIFY(std::find(sel.begin(), sel.end(), 3) != sel.end());
+}
+
+void MainWindowTest::busPanelFolderFoldUnfold() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2
+    AudioBus child;
+    child.setName("Child");
+    project.addBus(std::move(child)); // index 3
+    project.buses()[3].setOutputBusIndex(2); // Child routes into Folder
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+
+    // Folder is unfolded by default: all four strips are built.
+    QCOMPARE(window.m_busPanel->findChildren<QWidget*>("busStrip").size(), 4);
+    auto folderToggles = window.m_busPanel->findChildren<QPushButton*>("folderToggle");
+    QCOMPARE(folderToggles.size(), 1); // only the folder bus
+
+    // Collapse the folder: the child strip disappears.
+    folderToggles[0]->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(window.m_busPanel->findChildren<QWidget*>("busStrip").size(), 3);
+
+    // Unfold again: the child returns.
+    folderToggles = window.m_busPanel->findChildren<QPushButton*>("folderToggle");
+    QCOMPARE(folderToggles.size(), 1);
+    folderToggles[0]->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(window.m_busPanel->findChildren<QWidget*>("busStrip").size(), 4);
+}
+
+void MainWindowTest::busPanelContextMenuHasPutToFolder() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2
+    AudioBus child;
+    child.setName("Child");
+    project.addBus(std::move(child)); // index 3
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    QWidget* c3 = toggles[3]->parentWidget(); // Child controls
+
+    // Open the context menu and inspect its actions.
+    bool sawPutToFolder = false;
+    QTimer::singleShot(0, [&] {
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (auto* m = qobject_cast<QMenu*>(w)) {
+                for (QAction* a : m->actions())
+                    if (a->text().contains("Put to folder"))
+                        sawPutToFolder = true;
+                m->close();
+            }
+        }
+    });
+
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, c3->rect().center(),
+                         c3->mapToGlobal(c3->rect().center()));
+    QApplication::sendEvent(c3, &ev);
+    QCoreApplication::processEvents();
+    QVERIFY(sawPutToFolder);
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {

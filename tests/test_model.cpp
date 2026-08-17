@@ -42,8 +42,11 @@ private slots:
     void removeBusRemapsOutputs();
     void removeBusRemapsChannelRoutes();
     void removeBusRemapsSends();
+    void busDisplayOrderAndFolders();
+    void busFolderHelpers();
     void audioBusSerialization();
     void audioBusSendsSerialization();
+    void audioBusFolderCollapsedSerialization();
     void instrumentSerialization();
     void instrumentRoutingSerialization();
     void trackSerialization();
@@ -729,6 +732,82 @@ void TestModel::removeBusRemapsSends() {
     QCOMPARE(remapped->sends()[1].busIndex, 0); // removed bus remaps to master
     QCOMPARE(remapped->sends()[1].level, 1.0f);
     QCOMPARE(remapped->sends()[1].preFader, false);
+}
+
+void TestModel::busDisplayOrderAndFolders() {
+    Project p;
+    AudioBus b1;
+    b1.setName("B1");
+    p.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("B2");
+    p.addBus(std::move(b2)); // index 3
+    AudioBus b3;
+    b3.setName("B3");
+    p.addBus(std::move(b3)); // index 4
+
+    // Default display order is the natural bus order.
+    const auto& order = p.busDisplayOrder();
+    QCOMPARE(order, (std::vector<int>{ 0, 1, 2, 3, 4 }));
+
+    // Reorder the display (B2 and B3 swap).
+    p.setBusDisplayOrder({ 0, 1, 2, 4, 3 });
+    QCOMPARE(p.busDisplayOrder(), (std::vector<int>{ 0, 1, 2, 4, 3 }));
+
+    // Removing a bus drops it from the order and remaps the rest.
+    QVERIFY(p.removeBus(3)); // remove B2 (was at 4 in order -> index 3 in vector)
+    QCOMPARE(p.buses().size(), size_t(4));
+    QCOMPARE(p.busDisplayOrder(), (std::vector<int>{ 0, 1, 2, 3 }));
+
+    // Serialization round trip preserves the order.
+    Project copy;
+    copy.fromJson(p.toJson());
+    QCOMPARE(copy.busDisplayOrder(), p.busDisplayOrder());
+}
+
+void TestModel::busFolderHelpers() {
+    Project p;
+    AudioBus b1;
+    b1.setName("Folder");
+    p.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("Child");
+    p.addBus(std::move(b2)); // index 3
+    AudioBus b3;
+    b3.setName("Top");
+    p.addBus(std::move(b3)); // index 4
+
+    // Nothing is a folder yet (no children).
+    QVERIFY(!p.isBusFolder(2));
+    QVERIFY(p.folderChildren(2).empty());
+
+    // Route Child (3) into Folder (2); Folder becomes a folder.
+    p.busAt(3)->setOutputBusIndex(2);
+    QVERIFY(p.isBusFolder(2));
+    QCOMPARE(p.folderChildren(2), (std::vector<int>{ 3 }));
+
+    // Top (4) routes to master, so it is top level.
+    p.busAt(4)->setOutputBusIndex(0);
+    auto top = p.topLevelBusIndices();
+    // Master's children / device-routed buses: Top(4). Folder(2) is NOT top
+    // level because its child routes into it? Actually Folder routes to master,
+    // so it IS top level. Children(3) is not.
+    QVERIFY(std::find(top.begin(), top.end(), 4) != top.end());
+    QVERIFY(std::find(top.begin(), top.end(), 2) != top.end()); // Folder -> master
+    QVERIFY(std::find(top.begin(), top.end(), 3) == top.end()); // child is nested
+}
+
+void TestModel::audioBusFolderCollapsedSerialization() {
+    AudioBus bus;
+    bus.setName("FX");
+    bus.setFolderCollapsed(true);
+    AudioBus restored = AudioBus::fromJson(bus.toJson());
+    QCOMPARE(restored.folderCollapsed(), true);
+
+    // Legacy files without the flag default to unfolded.
+    QJsonObject legacy;
+    legacy["name"] = "FX";
+    QCOMPARE(AudioBus::fromJson(legacy).folderCollapsed(), false);
 }
 
 void TestModel::audioBusSerialization() {

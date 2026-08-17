@@ -60,6 +60,11 @@ public:
     bool removable() const { return m_removable; }
     void setRemovable(bool removable) { m_removable = removable; }
 
+    // Display state: a bus shown as a folder hides its child buses (buses whose
+    // main output routes into it) while collapsed.
+    bool folderCollapsed() const { return m_folderCollapsed; }
+    void setFolderCollapsed(bool collapsed) { m_folderCollapsed = collapsed; }
+
     PluginChain& pluginChain() { return m_pluginChain; }
     const PluginChain& pluginChain() const { return m_pluginChain; }
 
@@ -75,5 +80,6 @@ private:
     bool m_solo = false;
     bool m_muted = false;
     bool m_removable = true;
+    bool m_folderCollapsed = false;
     PluginChain m_pluginChain;
 };

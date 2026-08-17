@@ -7,6 +7,8 @@
 #include <QScrollArea>
 #include <QHBoxLayout>
 #include <QTimer>
+#include <QPoint>
+#include <utility>
 #include <vector>
 
 class Project;
@@ -28,6 +30,7 @@ public:
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioEngine(AudioEngine* engine) { m_engine = engine; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
+    std::vector<int> selectedBusIndices() const { return m_selected; }
 
     static constexpr int kControlsWidth = 68;
     static constexpr int kPluginPanelWidth = 240;
@@ -53,6 +56,14 @@ signals:
     void busSendTargetWillChange(int busIndex, int sendIndex, int oldBus, int newBus);
     void busSendLevelWillChange(int busIndex, int sendIndex, float oldLevel, float newLevel);
     void busSendPreWillChange(int busIndex, int sendIndex, bool oldPre, bool newPre);
+    // A drag / "put to folder" moved the given buses: the panel reordered and/or
+    // re-routed them. Old/new display order and old/new parent (outputBusIndex)
+    // per affected bus let the undo command restore the state.
+    void busesMoved(std::vector<int> oldOrder, std::vector<int> newOrder,
+                    std::vector<std::pair<int, int>> oldParents,
+                    std::vector<std::pair<int, int>> newParents);
+    void busFolderCollapseWillChange(int busIndex, bool oldVal, bool newVal);
+    void createBusFolderRequested(const QString& name, const std::vector<int>& children);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -60,6 +71,7 @@ protected:
 private:
     struct BusRow {
         QWidget* widget = nullptr;
+        QWidget* controls = nullptr;
         QLineEdit* nameEdit = nullptr;
         QPushButton* soloButton = nullptr;
         QPushButton* muteButton = nullptr;
@@ -67,6 +79,7 @@ private:
         QSlider* panSlider = nullptr;
         QSlider* volumeSlider = nullptr;
         BusLevelMeter* levelMeter = nullptr;
+        QPushButton* folderToggle = nullptr;
         QPushButton* panelToggle = nullptr;
         // Combined plugins + sends panel (plugins on top, sends below),
         // revealed by the single panelToggle.
@@ -76,6 +89,23 @@ private:
     };
 
     void updateMeters();
+    void buildBusStrip(int busIndex);
+    // Render one bus and, when it is an unfolded folder, its children.
+    void renderBusTree(int busIndex, int depth);
+    // Selection.
+    bool isSelected(int busIndex) const;
+    void setSelected(const std::vector<int>& buses);
+    void toggleSelected(int busIndex);
+    void handleStripClick(int busIndex, Qt::KeyboardModifiers modifiers);
+    void updateSelectionStyles();
+    int busIndexForWidget(QWidget* widget) const;
+    int busIndexAt(const QPoint& pos) const;
+    // Drag & drop.
+    void startBusDrag(int busIndex);
+    void handleBusDrop(const QPoint& pos, const std::vector<int>& dragged);
+    // Re-route the given buses into `folder` (a bus index) without changing the
+    // display order; used by the "Put to folder" context menu.
+    void moveBusesToFolder(const std::vector<int>& targets, int folder);
 
     Project& m_project;
     PluginManager* m_pluginManager = nullptr;
@@ -89,5 +119,12 @@ private:
     // full panel refresh (e.g. after adding a plugin or send) does not collapse
     // an explicitly opened combined panel.
     std::vector<bool> m_panelOpen;
+    // Flat render order of the panel (bus indices in display sequence, folders
+    // expanded), used for shift-range selection.
+    std::vector<int> m_renderOrder;
+    std::vector<int> m_selected;
+    int m_selectionAnchor = -1;
+    int m_dragSource = -1;
+    QPoint m_dragStartPos;
     QTimer* m_meterTimer = nullptr;
 };

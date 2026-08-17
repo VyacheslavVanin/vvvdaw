@@ -55,6 +55,7 @@ Project::Project()
 {
     m_buses.push_back(makeDefaultMasterBus());
     m_buses.push_back(makeDefaultMetronomeBus());
+    m_busDisplayOrder = { 0, 1 };
 }
 
 bool Project::load(const QString& filePath) {
@@ -196,6 +197,7 @@ const Instrument* Project::instrumentAt(int index) const {
 
 int Project::addBus(AudioBus bus) {
     m_buses.push_back(std::move(bus));
+    m_busDisplayOrder.push_back(static_cast<int>(m_buses.size()) - 1);
     return static_cast<int>(m_buses.size()) - 1;
 }
 
@@ -252,7 +254,54 @@ bool Project::removeBus(int index) {
         }
     }
 
+    // The removed bus leaves the display order; remaining indices shift down.
+    m_busDisplayOrder.erase(
+        std::remove(m_busDisplayOrder.begin(), m_busDisplayOrder.end(), index),
+        m_busDisplayOrder.end());
+    for (auto& o : m_busDisplayOrder)
+        remapBusIndexAfterRemoval(o, index);
+
     return true;
+}
+
+bool Project::isBusFolder(int index) const {
+    if (index <= 0 || index >= static_cast<int>(m_buses.size()))
+        return false;
+    for (const auto& bus : m_buses) {
+        if (bus.outputBusIndex() == index)
+            return true;
+    }
+    return false;
+}
+
+std::vector<int> Project::folderChildren(int index) const {
+    std::vector<int> children;
+    for (int i = 1; i < static_cast<int>(m_buses.size()); ++i) {
+        if (m_buses[static_cast<size_t>(i)].outputBusIndex() == index)
+            children.push_back(i);
+    }
+    std::stable_sort(children.begin(), children.end(), [this](int a, int b) {
+        auto itA = std::find(m_busDisplayOrder.begin(), m_busDisplayOrder.end(), a);
+        auto itB = std::find(m_busDisplayOrder.begin(), m_busDisplayOrder.end(), b);
+        return itA < itB;
+    });
+    return children;
+}
+
+std::vector<int> Project::topLevelBusIndices() const {
+    std::vector<int> top;
+    int busCount = static_cast<int>(m_buses.size());
+    for (int i = 1; i < busCount; ++i) {
+        int parent = m_buses[static_cast<size_t>(i)].outputBusIndex();
+        if (parent == 0 || parent < 0 || parent >= busCount)
+            top.push_back(i);
+    }
+    std::stable_sort(top.begin(), top.end(), [this](int a, int b) {
+        auto itA = std::find(m_busDisplayOrder.begin(), m_busDisplayOrder.end(), a);
+        auto itB = std::find(m_busDisplayOrder.begin(), m_busDisplayOrder.end(), b);
+        return itA < itB;
+    });
+    return top;
 }
 
 QString Project::audioDirectory() const {
@@ -323,6 +372,11 @@ QJsonObject Project::toJson() const {
         busesArr.append(bus.toJson());
     obj["buses"] = busesArr;
 
+    QJsonArray orderArr;
+    for (int o : m_busDisplayOrder)
+        orderArr.append(o);
+    obj["busDisplayOrder"] = orderArr;
+
     QJsonArray instrumentsArr;
     for (const auto& instrument : m_instruments)
         instrumentsArr.append(instrument.toJson());
@@ -369,6 +423,15 @@ void Project::fromJson(const QJsonObject& obj) {
             m_buses.push_back(AudioBus::fromJson(bVal.toObject(), m_pluginManager));
     }
 
+    // Bus display order from the file (indices into the file's bus list; it may
+    // need remapping below if the master/metronome buses are re-inserted).
+    std::vector<int> loadedOrder;
+    if (obj.contains("busDisplayOrder")) {
+        const QJsonArray orderArr = obj["busDisplayOrder"].toArray();
+        for (const auto& v : orderArr)
+            loadedOrder.push_back(v.toInt());
+    }
+
     if (m_buses.empty() || m_buses[0].name() != "Master") {
         m_buses.insert(m_buses.begin(), makeDefaultMasterBus());
     }
@@ -393,6 +456,31 @@ void Project::fromJson(const QJsonObject& obj) {
                     send.busIndex += 1;
             }
         }
+        for (auto& o : loadedOrder)
+            if (o >= MetronomeBusIndex)
+                o += 1;
+    }
+
+    // Rebuild the display order: master first, then metronome, then the loaded
+    // order (deduplicated). Any bus missing from the loaded order is appended so
+    // the list is always a valid permutation of 0..n-1.
+    const int n = static_cast<int>(m_buses.size());
+    m_busDisplayOrder.clear();
+    m_busDisplayOrder.reserve(static_cast<size_t>(n));
+    m_busDisplayOrder.push_back(0);
+    if (n > MetronomeBusIndex)
+        m_busDisplayOrder.push_back(MetronomeBusIndex);
+    for (int o : loadedOrder) {
+        if (o == 0 || (n > MetronomeBusIndex && o == MetronomeBusIndex)) continue;
+        if (o > 0 && o < n)
+            m_busDisplayOrder.push_back(o);
+    }
+    std::vector<bool> seen(static_cast<size_t>(n), false);
+    for (int o : m_busDisplayOrder)
+        if (o >= 0 && o < n) seen[static_cast<size_t>(o)] = true;
+    for (int i = 1; i < n; ++i) {
+        if (i != MetronomeBusIndex && !seen[static_cast<size_t>(i)])
+            m_busDisplayOrder.push_back(i);
     }
 
     m_buses[0].setRemovable(false);

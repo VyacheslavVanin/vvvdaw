@@ -128,3 +128,70 @@ using SetBusSendLevelCommand = SetBusSendCommand<
     float, 93, true, &AudioBus::Send::setLevel>;
 using SetBusSendPreCommand = SetBusSendCommand<
     bool, 94, false, &AudioBus::Send::setPreFader>;
+
+// --- Bus folders / ordering ---
+
+class ReorderBusesCommand : public UndoCommand {
+public:
+    ReorderBusesCommand(Project& project, std::vector<int> oldOrder,
+                        std::vector<int> newOrder);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 95; }
+private:
+    Project& m_project;
+    std::vector<int> m_oldOrder;
+    std::vector<int> m_newOrder;
+};
+
+// Atomically re-route buses into/out of folders and reorder the panel.
+// Captures the old/new display order and the old/new parent (outputBusIndex)
+// per affected bus for undo/redo.
+class MoveBusesCommand : public UndoCommand {
+public:
+    MoveBusesCommand(Project& project, std::vector<int> oldOrder,
+                     std::vector<int> newOrder,
+                     std::vector<std::pair<int, int>> oldParents,
+                     std::vector<std::pair<int, int>> newParents);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 96; }
+private:
+    Project& m_project;
+    std::vector<int> m_oldOrder;
+    std::vector<int> m_newOrder;
+    std::vector<std::pair<int, int>> m_oldParents;
+    std::vector<std::pair<int, int>> m_newParents;
+};
+
+class SetBusFolderCollapsedCommand : public UndoCommand {
+public:
+    SetBusFolderCollapsedCommand(Project& project, int busIndex,
+                                 bool oldVal, bool newVal);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 97; }
+private:
+    Project& m_project;
+    int m_busIndex;
+    bool m_oldVal;
+    bool m_newVal;
+};
+
+// Create a new folder bus and route the given children into it. The folder is
+// appended (highest index); undo restores the children's original parents and
+// removes the folder.
+class CreateBusFolderCommand : public UndoCommand {
+public:
+    CreateBusFolderCommand(Project& project, QString folderName,
+                           std::vector<int> children);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 98; }
+private:
+    Project& m_project;
+    QString m_name;
+    std::vector<int> m_children;
+    std::vector<std::pair<int, int>> m_oldParents;
+    int m_folderIndex = -1;
+};

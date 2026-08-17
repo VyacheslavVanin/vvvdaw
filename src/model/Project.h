@@ -60,6 +60,21 @@ public:
     int addBus(AudioBus bus);
     bool removeBus(int index);
 
+    // Bus panel display order (indices into buses()). Dragging buses reorders
+    // this list instead of the buses vector, so index-addressed references
+    // (tracks, instruments, routes, sends) stay stable.
+    const std::vector<int>& busDisplayOrder() const { return m_busDisplayOrder; }
+    std::vector<int>& busDisplayOrder() { return m_busDisplayOrder; }
+    void setBusDisplayOrder(std::vector<int> order) { m_busDisplayOrder = std::move(order); }
+
+    // True when at least one bus routes its main output into `index`.
+    bool isBusFolder(int index) const;
+    // Buses routed into `index` (its folder children), ordered for display.
+    std::vector<int> folderChildren(int index) const;
+    // Master plus every bus routed to the master bus or the output device, in
+    // display order: the top-level sequence of the bus panel.
+    std::vector<int> topLevelBusIndices() const;
+
     int addInstrument(Instrument instrument);
     bool removeInstrument(int index);
 
@@ -137,4 +152,5 @@ private:
     std::vector<AudioBus> m_buses;
     std::vector<Instrument> m_instruments;
     PluginManager* m_pluginManager = nullptr;
+    std::vector<int> m_busDisplayOrder;
 };

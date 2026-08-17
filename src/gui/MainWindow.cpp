@@ -353,6 +353,29 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
         pushCommand(std::make_unique<SetBusSendPreCommand>(m_project, busIndex, sendIndex, oldPre, newPre));
     });
 
+    connect(m_busPanel, &BusPanelWidget::busesMoved, this,
+            [this](std::vector<int> oldOrder, std::vector<int> newOrder,
+                   std::vector<std::pair<int, int>> oldParents,
+                   std::vector<std::pair<int, int>> newParents) {
+        executeCommand(std::make_unique<MoveBusesCommand>(
+            m_project, std::move(oldOrder), std::move(newOrder),
+            std::move(oldParents), std::move(newParents)));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busFolderCollapseWillChange, this,
+            [this](int busIndex, bool oldVal, bool newVal) {
+        pushCommand(std::make_unique<SetBusFolderCollapsedCommand>(
+            m_project, busIndex, oldVal, newVal));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::createBusFolderRequested, this,
+            [this](const QString& name, const std::vector<int>& children) {
+        if (name.isEmpty() || children.empty()) return;
+        executeCommand(std::make_unique<CreateBusFolderCommand>(m_project, name, children));
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
+    });
+
     connect(m_busPanel, &BusPanelWidget::openBusPluginEditorRequested, this,
             [this](int busIndex, PluginInstance* plugin) {
         Q_UNUSED(busIndex);
