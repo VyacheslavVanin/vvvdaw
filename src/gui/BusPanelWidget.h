@@ -105,11 +105,14 @@ private:
     int busIndexForWidget(QWidget* widget) const;
     // Where a drop at `pos` (container coordinates) would insert the dragged
     // buses: the new parent bus, the display-order index to insert before
-    // (-1 = append) and the x position for the insertion line.
+    // (-1 = append) and the x position for the insertion line. When the drop
+    // targets a folder's body, `highlightFolder` is that folder and the parent
+    // is it (the dragged buses move into the folder instead of being inserted).
     struct DropSlot {
         int parent = 0;
         int beforeIndex = -1;
         int insertionX = 0;
+        int highlightFolder = -1;
     };
     DropSlot dropSlotAt(const QPoint& pos) const;
     int nextRenderIndex(int afterIndex) const;
@@ -139,5 +142,6 @@ private:
     int m_dragSource = -1;
     QPoint m_dragStartPos;
     QFrame* m_insertionLine = nullptr;
+    QFrame* m_folderHighlight = nullptr;
     QTimer* m_meterTimer = nullptr;
 };

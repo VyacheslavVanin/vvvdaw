@@ -25,6 +25,7 @@
 #include <QApplication>
 #include <QInputDialog>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -67,6 +68,13 @@ BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
     m_insertionLine->setFixedWidth(2);
     m_insertionLine->setStyleSheet("QFrame { background: #4488cc; border: none; }");
     m_insertionLine->hide();
+
+    // Outline highlighting a folder the dragged buses would be dropped into.
+    m_folderHighlight = new QFrame(m_container);
+    m_folderHighlight->setObjectName("busFolderHighlight");
+    m_folderHighlight->setStyleSheet(
+        "QFrame { background: rgba(68,136,204,40); border: 2px solid #4488cc; }");
+    m_folderHighlight->hide();
 
     auto* rootLayout = new QHBoxLayout(m_container);
     rootLayout->setContentsMargins(4, 4, 4, 4);
@@ -593,6 +601,7 @@ BusPanelWidget::DropSlot BusPanelWidget::dropSlotAt(const QPoint& pos) const {
     slot.parent = 0;
     slot.beforeIndex = -1;
     slot.insertionX = 0;
+    slot.highlightFolder = -1;
 
     const int busCount = static_cast<int>(m_busRows.size());
     if (busCount == 0) return slot;
@@ -605,36 +614,52 @@ BusPanelWidget::DropSlot BusPanelWidget::dropSlotAt(const QPoint& pos) const {
         if (pos.x() >= g.left() && pos.x() < g.right()) { target = idx; break; }
     }
 
-    if (target < 0) {
-        // Trailing empty space: append to the last rendered strip's group
-        // (never ejects the bus out of its folder).
-        if (m_renderOrder.empty()) return slot;
-        int last = m_renderOrder.back();
-        if (last < 0 || last >= busCount || !m_busRows[last].widget) return slot;
-        int parent = m_project.buses()[last].outputBusIndex();
+    auto parentOf = [this, busCount](int idx) {
+        if (idx <= 0) return 0;
+        int parent = m_project.buses()[idx].outputBusIndex();
         if (parent < 0 || parent >= busCount) parent = 0;
-        slot.parent = parent;
-        slot.beforeIndex = -1;
-        slot.insertionX = m_busRows[last].widget->geometry().right();
+        return parent;
+    };
+
+    if (target < 0) {
+        // A gap between strips: insert before the next strip to the right, or
+        // append to the last rendered strip's group when beyond everything.
+        int next = -1;
+        int bestLeft = std::numeric_limits<int>::max();
+        for (int idx : m_renderOrder) {
+            if (idx < 0 || idx >= busCount || !m_busRows[idx].widget) continue;
+            int left = m_busRows[idx].widget->geometry().left();
+            if (left > pos.x() && left < bestLeft) { bestLeft = left; next = idx; }
+        }
+        if (next < 0) {
+            if (m_renderOrder.empty()) return slot;
+            int last = m_renderOrder.back();
+            if (last < 0 || last >= busCount || !m_busRows[last].widget) return slot;
+            slot.parent = parentOf(last);
+            slot.beforeIndex = -1;
+            slot.insertionX = m_busRows[last].widget->geometry().right();
+            return slot;
+        }
+        slot.parent = parentOf(next);
+        slot.beforeIndex = next;
+        slot.insertionX = m_busRows[next].widget->geometry().left();
         return slot;
     }
 
     const QRect g = m_busRows[target].widget->geometry();
 
-    if (target == 0) {
-        // Drop on master: top level, right after master.
-        slot.parent = 0;
-        int next = nextRenderIndex(target);
-        slot.beforeIndex = next;
-        slot.insertionX = (next >= 0 && m_busRows[next].widget)
-                              ? m_busRows[next].widget->geometry().left()
-                              : g.right();
+    // Left quarter of a strip: insert as a sibling before it.
+    if (pos.x() < g.left() + g.width() / 4) {
+        slot.parent = parentOf(target);
+        slot.beforeIndex = target;
+        slot.insertionX = g.left();
         return slot;
     }
 
     if (m_project.isBusFolder(target)) {
-        // Drop on a folder header: move into the folder as its last child.
+        // Folder body: move the dragged buses into it (folder gets highlighted).
         slot.parent = target;
+        slot.highlightFolder = target;
         slot.beforeIndex = -1;
         slot.insertionX = g.right();
         for (int c : m_project.folderChildren(target)) {
@@ -644,22 +669,13 @@ BusPanelWidget::DropSlot BusPanelWidget::dropSlotAt(const QPoint& pos) const {
         return slot;
     }
 
-    // Regular strip: the dragged bus becomes a sibling of the target.
-    int parent = m_project.buses()[target].outputBusIndex();
-    if (parent < 0 || parent >= busCount) parent = 0;
-    slot.parent = parent;
-    if (pos.x() < g.center().x()) {
-        // Insert before the target.
-        slot.beforeIndex = target;
-        slot.insertionX = g.left();
-    } else {
-        // Insert after the target (before the next rendered strip, or append).
-        int next = nextRenderIndex(target);
-        slot.beforeIndex = next;
-        slot.insertionX = (next >= 0 && m_busRows[next].widget)
-                              ? m_busRows[next].widget->geometry().left()
-                              : g.right();
-    }
+    // Regular strip, right portion: insert after it (sibling of the target).
+    slot.parent = parentOf(target);
+    int next = nextRenderIndex(target);
+    slot.beforeIndex = next;
+    slot.insertionX = (next >= 0 && m_busRows[next].widget)
+                          ? m_busRows[next].widget->geometry().left()
+                          : g.right();
     return slot;
 }
 
@@ -690,6 +706,7 @@ static std::vector<int> moveOrderElements(const std::vector<int>& order,
 void BusPanelWidget::startBusDrag(int busIndex) {
     if (busIndex < 0) return;
     m_insertionLine->hide();
+    m_folderHighlight->hide();
     std::vector<int> dragged = m_selected;
     if (dragged.empty() || !isSelected(busIndex))
         dragged = { busIndex };
@@ -869,6 +886,7 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
         auto* de = static_cast<QDragEnterEvent*>(event);
         if (de->mimeData()->hasFormat(kBusDragMime)) {
             m_insertionLine->hide();
+            m_folderHighlight->hide();
             de->acceptProposedAction();
             return true;
         }
@@ -878,20 +896,33 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
         if (dm->mimeData()->hasFormat(kBusDragMime)) {
             dm->acceptProposedAction();
             DropSlot slot = dropSlotAt(dm->position().toPoint());
-            m_insertionLine->raise();
-            m_insertionLine->setGeometry(slot.insertionX - 1, 0, 2, m_container->height());
-            m_insertionLine->show();
+            if (slot.highlightFolder >= 0 &&
+                slot.highlightFolder < static_cast<int>(m_busRows.size()) &&
+                m_busRows[slot.highlightFolder].widget) {
+                m_insertionLine->hide();
+                m_folderHighlight->raise();
+                m_folderHighlight->setGeometry(
+                    m_busRows[slot.highlightFolder].widget->geometry());
+                m_folderHighlight->show();
+            } else {
+                m_folderHighlight->hide();
+                m_insertionLine->raise();
+                m_insertionLine->setGeometry(slot.insertionX - 1, 0, 2, m_container->height());
+                m_insertionLine->show();
+            }
             return true;
         }
     }
     if (obj == m_container && event->type() == QEvent::DragLeave) {
         m_insertionLine->hide();
+        m_folderHighlight->hide();
         return false;
     }
     if (obj == m_container && event->type() == QEvent::Drop) {
         auto* de = static_cast<QDropEvent*>(event);
         if (de->mimeData()->hasFormat(kBusDragMime)) {
             m_insertionLine->hide();
+            m_folderHighlight->hide();
             std::vector<int> dragged;
             for (const auto& part : de->mimeData()->data(kBusDragMime).split(';')) {
                 bool ok = false;

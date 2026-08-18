@@ -115,6 +115,8 @@ private slots:
     void busPanelContextMenuHasPutToFolder();
     void busPanelDropReorderWithinFolder();
     void busPanelDropTrailingKeepsFolder();
+    void busPanelDropReorderFoldersInFolder();
+    void busPanelDropFolderIntoFolder();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -968,6 +970,91 @@ void MainWindowTest::busPanelDropTrailingKeepsFolder() {
     QCoreApplication::processEvents();
 
     QCOMPARE(project.buses()[4].outputBusIndex(), 2); // still in the folder
+}
+
+void MainWindowTest::busPanelDropReorderFoldersInFolder() {
+    Project project;
+    AudioBus o;
+    o.setName("O");
+    project.addBus(std::move(o)); // index 2
+    AudioBus f1;
+    f1.setName("F1");
+    project.addBus(std::move(f1)); // index 3
+    AudioBus f2;
+    f2.setName("F2");
+    project.addBus(std::move(f2)); // index 4
+    AudioBus c1;
+    c1.setName("c1");
+    project.addBus(std::move(c1)); // index 5
+    project.buses()[3].setOutputBusIndex(2); // F1 -> O
+    project.buses()[4].setOutputBusIndex(2); // F2 -> O
+    project.buses()[5].setOutputBusIndex(3); // c1 -> F1
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
+
+    auto strips = window.m_busPanel->findChildren<QWidget*>("busStrip");
+    QCOMPARE(strips.size(), 6); // Master, Metro, O, F1, c1, F2
+    QWidget* f1Strip = strips[3];
+    QWidget* f2Strip = strips[5];
+
+    // Drop F2 on F1's left quarter: F2 becomes F1's sibling (still in O).
+    QPoint dropPos(f1Strip->geometry().left() + f1Strip->width() / 8,
+                   f1Strip->geometry().center().y());
+    window.m_busPanel->handleBusDrop(dropPos, { 4 });
+    QCoreApplication::processEvents();
+
+    QCOMPARE(project.buses()[4].outputBusIndex(), 2); // still in O, not inside F1
+    const auto& order = project.busDisplayOrder();
+    auto itF1 = std::find(order.begin(), order.end(), 3);
+    auto itF2 = std::find(order.begin(), order.end(), 4);
+    QVERIFY(itF1 != order.end() && itF2 != order.end());
+    QVERIFY(itF2 < itF1); // F2 is now before F1
+}
+
+void MainWindowTest::busPanelDropFolderIntoFolder() {
+    Project project;
+    AudioBus o;
+    o.setName("O");
+    project.addBus(std::move(o)); // index 2
+    AudioBus f1;
+    f1.setName("F1");
+    project.addBus(std::move(f1)); // index 3
+    AudioBus f2;
+    f2.setName("F2");
+    project.addBus(std::move(f2)); // index 4
+    AudioBus c1;
+    c1.setName("c1");
+    project.addBus(std::move(c1)); // index 5
+    project.buses()[3].setOutputBusIndex(2); // F1 -> O
+    project.buses()[4].setOutputBusIndex(2); // F2 -> O
+    project.buses()[5].setOutputBusIndex(3); // c1 -> F1
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
+
+    auto strips = window.m_busPanel->findChildren<QWidget*>("busStrip");
+    QCOMPARE(strips.size(), 6);
+    QWidget* f1Strip = strips[3];
+
+    // Drop F2 on F1's body: F2 moves into F1 (nesting is still possible).
+    QPoint dropPos = f1Strip->geometry().center();
+    window.m_busPanel->handleBusDrop(dropPos, { 4 });
+    QCoreApplication::processEvents();
+
+    QCOMPARE(project.buses()[4].outputBusIndex(), 3); // F2 is now inside F1
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {
