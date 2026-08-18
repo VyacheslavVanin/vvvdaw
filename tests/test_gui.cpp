@@ -117,6 +117,7 @@ private slots:
     void busPanelDropTrailingKeepsFolder();
     void busPanelDropReorderFoldersInFolder();
     void busPanelDropFolderIntoFolder();
+    void busPanelFolderTintNoIndent();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -1055,6 +1056,70 @@ void MainWindowTest::busPanelDropFolderIntoFolder() {
     QCoreApplication::processEvents();
 
     QCOMPARE(project.buses()[4].outputBusIndex(), 3); // F2 is now inside F1
+}
+
+void MainWindowTest::busPanelFolderTintNoIndent() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2 (F)
+    AudioBus child;
+    child.setName("Child");
+    project.addBus(std::move(child)); // index 3 (C) -> F
+    AudioBus nested;
+    nested.setName("Nested");
+    project.addBus(std::move(nested)); // index 4 (N) -> F
+    AudioBus grandchild;
+    grandchild.setName("Grandchild");
+    project.addBus(std::move(grandchild)); // index 5 (G) -> N
+    AudioBus top;
+    top.setName("Top");
+    project.addBus(std::move(top)); // index 6 (T) -> master
+    project.buses()[3].setOutputBusIndex(2); // C -> F
+    project.buses()[4].setOutputBusIndex(2); // N -> F
+    project.buses()[5].setOutputBusIndex(4); // G -> N
+    project.buses()[6].setOutputBusIndex(0); // T -> master
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
+
+    // Render order: Master(0), Metronome(1), Folder(2), Child(3), Nested(4),
+    // Grandchild(5), Top(6).
+    auto strips = window.m_busPanel->findChildren<QWidget*>("busStrip");
+    QCOMPARE(strips.size(), 7);
+    QWidget* folderStrip = strips[2];
+    QWidget* childStrip = strips[3];
+    QWidget* nestedStrip = strips[4];
+    QWidget* grandchildStrip = strips[5];
+    QWidget* topStrip = strips[6];
+
+    // No indentation: every strip sits edge to edge with only the container's
+    // plain spacing (the old code inserted 14px/28px indent spacers per level,
+    // so folder/child gaps were far wider than the top-level gap).
+    int plainGap = strips[1]->geometry().left() - strips[0]->geometry().right();
+    QVERIFY(plainGap < 10); // a sane plain layout spacing
+    for (int i = 1; i + 1 < strips.size(); ++i)
+        QCOMPARE(strips[i + 1]->geometry().left() - strips[i]->geometry().right(),
+                 plainGap);
+
+    // Folder membership via a shared tint: the folder and its direct children
+    // share one tone, a nested folder forms its own distinct group.
+    auto stripColor = [](QWidget* w) { return w->palette().color(QPalette::Window); };
+    QVERIFY(project.isBusFolder(2));
+    QCOMPARE(stripColor(childStrip), stripColor(folderStrip));      // C shares F's tint
+    QCOMPARE(stripColor(grandchildStrip), stripColor(nestedStrip)); // G shares N's tint
+    QVERIFY(stripColor(nestedStrip) != stripColor(folderStrip));    // nested folder: own hue
+    QVERIFY(stripColor(grandchildStrip) != stripColor(childStrip)); // nested group distinct
+
+    // Top-level buses keep the plain alternating tone (no tint).
+    QCOMPARE(stripColor(topStrip), QColor("#2e2e2e"));
+    QCOMPARE(stripColor(strips[1]), QColor("#333333")); // Metronome
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {

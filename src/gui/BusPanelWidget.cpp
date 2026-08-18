@@ -43,6 +43,13 @@ float sliderToVolume(int value) {
     return decibelsToLinear(db);
 }
 
+// Linear interpolation between two colors; `t` in [0,1], 1 = fully `b`.
+QColor blend(const QColor& a, const QColor& b, float t) {
+    return QColor(std::lround(a.red() + (b.red() - a.red()) * t),
+                  std::lround(a.green() + (b.green() - a.green()) * t),
+                  std::lround(a.blue() + (b.blue() - a.blue()) * t));
+}
+
 } // namespace
 
 BusPanelWidget::BusPanelWidget(Project& project, QWidget* parent)
@@ -132,28 +139,51 @@ void BusPanelWidget::rebuild() {
         m_selectionAnchor = -1;
 
     m_renderOrder.clear();
-    renderBusTree(0, 0); // master is the root
+    renderBusTree(0); // master is the root
     for (int idx : m_project.topLevelBusIndices())
-        renderBusTree(idx, 0);
+        renderBusTree(idx);
 
     m_containerLayout->addStretch();
     updateSelectionStyles();
 }
 
-void BusPanelWidget::renderBusTree(int busIndex, int depth) {
+void BusPanelWidget::renderBusTree(int busIndex) {
     if (busIndex < 0 || busIndex >= static_cast<int>(m_busRows.size()))
         return;
-    if (depth > 0) {
-        auto* spacer = new QWidget(m_container);
-        spacer->setFixedWidth(depth * 14);
-        m_containerLayout->addWidget(spacer);
-    }
     buildBusStrip(busIndex);
     m_renderOrder.push_back(busIndex);
     if (m_project.isBusFolder(busIndex) && !m_project.buses()[busIndex].folderCollapsed()) {
         for (int c : m_project.folderChildren(busIndex))
-            renderBusTree(c, depth + 1);
+            renderBusTree(c);
     }
+}
+
+QColor BusPanelWidget::folderColorFor(int folderIndex) {
+    return QColor::fromHsv((folderIndex * 47) % 360, 90, 160);
+}
+
+QColor BusPanelWidget::stripBaseColor(int busIndex) const {
+    const auto& buses = m_project.buses();
+    QColor base = (busIndex % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333");
+
+    // The folder this bus belongs to: a folder anchors its group with its own
+    // color, a regular bus uses its parent folder's color. Nested folders get
+    // their own hue, so the hierarchy reads as nested uniform tints.
+    int folderIndex = -1;
+    if (m_project.isBusFolder(busIndex))
+        folderIndex = busIndex;
+    else {
+        int parent = buses[busIndex].outputBusIndex();
+        if (parent >= 0 && parent < static_cast<int>(buses.size()) &&
+            m_project.isBusFolder(parent))
+            folderIndex = parent;
+    }
+
+    if (folderIndex >= 0)
+        // A single shared tone for the whole group (ignores the alternating
+        // top-level base) so all members of a folder look uniformly tinted.
+        return blend(QColor("#2e2e2e"), folderColorFor(folderIndex), 0.4f);
+    return base;
 }
 
 void BusPanelWidget::buildBusStrip(int busIndex) {
@@ -166,7 +196,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
              + checked + "; padding: 0px; }";
     };
 
-    QColor stripColor = (busIndex % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333");
+    QColor stripColor = stripBaseColor(busIndex);
 
     row.widget = new QWidget(m_container);
     row.widget->setObjectName("busStrip");
@@ -567,13 +597,15 @@ void BusPanelWidget::handleStripClick(int busIndex, Qt::KeyboardModifiers modifi
 
 void BusPanelWidget::updateSelectionStyles() {
     for (int i = 0; i < static_cast<int>(m_busRows.size()); ++i) {
-        QWidget* controls = m_busRows[i].controls;
-        if (!controls) continue;
-        QColor base = (i % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333");
-        QColor bg = isSelected(i) ? base.lighter(140) : base;
-        QPalette pal = controls->palette();
-        pal.setColor(QPalette::Window, bg);
-        controls->setPalette(pal);
+        QColor bg = stripBaseColor(i);
+        if (isSelected(i))
+            bg = bg.lighter(140);
+        for (QWidget* w : { m_busRows[i].widget, m_busRows[i].controls }) {
+            if (!w) continue;
+            QPalette pal = w->palette();
+            pal.setColor(QPalette::Window, bg);
+            w->setPalette(pal);
+        }
     }
 }
 

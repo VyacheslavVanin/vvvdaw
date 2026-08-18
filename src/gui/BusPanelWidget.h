@@ -95,7 +95,12 @@ private:
     void updateMeters();
     void buildBusStrip(int busIndex);
     // Render one bus and, when it is an unfolded folder, its children.
-    void renderBusTree(int busIndex, int depth);
+    void renderBusTree(int busIndex);
+    // Background color of a strip: the alternating base tone, tinted toward the
+    // nearest enclosing folder's color when the bus belongs to one.
+    QColor stripBaseColor(int busIndex) const;
+    // Stable per-folder tint, derived from the folder's bus index.
+    static QColor folderColorFor(int folderIndex);
     // Selection.
     bool isSelected(int busIndex) const;
     void setSelected(const std::vector<int>& buses);
