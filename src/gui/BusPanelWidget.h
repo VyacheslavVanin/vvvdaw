@@ -19,6 +19,7 @@ class PluginManager;
 class AudioEngine;
 class BusLevelMeter;
 class BusSendsWidget;
+class QFrame;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -31,6 +32,9 @@ public:
     void setAudioEngine(AudioEngine* engine) { m_engine = engine; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
     std::vector<int> selectedBusIndices() const { return m_selected; }
+    // Apply a bus drag & drop ending at `pos` (container coordinates) with the
+    // given dragged bus indices (moves/reorders; exposed for tests).
+    void handleBusDrop(const QPoint& pos, const std::vector<int>& dragged);
 
     static constexpr int kControlsWidth = 68;
     static constexpr int kPluginPanelWidth = 240;
@@ -99,10 +103,18 @@ private:
     void handleStripClick(int busIndex, Qt::KeyboardModifiers modifiers);
     void updateSelectionStyles();
     int busIndexForWidget(QWidget* widget) const;
-    int busIndexAt(const QPoint& pos) const;
+    // Where a drop at `pos` (container coordinates) would insert the dragged
+    // buses: the new parent bus, the display-order index to insert before
+    // (-1 = append) and the x position for the insertion line.
+    struct DropSlot {
+        int parent = 0;
+        int beforeIndex = -1;
+        int insertionX = 0;
+    };
+    DropSlot dropSlotAt(const QPoint& pos) const;
+    int nextRenderIndex(int afterIndex) const;
     // Drag & drop.
     void startBusDrag(int busIndex);
-    void handleBusDrop(const QPoint& pos, const std::vector<int>& dragged);
     // Re-route the given buses into `folder` (a bus index) without changing the
     // display order; used by the "Put to folder" context menu.
     void moveBusesToFolder(const std::vector<int>& targets, int folder);
@@ -126,5 +138,6 @@ private:
     int m_selectionAnchor = -1;
     int m_dragSource = -1;
     QPoint m_dragStartPos;
+    QFrame* m_insertionLine = nullptr;
     QTimer* m_meterTimer = nullptr;
 };

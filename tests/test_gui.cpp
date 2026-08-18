@@ -113,6 +113,8 @@ private slots:
     void busPanelNameEditing();
     void busPanelFolderFoldUnfold();
     void busPanelContextMenuHasPutToFolder();
+    void busPanelDropReorderWithinFolder();
+    void busPanelDropTrailingKeepsFolder();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -888,6 +890,84 @@ void MainWindowTest::busPanelContextMenuHasPutToFolder() {
     QApplication::sendEvent(c3, &ev);
     QCoreApplication::processEvents();
     QVERIFY(sawPutToFolder);
+}
+
+void MainWindowTest::busPanelDropReorderWithinFolder() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2
+    AudioBus a;
+    a.setName("A");
+    project.addBus(std::move(a)); // index 3
+    AudioBus b;
+    b.setName("B");
+    project.addBus(std::move(b)); // index 4
+    project.buses()[3].setOutputBusIndex(2); // A -> Folder
+    project.buses()[4].setOutputBusIndex(2); // B -> Folder
+    project.setBusDisplayOrder({ 0, 1, 2, 4, 3 }); // B renders before A
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
+
+    auto strips = window.m_busPanel->findChildren<QWidget*>("busStrip");
+    QCOMPARE(strips.size(), 5); // Master, Metronome, Folder, B, A
+
+    // Drop B (4) on A's (3) right half: B is inserted after A inside the folder.
+    QWidget* aStrip = strips[4]; // last in render order
+    QPoint dropPos = aStrip->geometry().center();
+    dropPos.rx() += aStrip->width() / 4;
+
+    window.m_busPanel->handleBusDrop(dropPos, { 4 });
+    QCoreApplication::processEvents();
+
+    // B stayed in the folder and now sorts after A.
+    QCOMPARE(project.buses()[4].outputBusIndex(), 2);
+    const auto& order = project.busDisplayOrder();
+    auto itA = std::find(order.begin(), order.end(), 3);
+    auto itB = std::find(order.begin(), order.end(), 4);
+    QVERIFY(itA != order.end() && itB != order.end());
+    QVERIFY(itA < itB);
+}
+
+void MainWindowTest::busPanelDropTrailingKeepsFolder() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2
+    AudioBus a;
+    a.setName("A");
+    project.addBus(std::move(a)); // index 3
+    AudioBus b;
+    b.setName("B");
+    project.addBus(std::move(b)); // index 4
+    project.buses()[3].setOutputBusIndex(2); // A -> Folder
+    project.buses()[4].setOutputBusIndex(2); // B -> Folder
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    window.m_busPanelGrip->show();
+    QCoreApplication::processEvents();
+
+    QWidget* container = window.m_busPanel->findChild<QWidget*>("busContainer");
+    QVERIFY(container);
+
+    // Drop B on the empty space beyond all strips: it must NOT be ejected.
+    QPoint dropPos(container->width() - 5, 10);
+    window.m_busPanel->handleBusDrop(dropPos, { 4 });
+    QCoreApplication::processEvents();
+
+    QCOMPARE(project.buses()[4].outputBusIndex(), 2); // still in the folder
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {
