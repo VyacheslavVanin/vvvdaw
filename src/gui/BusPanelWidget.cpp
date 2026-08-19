@@ -1,6 +1,7 @@
 #include "BusPanelWidget.h"
 #include "BusLevelMeter.h"
 #include "BusColorBar.h"
+#include "PanSlider.h"
 #include "PluginListWidget.h"
 #include "BusSendsWidget.h"
 #include "audio/AudioEngine.h"
@@ -273,15 +274,8 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     smRow->addStretch(1);
     layout->addLayout(smRow);
 
-    row.panSlider = new QSlider(Qt::Horizontal, row.controls);
-    row.panSlider->setRange(-100, 100);
+    row.panSlider = new PanSlider(row.controls);
     row.panSlider->setValue(static_cast<int>(bus.pan() * 100));
-    row.panSlider->setFixedHeight(10);
-    row.panSlider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #444; height: 2px; border-radius: 1px; }"
-        "QSlider::handle:horizontal { background: #aaa; width: 5px; margin: -3px 0; border-radius: 2px; }"
-        "QSlider::sub-page:horizontal { background: #6688cc; border-radius: 1px; }"
-    );
     layout->addWidget(row.panSlider);
 
     auto* meterRow = new QHBoxLayout;
@@ -298,13 +292,13 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     row.volumeSlider->setRange(0, 100);
     // The slider shares the meter's dB scale: value 0..100 <-> -60..0 dB.
     row.volumeSlider->setValue(volumeToSlider(bus.volume()));
-    row.volumeSlider->setFixedWidth(26);
+    row.volumeSlider->setFixedWidth(30);
     row.volumeSlider->setTickPosition(QSlider::TicksLeft);
     row.volumeSlider->setTickInterval(20); // 20 units = 12 dB
     row.volumeSlider->setStyleSheet(
-        "QSlider::groove:vertical { background: #444; width: 3px; border-radius: 1px; }"
-        "QSlider::handle:vertical { background: #aaa; height: 5px; margin: 0 -2px; border-radius: 2px; }"
-        "QSlider::add-page:vertical { background: #44aa44; border-radius: 1px; }"
+        "QSlider::groove:vertical { background: #444; width: 4px; border-radius: 2px; }"
+        "QSlider::handle:vertical { background: #aaa; height: 12px; width: 10px; margin: 0 -3px; border-radius: 5px; }"
+        "QSlider::add-page:vertical { background: #44aa44; border-radius: 2px; }"
     );
     meterRow->addWidget(row.volumeSlider);
 
@@ -521,6 +515,8 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
             [this, row, busIndex](int val) {
         float oldVal = m_project.buses()[busIndex].volume();
         float newVal = sliderToVolume(val);
+        float db = -60.0f + 60.0f * val / 100.0f;
+        row.volumeSlider->setToolTip(QString("Volume: %1 dB").arg(db, 0, 'f', 1));
         emit busVolumeWillChange(busIndex, oldVal, newVal);
         m_project.buses()[busIndex].setVolume(newVal);
         row.levelMeter->setVolume(newVal);

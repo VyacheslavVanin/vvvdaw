@@ -1,4 +1,5 @@
 #include "InstrumentPanelWidget.h"
+#include "PanSlider.h"
 #include "PluginListWidget.h"
 #include "ChannelRoutingDialog.h"
 #include "model/Project.h"
@@ -180,15 +181,8 @@ void InstrumentPanelWidget::rebuild() {
         auto* panLabel = new QLabel("pan:", row.widget);
         panLabel->setStyleSheet("font-size: 9px; color: #999;");
         panRow->addWidget(panLabel);
-        row.panSlider = new QSlider(Qt::Horizontal, row.widget);
-        row.panSlider->setRange(-100, 100);
+        row.panSlider = new PanSlider(row.widget);
         row.panSlider->setValue(static_cast<int>(instrument.pan() * 100));
-        row.panSlider->setFixedHeight(12);
-        row.panSlider->setStyleSheet(
-            "QSlider::groove:horizontal { background: #444; height: 3px; border-radius: 1px; }"
-            "QSlider::handle:horizontal { background: #aaa; width: 8px; margin: -3px 0; border-radius: 4px; }"
-            "QSlider::sub-page:horizontal { background: #6688cc; border-radius: 1px; }"
-        );
         panRow->addWidget(row.panSlider, 1);
         layout->addLayout(panRow);
 
@@ -199,11 +193,11 @@ void InstrumentPanelWidget::rebuild() {
         row.volumeSlider = new QSlider(Qt::Horizontal, row.widget);
         row.volumeSlider->setRange(0, 100);
         row.volumeSlider->setValue(static_cast<int>(instrument.volume() * 100));
-        row.volumeSlider->setFixedHeight(12);
+        row.volumeSlider->setFixedHeight(18);
         row.volumeSlider->setStyleSheet(
-            "QSlider::groove:horizontal { background: #444; height: 3px; border-radius: 1px; }"
-            "QSlider::handle:horizontal { background: #aaa; width: 8px; margin: -3px 0; border-radius: 4px; }"
-            "QSlider::sub-page:horizontal { background: #44aa44; border-radius: 1px; }"
+            "QSlider::groove:horizontal { background: #444; height: 5px; border-radius: 2px; }"
+            "QSlider::handle:horizontal { background: #aaa; width: 14px; margin: -5px 0; border-radius: 7px; }"
+            "QSlider::sub-page:horizontal { background: #44aa44; border-radius: 2px; }"
         );
         volRow->addWidget(row.volumeSlider, 1);
         layout->addLayout(volRow);
@@ -304,9 +298,10 @@ void InstrumentPanelWidget::rebuild() {
             emit instrumentChanged();
         });
 
-        connect(row.volumeSlider, &QSlider::valueChanged, this, [this, instIndex](int val) {
+        connect(row.volumeSlider, &QSlider::valueChanged, this, [this, instIndex, row](int val) {
             float oldVal = m_project.instruments()[instIndex].volume();
             float newVal = val / 100.0f;
+            row.volumeSlider->setToolTip(QString("Volume: %1%").arg(val));
             emit volumeWillChange(instIndex, oldVal, newVal);
             m_project.instruments()[instIndex].setVolume(newVal);
             emit instrumentChanged();
