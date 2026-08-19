@@ -26,6 +26,7 @@
 #include "gui/MainWindow.h"
 #include "gui/StartDialog.h"
 #include "gui/TrackPanelWidget.h"
+#include "gui/PanSlider.h"
 #include "gui/TrackViewWidget.h"
 #include "gui/TimelineRuler.h"
 #include "gui/MeasureRuler.h"
@@ -122,6 +123,8 @@ private slots:
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
     void busLevelMeterIsNarrow();
+    void panSliderHighlightsDeviationFromCenter();
+    void sliderSizesAreIncreasedForUsability();
     void mainWindowRestoresPanelStateFromSettings();
     void mainWindowRestoresSizeFromSettings();
     void panelTogglesAndGripUpdateSettings();
@@ -1699,6 +1702,101 @@ void MainWindowTest::replaceProjectSwapsAndRebuilds() {
     QCOMPARE(window.m_project.name(), freshName);
     QCOMPARE(window.m_trackRows.size(), size_t(2));
     QVERIFY(window.m_project.filePath().isEmpty());
+}
+
+void MainWindowTest::panSliderHighlightsDeviationFromCenter() {
+    PanSlider slider;
+    slider.setRange(-100, 100);
+    slider.resize(100, PanSlider::kHeight);
+
+    // At the center value the highlight collapses to a degenerate span.
+    slider.setValue(0);
+    const QRect zero = slider.highlightRect();
+    QCOMPARE(zero.width(), 0);
+    const int center = zero.left();
+    QCOMPARE(slider.toolTip(), QString("Pan: Center"));
+
+    // A positive value highlights the span from the center to the right.
+    slider.setValue(50);
+    const QRect right = slider.highlightRect();
+    QVERIFY(right.width() > 4);
+    QCOMPARE(right.left(), center);
+    QVERIFY(right.center().x() > center);
+    QCOMPARE(slider.toolTip(), QString("Pan: R 50%"));
+
+    // A negative value highlights the span from the left to the center, an
+    // exact mirror of the positive case around the same center point.
+    slider.setValue(-50);
+    const QRect left = slider.highlightRect();
+    QVERIFY(left.width() > 4);
+    QCOMPARE(left.right(), center - 1);
+    QVERIFY(left.center().x() < center);
+    QCOMPARE(slider.toolTip(), QString("Pan: L 50%"));
+
+    QVERIFY(std::abs(left.width() - right.width()) <= 1);
+    QCOMPARE(left.height(), right.height());
+    QCOMPARE(left.bottom(), right.bottom());
+}
+
+void MainWindowTest::sliderSizesAreIncreasedForUsability() {
+    Project project;
+    project.addTrack("Audio 1");
+    AudioBus b1;
+    b1.setName("FX");
+    project.addBus(std::move(b1));
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.m_instrumentPanel->rebuild();
+    window.show();
+    QCoreApplication::processEvents();
+
+    constexpr int kMinSliderExtent = 16;
+
+    // Track panel: horizontal pan + volume sliders are taller.
+    QCOMPARE(window.m_trackRows.size(), size_t(1));
+    TrackPanelWidget* trackPanel = window.m_trackRows[0].panel;
+    const auto trackSliders = trackPanel->findChildren<QSlider*>();
+    QCOMPARE(trackSliders.size(), 2); // pan + volume
+    for (QSlider* s : trackSliders)
+        QVERIFY2(s->height() >= kMinSliderExtent, "track slider too small");
+
+    // Volume slider tooltip reports the current percentage.
+    QSlider* trackVol = nullptr;
+    QSlider* trackPan = nullptr;
+    for (QSlider* s : trackSliders) {
+        if (s->maximum() == 100 && s->minimum() == 0) trackVol = s;
+        else trackPan = s;
+    }
+    QVERIFY(trackVol);
+    QVERIFY(trackPan);
+    trackVol->setValue(75);
+    QCOMPARE(trackVol->toolTip(), QString("Volume: 75%"));
+
+    // Bus panel: vertical volume fader is wider, pan slider is taller.
+    const auto busVol = window.m_busPanel->findChildren<QSlider*>("volumeSlider");
+    QCOMPARE(busVol.size(), 3);
+    for (QSlider* s : busVol)
+        QVERIFY2(s->width() >= 28, "bus volume slider too narrow");
+
+    // Bus volume fader tooltip reports the dB value (midpoint = -30 dB).
+    busVol[0]->setValue(50);
+    QCOMPARE(busVol[0]->toolTip(), QString("Volume: -30.0 dB"));
+    const auto busPan = window.m_busPanel->findChildren<PanSlider*>();
+    QCOMPARE(busPan.size(), 3);
+    for (PanSlider* s : busPan)
+        QVERIFY2(s->height() >= kMinSliderExtent, "bus pan slider too small");
+
+    // Instrument panel: horizontal pan + volume sliders are taller.
+    const auto instSliders = window.m_instrumentPanel->findChildren<QSlider*>();
+    QCOMPARE(instSliders.size(), 2); // pan + volume
+    for (QSlider* s : instSliders)
+        QVERIFY2(s->height() >= kMinSliderExtent, "instrument slider too small");
 }
 
 QTEST_MAIN(MainWindowTest)

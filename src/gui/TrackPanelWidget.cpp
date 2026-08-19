@@ -1,4 +1,5 @@
 #include "TrackPanelWidget.h"
+#include "PanSlider.h"
 #include "plugin/PluginInstance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
@@ -106,15 +107,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     auto* panLabel = new QLabel("pan:", panRowWidget);
     panLabel->setStyleSheet("font-size: 10px; color: #aaa;");
     panRow->addWidget(panLabel);
-    m_panSlider = new QSlider(Qt::Horizontal, panRowWidget);
-    m_panSlider->setRange(-100, 100);
-    m_panSlider->setValue(0);
-    m_panSlider->setFixedHeight(10);
-    m_panSlider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #444; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #aaa; width: 10px; margin: -4px 0; border-radius: 5px; }"
-        "QSlider::sub-page:horizontal { background: #6688cc; border-radius: 2px; }"
-    );
+    m_panSlider = new PanSlider(panRowWidget);
     panRow->addWidget(m_panSlider, 1);
     layout->addWidget(panRowWidget);
 
@@ -128,12 +121,13 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     m_volumeSlider = new QSlider(Qt::Horizontal, volRowWidget);
     m_volumeSlider->setRange(0, 100);
     m_volumeSlider->setValue(80);
-    m_volumeSlider->setFixedHeight(10);
+    m_volumeSlider->setFixedHeight(18);
     m_volumeSlider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #444; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #aaa; width: 10px; margin: -4px 0; border-radius: 5px; }"
+        "QSlider::groove:horizontal { background: #444; height: 5px; border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: #aaa; width: 14px; margin: -5px 0; border-radius: 7px; }"
         "QSlider::sub-page:horizontal { background: #44aa44; border-radius: 2px; }"
     );
+    m_volumeSlider->setToolTip("Volume: 80%");
     volRow->addWidget(m_volumeSlider, 1);
     layout->addWidget(volRowWidget);
 
@@ -204,6 +198,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     });
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int val) {
         float vol = val / 100.0f;
+        m_volumeSlider->setToolTip(QString("Volume: %1%").arg(val));
         if (m_track) {
             float oldValue = m_track->volume();
             m_track->setVolume(vol);
