@@ -8,6 +8,7 @@
 #include <QListWidget>
 #include <QTableWidget>
 #include <QPixmap>
+#include <QSignalSpy>
 #include <QTimer>
 #include <QContextMenuEvent>
 #include <algorithm>
@@ -32,6 +33,7 @@
 #include "gui/BusPanelWidget.h"
 #include "gui/BusSendsWidget.h"
 #include "gui/BusLevelMeter.h"
+#include "gui/BusColorBar.h"
 #include "gui/InstrumentPanelWidget.h"
 #include "gui/PluginListWidget.h"
 #include "gui/PluginWindow.h"
@@ -118,6 +120,8 @@ private slots:
     void busPanelDropReorderFoldersInFolder();
     void busPanelDropFolderIntoFolder();
     void busPanelFolderTintNoIndent();
+    void busPanelColorBarAssignsAndPropagates();
+    void busPanelColorBarCtrlOverridesChildren();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -1120,6 +1124,108 @@ void MainWindowTest::busPanelFolderTintNoIndent() {
     // Top-level buses keep the plain alternating tone (no tint).
     QCOMPARE(stripColor(topStrip), QColor("#2e2e2e"));
     QCOMPARE(stripColor(strips[1]), QColor("#333333")); // Metronome
+}
+
+void MainWindowTest::busPanelColorBarAssignsAndPropagates() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2 (F) -> master
+    AudioBus child;
+    child.setName("Child");
+    project.addBus(std::move(child)); // index 3 (C) -> F
+    project.buses()[3].setOutputBusIndex(2);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    QCoreApplication::processEvents();
+
+    // Render order: Master(0), Metronome(1), Folder(2), Child(3).
+    auto bars = window.m_busPanel->findChildren<BusColorBar*>("busColorBar");
+    QCOMPARE(bars.size(), 4);
+    for (BusColorBar* b : bars)
+        QVERIFY(b->height() >= 4 && b->height() <= 6); // ~5px tall strip
+
+    // Before any manual color the bars show the automatic/effective color.
+    QCOMPARE(bars[2]->color(), project.busColor(2));
+    QCOMPARE(bars[3]->color(), project.busColor(3));
+
+    // Stub out the modal picker and assign a color to the folder.
+    bars[2]->setColorPickerForTesting([](const QColor&) { return QColor("#ff0000"); });
+    QSignalSpy spy(window.m_busPanel, &BusPanelWidget::busColorWillChange);
+    bars[2]->pickColor();
+
+    QVERIFY(project.buses()[2].colorSet());
+    QCOMPARE(project.buses()[2].color(), QColor("#ff0000"));
+    // The child keeps no manual color but inherits the folder's color.
+    QVERIFY(!project.buses()[3].colorSet());
+    QCOMPARE(project.busColor(3), QColor("#ff0000"));
+    QCOMPARE(spy.count(), 1);
+
+    // The panel refreshed the bars to the new color. The assignment may have
+    // triggered a rebuild that scheduled the old bars for deletion; flush them
+    // before re-fetching.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto refreshed = window.m_busPanel->findChildren<BusColorBar*>("busColorBar");
+    QCOMPARE(refreshed[2]->color(), QColor("#ff0000"));
+
+    // Undo restores the automatic color.
+    window.performUndo();
+    QVERIFY(!project.buses()[2].colorSet());
+}
+
+void MainWindowTest::busPanelColorBarCtrlOverridesChildren() {
+    Project project;
+    AudioBus folder;
+    folder.setName("Folder");
+    project.addBus(std::move(folder)); // index 2 (F)
+    AudioBus child;
+    child.setName("Child");
+    project.addBus(std::move(child)); // index 3 (C) -> F
+    AudioBus grandchild;
+    grandchild.setName("Grand");
+    project.addBus(std::move(grandchild)); // index 4 (G) -> C
+    project.buses()[3].setOutputBusIndex(2);
+    project.buses()[4].setOutputBusIndex(3);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    window.m_busPanel->show();
+    QCoreApplication::processEvents();
+
+    auto bars = window.m_busPanel->findChildren<BusColorBar*>("busColorBar");
+    QCOMPARE(bars.size(), 5);
+    // Folder is index 2 -> bars[2].
+    bars[2]->setColorPickerForTesting([](const QColor&) { return QColor("#00ff00"); });
+
+    // Give the child a manual color first, so we can verify Ctrl clears it.
+    project.buses()[3].setColor(QColor("#101010"));
+    QVERIFY(project.buses()[3].colorSet());
+
+    // Ctrl+click assigns the folder's color and clears the manual-color flag on
+    // all descendants, so they inherit the folder's color.
+    QTest::mouseClick(bars[2], Qt::LeftButton, Qt::ControlModifier);
+    QCOMPARE(project.buses()[2].color(), QColor("#00ff00"));
+    QVERIFY(project.buses()[2].colorSet());
+    QVERIFY(!project.buses()[3].colorSet()); // flag cleared
+    QVERIFY(!project.buses()[4].colorSet());
+    QCOMPARE(project.busColor(3), QColor("#00ff00")); // inherits the folder
+    QCOMPARE(project.busColor(4), QColor("#00ff00")); // inherits recursively
+
+    // A single undo reverts the whole override, restoring the child's manual
+    // color.
+    window.performUndo();
+    QVERIFY(!project.buses()[2].colorSet());
+    QVERIFY(project.buses()[3].colorSet());              // child's manual color back
+    QCOMPARE(project.buses()[3].color(), QColor("#101010"));
+    QVERIFY(!project.buses()[4].colorSet());
 }
 
 void MainWindowTest::busPanelSendAddAndRemove() {

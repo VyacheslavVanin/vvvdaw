@@ -43,6 +43,8 @@ QJsonObject AudioBus::toJson() const {
     obj["muted"] = m_muted;
     obj["removable"] = m_removable;
     obj["folderCollapsed"] = m_folderCollapsed;
+    if (m_colorSet)
+        obj["color"] = m_color.name(QColor::HexRgb);
     if (m_pluginChain.count() > 0)
         obj["plugins"] = m_pluginChain.toJson();
     if (!m_sends.empty()) {
@@ -69,6 +71,11 @@ AudioBus AudioBus::fromJson(const QJsonObject& obj, PluginManager* manager) {
     bus.setMuted(obj["muted"].toBool(false));
     bus.setRemovable(obj["removable"].toBool(true));
     bus.setFolderCollapsed(obj["folderCollapsed"].toBool(false));
+    if (obj.contains("color")) {
+        QColor color(obj["color"].toString());
+        if (color.isValid())
+            bus.setColor(color);
+    }
     if (obj.contains("plugins"))
         bus.pluginChain().fromJson(obj["plugins"].toObject(), manager);
     if (obj.contains("sends")) {

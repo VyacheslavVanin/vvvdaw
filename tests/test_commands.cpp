@@ -30,6 +30,7 @@ private slots:
     void removeBusCommand();
     void setBusCommands();
     void setBusSendCommands();
+    void setBusColorCommand();
     void busFolderCommands();
     void addInstrumentCommand();
     void removeInstrumentCommand();
@@ -267,6 +268,91 @@ void TestCommands::setBusSendCommands() {
     QCOMPARE(p.buses()[2].sends().size(), size_t(1));
     stack.execute(std::make_unique<RemoveBusSendCommand>(p, 99, 0));
     QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+}
+
+void TestCommands::setBusColorCommand() {
+    Project p;
+    UndoStack stack;
+    AudioBus folder;
+    folder.setName("Folder");
+    p.addBus(std::move(folder)); // index 2
+    AudioBus child;
+    child.setName("Child");
+    p.addBus(std::move(child)); // index 3
+    AudioBus grand;
+    grand.setName("Grand");
+    p.addBus(std::move(grand)); // index 4
+    p.busAt(3)->setOutputBusIndex(2);
+    p.busAt(4)->setOutputBusIndex(3);
+
+    QColor red("#ff0000");
+    QColor blue("#0000ff");
+
+    // Plain assignment to the folder: only it changes; children inherit via
+    // propagation (no manual color set on them).
+    stack.execute(std::make_unique<SetBusColorCommand>(p, std::vector<SetBusColorCommand::Entry>{
+        { 2, QColor(), false, red, true }
+    }));
+    QVERIFY(p.busAt(2)->colorSet());
+    QCOMPARE(p.busAt(2)->color(), red);
+    QVERIFY(!p.busAt(3)->colorSet()); // not manually set
+    QVERIFY(!p.busAt(4)->colorSet());
+
+    stack.undo();
+    QVERIFY(!p.busAt(2)->colorSet());
+    stack.redo();
+    QVERIFY(p.busAt(2)->colorSet());
+
+    // Ctrl-style override: assign to the folder and clear the manual-color
+    // flag on every descendant so they inherit the folder's color (rather than
+    // being force-assigned their own copy).
+    stack.execute(std::make_unique<SetBusColorCommand>(p, std::vector<SetBusColorCommand::Entry>{
+        { 2, red, true, blue, true },
+        { 3, QColor(), false, QColor(), false }, // cleared -> inherits
+        { 4, QColor(), false, QColor(), false }  // cleared -> inherits
+    }));
+    QCOMPARE(p.busAt(2)->color(), blue);
+    QVERIFY(!p.busAt(3)->colorSet());      // flag cleared
+    QVERIFY(!p.busAt(4)->colorSet());
+    QCOMPARE(p.busColor(3), blue);          // inherits folder's color
+    QCOMPARE(p.busColor(4), blue);          // inherits recursively
+
+    stack.undo();
+    QCOMPARE(p.busAt(2)->color(), red);
+    QVERIFY(!p.busAt(3)->colorSet());
+    QVERIFY(!p.busAt(4)->colorSet());
+    stack.redo();
+    QVERIFY(!p.busAt(3)->colorSet());
+    QCOMPARE(p.busColor(3), blue);
+
+    // Clearing a manual override on a child: giving the child its own color,
+    // then a Ctrl-style override clears that flag so it follows the folder.
+    p.busAt(3)->setColor(QColor("#123456"));
+    QVERIFY(p.busAt(3)->colorSet());
+    stack.execute(std::make_unique<SetBusColorCommand>(p, std::vector<SetBusColorCommand::Entry>{
+        { 2, blue, true, QColor("#abcdef"), true },
+        { 3, QColor("#123456"), true, QColor(), false } // clears child's manual color
+    }));
+    QCOMPARE(p.busAt(2)->color(), QColor("#abcdef"));
+    QVERIFY(!p.busAt(3)->colorSet());
+    QCOMPARE(p.busColor(3), QColor("#abcdef")); // inherits the folder
+    stack.undo();
+    QVERIFY(p.busAt(3)->colorSet());                       // child's manual color restored
+    QCOMPARE(p.busAt(3)->color(), QColor("#123456"));
+    QCOMPARE(p.busAt(2)->color(), blue);
+
+    // Clearing a manual color (newSet == false).
+    stack.execute(std::make_unique<SetBusColorCommand>(p, std::vector<SetBusColorCommand::Entry>{
+        { 2, blue, true, QColor(), false }
+    }));
+    QVERIFY(!p.busAt(2)->colorSet());
+    stack.undo();
+    QCOMPARE(p.busAt(2)->color(), blue);
+
+    // Out-of-range entries are ignored without crashing.
+    stack.execute(std::make_unique<SetBusColorCommand>(p, std::vector<SetBusColorCommand::Entry>{
+        { 99, QColor(), false, red, true }
+    }));
 }
 
 void TestCommands::busFolderCommands() {

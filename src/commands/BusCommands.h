@@ -44,6 +44,52 @@ using SetBusNameCommand = vvvcmd::SetValueCommand<
 using SetBusOutputCommand = vvvcmd::SetValueCommand<
     AudioBus, int, 27, false, true, &AudioBus::setOutputBusIndex>;
 
+// Assign (or clear, newSet == false) colors on one or more buses atomically.
+// One entry per affected bus; used for a plain assignment (single entry) and
+// for the Ctrl-assignment that overrides child colors (one entry per
+// descendant). Undo restores every affected bus to its previous color state.
+class SetBusColorCommand : public UndoCommand {
+public:
+    struct Entry {
+        int busIndex = -1;
+        QColor oldColor;
+        bool oldSet = false;
+        QColor newColor;
+        bool newSet = false;
+    };
+
+    SetBusColorCommand(Project& project, std::vector<Entry> entries)
+        : m_project(project), m_entries(std::move(entries)) {}
+
+    void execute() override {
+        for (const auto& e : m_entries) {
+            AudioBus* bus = m_project.busAt(e.busIndex);
+            if (!bus) continue;
+            if (e.newSet)
+                bus->setColor(e.newColor);
+            else
+                bus->clearColor();
+        }
+    }
+
+    void undo() override {
+        for (const auto& e : m_entries) {
+            AudioBus* bus = m_project.busAt(e.busIndex);
+            if (!bus) continue;
+            if (e.oldSet)
+                bus->setColor(e.oldColor);
+            else
+                bus->clearColor();
+        }
+    }
+
+    int id() const override { return 99; }
+
+private:
+    Project& m_project;
+    std::vector<Entry> m_entries;
+};
+
 // --- Bus sends (extra outputs splitting the signal into other buses) ---
 
 class AddBusSendCommand : public UndoCommand {

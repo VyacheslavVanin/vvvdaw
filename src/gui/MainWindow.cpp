@@ -325,6 +325,42 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
         pushCommand(std::make_unique<SetBusOutputCommand>(m_project, busIndex, oldVal, newVal));
     });
 
+    connect(m_busPanel, &BusPanelWidget::busColorWillChange, this,
+            [this](const BusPanelWidget::BusColorChange& change) {
+        std::vector<SetBusColorCommand::Entry> entries;
+        auto collect = [&](int idx) {
+            const AudioBus* bus = m_project.busAt(idx);
+            if (!bus) return;
+            SetBusColorCommand::Entry e;
+            e.busIndex = idx;
+            e.oldColor = bus->color();
+            e.oldSet = bus->colorSet();
+            e.newColor = change.newColor;
+            e.newSet = change.newSet;
+            entries.push_back(std::move(e));
+        };
+        // Clearing the override on a descendant: drop its manual color so it
+        // inherits from its (colored) ancestor.
+        auto collectClear = [&](int idx) {
+            const AudioBus* bus = m_project.busAt(idx);
+            if (!bus || !bus->colorSet()) return;
+            SetBusColorCommand::Entry e;
+            e.busIndex = idx;
+            e.oldColor = bus->color();
+            e.oldSet = true;
+            e.newSet = false;
+            entries.push_back(std::move(e));
+        };
+        collect(change.busIndex);
+        if (change.overrideChildren) {
+            for (int c : m_project.folderDescendants(change.busIndex))
+                collectClear(c);
+        }
+        if (entries.empty()) return;
+        executeCommand(std::make_unique<SetBusColorCommand>(m_project, std::move(entries)));
+        m_busPanel->refreshColors();
+    });
+
     connect(m_busPanel, &BusPanelWidget::busSendAddRequested, this, [this](int busIndex) {
         if (busIndex < 0 || busIndex >= static_cast<int>(m_project.buses().size())) return;
         executeCommand(std::make_unique<AddBusSendCommand>(m_project, busIndex));

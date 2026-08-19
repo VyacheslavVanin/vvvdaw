@@ -1,5 +1,6 @@
 #include "BusPanelWidget.h"
 #include "BusLevelMeter.h"
+#include "BusColorBar.h"
 #include "PluginListWidget.h"
 #include "BusSendsWidget.h"
 #include "audio/AudioEngine.h"
@@ -41,13 +42,6 @@ int volumeToSlider(float linearVolume) {
 float sliderToVolume(int value) {
     float db = -60.0f + 60.0f * value / 100.0f;
     return decibelsToLinear(db);
-}
-
-// Linear interpolation between two colors; `t` in [0,1], 1 = fully `b`.
-QColor blend(const QColor& a, const QColor& b, float t) {
-    return QColor(std::lround(a.red() + (b.red() - a.red()) * t),
-                  std::lround(a.green() + (b.green() - a.green()) * t),
-                  std::lround(a.blue() + (b.blue() - a.blue()) * t));
 }
 
 } // namespace
@@ -158,32 +152,8 @@ void BusPanelWidget::renderBusTree(int busIndex) {
     }
 }
 
-QColor BusPanelWidget::folderColorFor(int folderIndex) {
-    return QColor::fromHsv((folderIndex * 47) % 360, 90, 160);
-}
-
 QColor BusPanelWidget::stripBaseColor(int busIndex) const {
-    const auto& buses = m_project.buses();
-    QColor base = (busIndex % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333");
-
-    // The folder this bus belongs to: a folder anchors its group with its own
-    // color, a regular bus uses its parent folder's color. Nested folders get
-    // their own hue, so the hierarchy reads as nested uniform tints.
-    int folderIndex = -1;
-    if (m_project.isBusFolder(busIndex))
-        folderIndex = busIndex;
-    else {
-        int parent = buses[busIndex].outputBusIndex();
-        if (parent >= 0 && parent < static_cast<int>(buses.size()) &&
-            m_project.isBusFolder(parent))
-            folderIndex = parent;
-    }
-
-    if (folderIndex >= 0)
-        // A single shared tone for the whole group (ignores the alternating
-        // top-level base) so all members of a folder look uniformly tinted.
-        return blend(QColor("#2e2e2e"), folderColorFor(folderIndex), 0.4f);
-    return base;
+    return m_project.busColor(busIndex);
 }
 
 void BusPanelWidget::buildBusStrip(int busIndex) {
@@ -210,9 +180,16 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     row.widget->setPalette(wp);
     row.widget->installEventFilter(this);
 
-    auto* stripLayout = new QHBoxLayout(row.widget);
+    auto* stripLayout = new QVBoxLayout(row.widget);
     stripLayout->setContentsMargins(0, 0, 0, 0);
     stripLayout->setSpacing(0);
+
+    // The horizontal row holding the controls column and (when open) the
+    // combined plugins + sends panel; the color bar sits below it, spanning
+    // the full strip width.
+    auto* contentRow = new QHBoxLayout;
+    contentRow->setContentsMargins(0, 0, 0, 0);
+    contentRow->setSpacing(0);
 
     // --- Controls column (fixed width) ---
     row.controls = new QWidget(row.widget);
@@ -221,7 +198,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     QPalette cp = row.controls->palette();
     cp.setColor(QPalette::Window, stripColor);
     row.controls->setPalette(cp);
-    stripLayout->addWidget(row.controls);
+    contentRow->addWidget(row.controls);
     row.controls->installEventFilter(this);
 
     auto* layout = new QVBoxLayout(row.controls);
@@ -398,7 +375,44 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     row.sendsList->rebuild();
     fxLayout->addWidget(row.sendsList, 1);
 
-    stripLayout->addWidget(row.fxPanel);
+    contentRow->addWidget(row.fxPanel);
+
+    stripLayout->addLayout(contentRow, 1);
+
+    // Full-width color selector bar at the bottom of the strip.
+    row.colorBar = new BusColorBar(row.widget);
+    row.colorBar->setObjectName("busColorBar");
+    row.colorBar->setFixedHeight(5);
+    row.colorBar->setColor(m_project.busColor(busIndex));
+    stripLayout->addWidget(row.colorBar);
+
+    connect(row.colorBar, &BusColorBar::colorPicked, this,
+            [this, busIndex](const QColor& color, bool overrideChildren) {
+        if (!color.isValid()) return;
+        auto* bus = m_project.busAt(busIndex);
+        if (!bus) return;
+        BusColorChange change;
+        change.busIndex = busIndex;
+        change.oldColor = bus->color();
+        change.oldSet = bus->colorSet();
+        change.newColor = color;
+        change.newSet = true;
+        change.overrideChildren = overrideChildren;
+        emit busColorWillChange(change);
+    });
+
+    connect(row.colorBar, &BusColorBar::resetToAutomatic, this,
+            [this, busIndex](bool overrideChildren) {
+        auto* bus = m_project.busAt(busIndex);
+        if (!bus || !bus->colorSet()) return;
+        BusColorChange change;
+        change.busIndex = busIndex;
+        change.oldColor = bus->color();
+        change.oldSet = true;
+        change.newSet = false;
+        change.overrideChildren = overrideChildren;
+        emit busColorWillChange(change);
+    });
 
     const bool panelOpen = (busIndex >= 0 && busIndex < static_cast<int>(m_panelOpen.size()))
         && m_panelOpen[busIndex];
@@ -545,6 +559,13 @@ void BusPanelWidget::refreshOutCombos() {
         if (m_busRows[from].sendsList)
             m_busRows[from].sendsList->refreshTargetCombos();
     }
+}
+
+void BusPanelWidget::refreshColors() {
+    for (int i = 0; i < static_cast<int>(m_busRows.size()); ++i)
+        if (m_busRows[i].colorBar)
+            m_busRows[i].colorBar->setColor(m_project.busColor(i));
+    updateSelectionStyles();
 }
 
 bool BusPanelWidget::isSelected(int busIndex) const {

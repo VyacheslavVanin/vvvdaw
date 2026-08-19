@@ -47,6 +47,9 @@ private slots:
     void audioBusSerialization();
     void audioBusSendsSerialization();
     void audioBusFolderCollapsedSerialization();
+    void busColorAutoAndPropagation();
+    void busColorSerialization();
+    void folderDescendants();
     void instrumentSerialization();
     void instrumentRoutingSerialization();
     void trackSerialization();
@@ -864,6 +867,128 @@ void TestModel::audioBusSendsSerialization() {
     legacy["name"] = "Legacy";
     legacy["outputBusIndex"] = 0;
     QCOMPARE(AudioBus::fromJson(legacy).sends().size(), size_t(0));
+}
+
+void TestModel::busColorAutoAndPropagation() {
+    Project p;
+    // Master (0) and Metronome (1) have no assigned color -> alternating auto.
+    QCOMPARE(p.busColor(0), QColor("#2e2e2e"));
+    QCOMPARE(p.busColor(1), QColor("#333333"));
+
+    AudioBus folder;
+    folder.setName("Folder");
+    p.addBus(std::move(folder)); // index 2
+    AudioBus child;
+    child.setName("Child");
+    p.addBus(std::move(child)); // index 3
+    AudioBus grandchild;
+    grandchild.setName("Grand");
+    p.addBus(std::move(grandchild)); // index 4
+
+    // Route Child(3) into Folder(2) and Grand(4) into Child(3). Child becomes a
+    // folder (grandchild routes into it).
+    p.busAt(3)->setOutputBusIndex(2);
+    p.busAt(4)->setOutputBusIndex(3);
+
+    // Auto colors: folder 2 anchors its group with its own tint; child 3 is a
+    // folder too (it has a child) so it uses its own tint, not folder 2's.
+    QColor folderAuto = p.busColor(2);
+    QColor childAuto = p.busColor(3);
+    QVERIFY(folderAuto.isValid());
+    QVERIFY(folderAuto != QColor("#2e2e2e")); // tinted toward the folder hue
+    QVERIFY(folderAuto != childAuto); // each folder gets its own hue
+    QCOMPARE(p.busColor(4), childAuto); // grandchild follows child 3's auto
+
+    // Assign a color to the top folder: it and its non-manual descendants
+    // propagate it down.
+    QColor red("#ff0000");
+    p.busAt(2)->setColor(red);
+    QCOMPARE(p.busColor(2), red);
+    // Child 3 has no manual color -> inherits the folder's red.
+    QCOMPARE(p.busColor(3), red);
+    // Grandchild 4 inherits through child 3 -> still red.
+    QCOMPARE(p.busColor(4), red);
+
+    // Manually assigning a color to a child overrides the propagated one.
+    QColor blue("#0000ff");
+    p.busAt(3)->setColor(blue);
+    QCOMPARE(p.busColor(3), blue);
+    QCOMPARE(p.busColor(2), red); // folder unaffected
+    QCOMPARE(p.busColor(4), blue); // grandchild now inherits from child
+
+    // Clearing a manual color falls back to the propagated/auto color.
+    p.busAt(3)->clearColor();
+    QCOMPARE(p.busColor(3), red);
+    QCOMPARE(p.busColor(4), red);
+
+    // Out-of-range index yields the fallback gray.
+    QCOMPARE(p.busColor(999), QColor("#2e2e2e"));
+}
+
+void TestModel::busColorSerialization() {
+    AudioBus bus;
+    QVERIFY(!bus.colorSet());
+    bus.setColor(QColor("#12ab34"));
+    QVERIFY(bus.colorSet());
+    QCOMPARE(bus.color(), QColor("#12ab34"));
+
+    AudioBus restored = AudioBus::fromJson(bus.toJson());
+    QVERIFY(restored.colorSet());
+    QCOMPARE(restored.color(), QColor("#12ab34"));
+
+    // A bus without a color round-trips with colorSet() == false.
+    AudioBus plain;
+    QVERIFY(!AudioBus::fromJson(plain.toJson()).colorSet());
+
+    // Legacy JSON without a "color" member stays unset.
+    QJsonObject legacy;
+    legacy["name"] = "Legacy";
+    QVERIFY(!AudioBus::fromJson(legacy).colorSet());
+
+    // An invalid color string is ignored.
+    QJsonObject bad;
+    bad["name"] = "Bad";
+    bad["color"] = "not-a-color";
+    QVERIFY(!AudioBus::fromJson(bad).colorSet());
+
+    // Project round trip preserves bus colors.
+    Project p;
+    AudioBus f;
+    f.setName("Folder");
+    f.setColor(QColor("#abcdef"));
+    p.addBus(std::move(f));
+    Project q;
+    q.fromJson(p.toJson());
+    QVERIFY(q.buses()[2].colorSet());
+    QCOMPARE(q.buses()[2].color(), QColor("#abcdef"));
+}
+
+void TestModel::folderDescendants() {
+    Project p;
+    AudioBus a;
+    a.setName("A");
+    p.addBus(std::move(a)); // 2
+    AudioBus b;
+    b.setName("B");
+    p.addBus(std::move(b)); // 3
+    AudioBus c;
+    c.setName("C");
+    p.addBus(std::move(c)); // 4
+    AudioBus d;
+    d.setName("D");
+    p.addBus(std::move(d)); // 5
+
+    QVERIFY(p.folderDescendants(2).empty()); // no children yet
+
+    // A(2) -> B(3) -> C(4), and D(5) top level.
+    p.busAt(3)->setOutputBusIndex(2);
+    p.busAt(4)->setOutputBusIndex(3);
+    p.busAt(5)->setOutputBusIndex(0);
+
+    QCOMPARE(p.folderDescendants(2), (std::vector<int>{ 3, 4 }));
+    QCOMPARE(p.folderDescendants(3), (std::vector<int>{ 4 }));
+    QCOMPARE(p.folderDescendants(4), (std::vector<int>{}));
+    QCOMPARE(p.folderDescendants(5), (std::vector<int>{}));
 }
 
 void TestModel::instrumentSerialization() {

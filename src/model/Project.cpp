@@ -48,6 +48,13 @@ void remapBusSendsAfterRemoval(AudioBus& bus, int removed) {
         remapBusIndexAfterRemoval(send.busIndex, removed);
 }
 
+// Linear interpolation between two colors; `t` in [0,1], 1 = fully `b`.
+QColor blendColor(const QColor& a, const QColor& b, float t) {
+    return QColor(std::lround(a.red() + (b.red() - a.red()) * t),
+                  std::lround(a.green() + (b.green() - a.green()) * t),
+                  std::lround(a.blue() + (b.blue() - a.blue()) * t));
+}
+
 } // namespace
 
 Project::Project()
@@ -286,6 +293,58 @@ std::vector<int> Project::folderChildren(int index) const {
         return itA < itB;
     });
     return children;
+}
+
+std::vector<int> Project::folderDescendants(int index) const {
+    std::vector<int> result;
+    std::vector<int> stack = folderChildren(index);
+    while (!stack.empty()) {
+        int cur = stack.back();
+        stack.pop_back();
+        result.push_back(cur);
+        for (int c : folderChildren(cur))
+            stack.push_back(c);
+    }
+    return result;
+}
+
+QColor Project::folderColorFor(int folderIndex) {
+    return QColor::fromHsv((folderIndex * 47) % 360, 90, 160);
+}
+
+QColor Project::busColor(int busIndex) const {
+    const int n = static_cast<int>(m_buses.size());
+    if (busIndex < 0 || busIndex >= n)
+        return QColor("#2e2e2e");
+
+    if (m_buses[busIndex].colorSet())
+        return m_buses[busIndex].color();
+
+    // Propagate the nearest ancestor's assigned color down the routing tree
+    // (folders are buses whose main output routes into them).
+    int cur = busIndex;
+    while (true) {
+        int parent = m_buses[cur].outputBusIndex();
+        if (parent < 0 || parent >= n)
+            break;
+        if (m_buses[parent].colorSet())
+            return m_buses[parent].color();
+        cur = parent;
+    }
+
+    // Automatic color: a folder anchors its group with its own tint, a regular
+    // bus uses its parent folder's tint; otherwise alternating dark gray.
+    int folderIndex = -1;
+    if (isBusFolder(busIndex))
+        folderIndex = busIndex;
+    else {
+        int parent = m_buses[busIndex].outputBusIndex();
+        if (parent >= 0 && parent < n && isBusFolder(parent))
+            folderIndex = parent;
+    }
+    if (folderIndex >= 0)
+        return blendColor(QColor("#2e2e2e"), folderColorFor(folderIndex), 0.4f);
+    return (busIndex % 2 == 0) ? QColor("#2e2e2e") : QColor("#333333");
 }
 
 std::vector<int> Project::topLevelBusIndices() const {
