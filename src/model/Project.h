@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include <QColor>
 #include <QJsonObject>
 #include <vector>
 #include <memory>
@@ -71,9 +72,19 @@ public:
     bool isBusFolder(int index) const;
     // Buses routed into `index` (its folder children), ordered for display.
     std::vector<int> folderChildren(int index) const;
+    // Every recursive child of `index` (children, grandchildren, ...), in
+    // display order.
+    std::vector<int> folderDescendants(int index) const;
     // Master plus every bus routed to the master bus or the output device, in
     // display order: the top-level sequence of the bus panel.
     std::vector<int> topLevelBusIndices() const;
+
+    // Effective display color of a bus: its own manually assigned color when
+    // set; otherwise the nearest ancestor (folder) color propagated down the
+    // routing tree; otherwise the automatic stable tint.
+    QColor busColor(int busIndex) const;
+    // Stable per-folder tint, derived from the folder's bus index.
+    static QColor folderColorFor(int folderIndex);
 
     int addInstrument(Instrument instrument);
     bool removeInstrument(int index);

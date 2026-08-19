@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include <QColor>
 #include <QJsonObject>
 #include <vector>
 #include "plugin/PluginChain.h"
@@ -65,6 +66,15 @@ public:
     bool folderCollapsed() const { return m_folderCollapsed; }
     void setFolderCollapsed(bool collapsed) { m_folderCollapsed = collapsed; }
 
+    // User-assigned color. When unset (colorSet() == false) the bus falls back
+    // to the automatic color (a parent folder's color or a stable per-index
+    // tint). Assigning a color to a folder propagates it down to child buses
+    // that have not had a color manually assigned themselves.
+    bool colorSet() const { return m_colorSet; }
+    QColor color() const { return m_color; }
+    void setColor(const QColor& color) { m_color = color; m_colorSet = true; }
+    void clearColor() { m_colorSet = false; m_color = QColor(); }
+
     PluginChain& pluginChain() { return m_pluginChain; }
     const PluginChain& pluginChain() const { return m_pluginChain; }
 
@@ -81,5 +91,7 @@ private:
     bool m_muted = false;
     bool m_removable = true;
     bool m_folderCollapsed = false;
+    bool m_colorSet = false;
+    QColor m_color;
     PluginChain m_pluginChain;
 };

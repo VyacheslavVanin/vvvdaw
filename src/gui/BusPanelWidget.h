@@ -1,5 +1,6 @@
 #pragma once
 #include <QWidget>
+#include <QColor>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSlider>
@@ -19,6 +20,7 @@ class PluginManager;
 class AudioEngine;
 class BusLevelMeter;
 class BusSendsWidget;
+class BusColorBar;
 class QFrame;
 
 class BusPanelWidget : public QScrollArea {
@@ -28,6 +30,9 @@ public:
 
     void rebuild();
     void refreshOutCombos();
+    // Re-read every strip's effective color and repaint (after a color change
+    // or undo/redo that did not rebuild the whole panel).
+    void refreshColors();
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioEngine(AudioEngine* engine) { m_engine = engine; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
@@ -38,6 +43,19 @@ public:
 
     static constexpr int kControlsWidth = 68;
     static constexpr int kPluginPanelWidth = 240;
+
+    // A color change requested through a strip's color bar. `newSet == false`
+    // clears the manual color (restoring the automatic one). When
+    // `overrideChildren` is true the same color is applied to all of the bus's
+    // descendants, overriding any manual colors they had.
+    struct BusColorChange {
+        int busIndex = -1;
+        QColor oldColor;
+        QColor newColor;
+        bool oldSet = false;
+        bool newSet = false;
+        bool overrideChildren = false;
+    };
 
 signals:
     void busChanged();
@@ -68,6 +86,7 @@ signals:
                     std::vector<std::pair<int, int>> newParents);
     void busFolderCollapseWillChange(int busIndex, bool oldVal, bool newVal);
     void createBusFolderRequested(const QString& name, const std::vector<int>& children);
+    void busColorWillChange(const BusColorChange& change);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -90,17 +109,15 @@ private:
         QWidget* fxPanel = nullptr;
         PluginListWidget* pluginList = nullptr;
         BusSendsWidget* sendsList = nullptr;
+        BusColorBar* colorBar = nullptr;
     };
 
     void updateMeters();
     void buildBusStrip(int busIndex);
     // Render one bus and, when it is an unfolded folder, its children.
     void renderBusTree(int busIndex);
-    // Background color of a strip: the alternating base tone, tinted toward the
-    // nearest enclosing folder's color when the bus belongs to one.
+    // Background color of a strip: the bus's effective color.
     QColor stripBaseColor(int busIndex) const;
-    // Stable per-folder tint, derived from the folder's bus index.
-    static QColor folderColorFor(int folderIndex);
     // Selection.
     bool isSelected(int busIndex) const;
     void setSelected(const std::vector<int>& buses);
