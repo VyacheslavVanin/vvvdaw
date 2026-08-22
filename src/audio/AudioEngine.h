@@ -25,6 +25,8 @@ class PluginChain;
 class AudioEvent;
 class AudioClip;
 
+class TestMidi;
+
 class AudioEngine {
 public:
     AudioEngine();
@@ -104,6 +106,8 @@ public:
     int64_t midiRecordStartSample() const { return m_recordingManager.recordStartSample(); }
 
 private:
+    friend class TestMidi;
+
     static int audioCallback(const void* input, void* output,
                              unsigned long frameCount,
                              const PaStreamCallbackTimeInfo* timeInfo,

@@ -64,6 +64,9 @@ private:
     // Recompute the MIDI keyboard preview track and piano-roll recording hints
     // from the currently open piano roll windows.
     void updateMidiPreviewTarget();
+    // Release held MIDI-keyboard preview notes and point further preview /
+    // recording input at the given piano-roll event.
+    void setActiveMidiPreview(int trackIndex, int64_t eventId);
     class PluginChain* findChainForPlugin(PluginInstance* plugin);
     void closeAllPluginWindows();
     void closePluginWindowsFor(const std::vector<PluginInstance*>& plugins);

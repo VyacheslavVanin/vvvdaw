@@ -164,6 +164,7 @@ private slots:
     void replaceProjectSwapsAndRebuilds();
     void midiTrackShowsArmButton();
     void settingsDialogHasMidiInputControls();
+    void previewTargetFollowsFocusedPianoRoll();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
 };
@@ -2140,6 +2141,46 @@ void MainWindowTest::settingsDialogHasMidiInputControls() {
     auto* stopSpin = dialog.findChild<QSpinBox*>("midiStopSpin");
     QVERIFY(stopSpin);
     QCOMPARE(stopSpin->value(), settings.midiTransportStopControl);
+}
+
+void MainWindowTest::previewTargetFollowsFocusedPianoRoll() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    project.addMidiTrack("Midi 2");
+
+    auto addEvent = [&project](int trackIndex) -> int64_t {
+        auto clip = std::make_shared<MidiClip>();
+        clip->setLengthTicks(MidiClip::kPPQ);
+        MidiEvent ev;
+        ev.setClip(clip);
+        ev.setStartSample(0);
+        ev.setDurationSample(48000);
+        project.tracks()[static_cast<size_t>(trackIndex)].addMidiEvent(ev);
+        return project.tracks()[static_cast<size_t>(trackIndex)].midiEvents().back().id();
+    };
+    const int64_t id0 = addEvent(0);
+    const int64_t id1 = addEvent(1);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    // No piano roll open: nothing to preview into.
+    QCOMPARE(engine.midiPreviewTrack(), -1);
+
+    // Opening the first piano roll routes preview into its track.
+    window.openPianoRoll(0, id0);
+    QCOMPARE(window.m_pianoRollWindows.size(), size_t(1));
+    QCOMPARE(engine.midiPreviewTrack(), 0);
+
+    // Opening the second makes it the active preview target.
+    window.openPianoRoll(1, id1);
+    QCOMPARE(window.m_pianoRollWindows.size(), size_t(2));
+    QCOMPARE(engine.midiPreviewTrack(), 1);
+
+    // Switching focus back (what the WindowActivate filter calls) retargets.
+    window.setActiveMidiPreview(0, id0);
+    QCOMPARE(engine.midiPreviewTrack(), 0);
 }
 
 void MainWindowTest::panSliderHighlightsDeviationFromCenter() {

@@ -3,8 +3,10 @@
 #include "midi/MidiMessageRing.h"
 #include "midi/MidiInputManager.h"
 #include "audio/MidiRecorder.h"
+#include "audio/AudioEngine.h"
 #include "model/Project.h"
 #include "model/Track.h"
+#include "model/Instrument.h"
 #include "model/MidiEvent.h"
 #include "model/MidiClip.h"
 
@@ -22,6 +24,7 @@ private slots:
     void recorderFinalizesHeldNotes();
     void recorderRecordsIntoHintEvent();
     void openFirstDeviceWhenPresent();
+    void cancelReleasesHeldPreviewNotes();
 };
 
 void TestMidi::ringPushPop() {
@@ -258,6 +261,31 @@ void TestMidi::openFirstDeviceWhenPresent() {
     QCOMPARE(mgr.pollNotes(&msg, 1), 0); // no hardware input expected right now
     mgr.closeAll();
     QVERIFY(!mgr.isActive());
+}
+
+void TestMidi::cancelReleasesHeldPreviewNotes() {
+    Project project;
+    Track* track = project.addMidiTrack("Midi 1");
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+    track->setInstrumentIndex(0);
+
+    AudioEngine engine;
+    engine.setProject(&project);
+
+    // Note-on from the MIDI keyboard previews into track 0.
+    engine.previewNoteOn(0, 60, 100);
+    QCOMPARE(engine.m_previewCount.load(), 1);
+
+    // Focus switch: held notes are marked for release but remain held until
+    // the next audio block flushes them.
+    engine.cancelPreviewNotes();
+    QCOMPARE(engine.m_previewCount.load(), 1);
+
+    // The audio block flush delivers the note-offs and clears the held set.
+    engine.injectPreviewMidi();
+    QCOMPARE(engine.m_previewCount.load(), 0);
 }
 
 QTEST_MAIN(TestMidi)

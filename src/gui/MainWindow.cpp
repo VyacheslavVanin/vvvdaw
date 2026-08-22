@@ -1646,10 +1646,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
     if (event->type() == QEvent::WindowActivate) {
         for (auto* w : m_pianoRollWindows) {
             if (w == obj) {
-                m_midiPreviewTrack = w->trackIndex();
-                m_engine.setMidiPreviewTrack(m_midiPreviewTrack);
-                m_midiTargetHints[m_midiPreviewTrack] = w->eventId();
-                m_engine.midiRecorder().setTargetHints(m_midiTargetHints);
+                setActiveMidiPreview(w->trackIndex(), w->eventId());
                 break;
             }
         }
@@ -1748,6 +1745,15 @@ void MainWindow::openPianoRoll(int trackIndex, int64_t eventId) {
     connect(window, &PianoRollWindow::toggleSnapRequested, this, &MainWindow::toggleSnapToGrid);
     window->show();
 
+    setActiveMidiPreview(trackIndex, eventId);
+}
+
+void MainWindow::setActiveMidiPreview(int trackIndex, int64_t eventId) {
+    // Notes still held from the previous preview target (the keyboard is
+    // physically held) must be released, otherwise they keep ringing: their
+    // note-offs would be delivered to the new track and never match. The
+    // release is flushed on the next audio block by injectPreviewMidi().
+    m_engine.cancelPreviewNotes();
     m_midiPreviewTrack = trackIndex;
     m_engine.setMidiPreviewTrack(trackIndex);
     m_midiTargetHints[trackIndex] = eventId;
@@ -1763,8 +1769,13 @@ void MainWindow::updateMidiPreviewTarget() {
     int target = m_midiPreviewTrack;
     if (m_midiTargetHints.count(target) == 0)
         target = m_pianoRollWindows.empty() ? -1 : m_pianoRollWindows.back()->trackIndex();
-    m_midiPreviewTrack = target;
-    m_engine.setMidiPreviewTrack(target);
+    if (target != m_midiPreviewTrack) {
+        // The active piano-roll track changed (e.g. its window closed while
+        // notes were held): release them so they cannot keep ringing.
+        m_engine.cancelPreviewNotes();
+        m_midiPreviewTrack = target;
+        m_engine.setMidiPreviewTrack(target);
+    }
 }
 
 void MainWindow::resyncPianoRollWindows() {
