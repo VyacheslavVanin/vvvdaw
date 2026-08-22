@@ -108,6 +108,10 @@ void MidiRecorder::finish(Project& project, int64_t playPosition) {
             int64_t endTick = MidiClip::kPPQ;
             for (const auto& note : clip->notes())
                 endTick = std::max(endTick, note.endTick());
+            // Preserve the recorded extent so a session without notes does not
+            // snap the event back to a single PPQ on stop.
+            int64_t recordedTicks = project.samplesToTicks(playPosition - m_recordStartSample);
+            endTick = std::max(endTick, recordedTicks);
             clip->setLengthTicks(endTick);
             ev->setDurationSample(project.ticksToSamples(endTick));
             ev->setStartSample(m_recordStartSample);
@@ -143,6 +147,18 @@ bool MidiRecorder::pump(Project& project, bool recording, int64_t playPosition,
         m_begun = true;
         m_recordStartSample = recordStartSample;
         m_targets.clear();
+        // Show the recording event immediately on the armed MIDI tracks, even
+        // before the first note arrives. Tracks with an open piano-roll hint
+        // are left to findOrCreateTarget() so notes keep landing in that event.
+        for (size_t i = 0; i < project.tracks().size(); ++i) {
+            const auto& track = project.tracks()[i];
+            if (track.type() != Track::Type::Midi || !track.isRecordArmed())
+                continue;
+            if (m_hints.find(static_cast<int>(i)) != m_hints.end())
+                continue;
+            findOrCreateTarget(project, static_cast<int>(i), recordStartSample,
+                               recordStartSample);
+        }
     }
 
     std::vector<int> armedTracks;
@@ -192,6 +208,19 @@ bool MidiRecorder::pump(Project& project, bool recording, int64_t playPosition,
                 }
             }
         }
+    }
+
+    // Grow the recorded events to keep up with the playhead so the clip is
+    // visibly recording as it happens.
+    for (auto& target : m_targets) {
+        if (!target.created)
+            continue;
+        MidiEvent* ev = resolveTarget(project, target);
+        if (!ev)
+            continue;
+        int64_t grown = std::max<int64_t>(ev->durationSample(),
+                                          playPosition - ev->startSample());
+        ev->setDurationSample(grown);
     }
     return changed;
 }

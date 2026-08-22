@@ -675,6 +675,7 @@ void MainWindow::setupTransportConnections() {
             m_engine.setTransportState(TransportState::Recording);
             m_transportPanel->setRecording(true);
         }
+        syncRecordingPreviews();
     };
     connect(m_transportPanel, &TransportPanel::recordClicked, this, toggleRecording);
 
@@ -744,6 +745,7 @@ void MainWindow::setupTimer() {
         syncPlayheadViews(pos);
         for (auto* pr : m_pianoRollWindows)
             pr->setPlayheadSample(pos);
+        syncRecordingPreviews();
 
         // MIDI transport control (CC / note mapping from the input device).
         auto commands = m_engine.takeMidiTransportCommands();
@@ -880,6 +882,20 @@ void MainWindow::syncPlayheadViews(int64_t sample) {
     m_measureRuler->setPlayheadPosition(sample);
     for (auto& row : m_trackRows)
         row.view->setPlayheadPosition(sample);
+}
+
+void MainWindow::syncRecordingPreviews() {
+    bool recording = m_engine.transportState() == TransportState::Recording;
+    int64_t start = m_engine.midiRecordStartSample();
+    int64_t end = m_project.hasRecordRegion() ? m_project.recordRegionEnd() : -1;
+    for (auto& row : m_trackRows) {
+        bool active = false;
+        if (recording && row.view && row.view->track()) {
+            Track* track = row.view->track();
+            active = track->isRecordArmed() && track->type() == Track::Type::Audio;
+        }
+        row.view->setRecordingPreview(active, start, end);
+    }
 }
 
 void MainWindow::setupMenus() {
@@ -1541,6 +1557,7 @@ void MainWindow::syncAfterRebuild() {
 
     int64_t ph = m_engine.playPosition();
     syncPlayheadViews(ph);
+    syncRecordingPreviews();
 
     bool snap = m_project.snapToGrid();
     m_timelineRuler->setSnapToGrid(snap);

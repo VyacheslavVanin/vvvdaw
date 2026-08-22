@@ -26,6 +26,12 @@ public:
     void setPlayheadPosition(int64_t sample) { m_playheadPos = sample; update(); }
     int64_t playheadPosition() const { return m_playheadPos; }
 
+    // While recording, draw a growing rectangle showing the extent of the
+    // audio being recorded on this (record-armed) track. `endSample` clamps the
+    // rectangle to a record region, or -1 to let it grow with the playhead.
+    void setRecordingPreview(bool active, int64_t startSample, int64_t endSample = -1);
+    bool recordingPreviewActive() const { return m_recordingActive; }
+
     void updateFromTrack();
     void deleteSelectedEvent();
     int selectedEventIndex() const { return m_selectedEventIndex; }
@@ -97,6 +103,11 @@ private:
     int64_t m_scrollOffset = 0;
     double m_pixelsPerSample = vvvdaw::DefaultZoom;
     int64_t m_playheadPos = -1;
+
+    // Live audio recording preview (growing rectangle).
+    bool m_recordingActive = false;
+    int64_t m_recordStartSample = 0;
+    int64_t m_recordEndSample = -1;
 
     struct ClipCache {
         QImage thumbnail;

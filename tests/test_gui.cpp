@@ -114,6 +114,7 @@ private slots:
     void midiCrossTrackMoveKeepsSiblingEvents();
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
+    void trackViewDrawsRecordingPreview();
     void audioTrackOutComboListsBuses();
     void busPanelStripHasCompactControls();
     void busPanelStripsStayFixedWidth();
@@ -423,6 +424,45 @@ void MainWindowTest::shiftDragOnAudioDoesNotDuplicate() {
     QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
     QCOMPARE(track.events().size(), size_t(1));
     QTest::mouseRelease(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
+}
+
+void MainWindowTest::trackViewDrawsRecordingPreview() {
+    Project project;
+    project.addTrack("A1");
+    project.tracks()[0].setRecordArmed(true);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002); // 1 sec = 96 px at 48 kHz
+    view->setScrollOffset(0);
+    view->setPlayheadPosition(48000);
+
+    // Not recording: no recording-colored pixels.
+    view->setRecordingPreview(false, 0, -1);
+    QImage off = view->grab().toImage();
+    QVERIFY(!off.isNull());
+
+    // Recording: the growing rectangle (0..96 px) is drawn with the green
+    // recording tint and disappears again when cleared.
+    view->setRecordingPreview(true, 0, -1);
+    QImage on = view->grab().toImage();
+    QVERIFY(!on.isNull());
+
+    QColor cOff = off.pixelColor(48, 40);
+    QColor cOn = on.pixelColor(48, 40);
+    QVERIFY(cOn != cOff);
+    QVERIFY(cOn.green() > cOff.green()); // green tint appears over the grey row
+
+    // Clearing the preview removes the tint again.
+    view->setRecordingPreview(false, 0, -1);
+    QImage cleared = view->grab().toImage();
+    QCOMPARE(cleared.pixelColor(48, 40), cOff);
 }
 
 void MainWindowTest::audioTrackOutComboListsBuses() {

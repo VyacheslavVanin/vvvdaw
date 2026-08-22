@@ -189,6 +189,17 @@ TrackViewWidget::EdgeDrag TrackViewWidget::edgeAtX(int x, int eventIndex) const 
     return EdgeDrag::None;
 }
 
+void TrackViewWidget::setRecordingPreview(bool active, int64_t startSample,
+                                          int64_t endSample) {
+    if (m_recordingActive == active && m_recordStartSample == startSample
+        && m_recordEndSample == endSample)
+        return;
+    m_recordingActive = active;
+    m_recordStartSample = startSample;
+    m_recordEndSample = endSample;
+    update();
+}
+
 void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -327,6 +338,28 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.setPen(QPen(QColor("#ffcc00"), 1));
             painter.setBrush(Qt::NoBrush);
             painter.drawRect(eventRect);
+        }
+    }
+
+    // Live audio recording preview: a rectangle growing with the playhead so
+    // it is visible that recording is in progress before the event is written.
+    if (m_recordingActive && m_track && m_track->isRecordArmed()
+        && m_track->type() == Track::Type::Audio) {
+        int64_t end = m_playheadPos;
+        if (m_recordEndSample >= 0 && end > m_recordEndSample)
+            end = m_recordEndSample;
+        if (end > m_recordStartSample) {
+            int rx = static_cast<int>((m_recordStartSample - m_scrollOffset) * m_pixelsPerSample);
+            int rw = static_cast<int>((end - m_recordStartSample) * m_pixelsPerSample);
+            if (rx + rw >= 0 && rx <= width()) {
+                QRect recRect(rx, 2, rw, trackHeight - 4);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(0, 180, 100, 55));
+                painter.drawRect(recRect);
+                painter.setPen(QPen(QColor("#00d06a"), 1));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawRect(recRect);
+            }
         }
     }
 

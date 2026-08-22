@@ -73,6 +73,9 @@ private:
     void closePluginWindowsFor(PluginInstance* plugin);
     // Push the playhead position into the engine, rulers and all track views.
     void syncPlayheadViews(int64_t sample);
+    // Reflect the live recording preview (growing rectangle) state into the
+    // track views for record-armed audio tracks.
+    void syncRecordingPreviews();
     void updateRulerSpacers(int panelWidth);
     void syncPluginListSplitters(int senderIndex);
 

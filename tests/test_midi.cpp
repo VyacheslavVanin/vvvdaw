@@ -23,6 +23,9 @@ private slots:
     void recorderIgnoresUnarmedTrack();
     void recorderFinalizesHeldNotes();
     void recorderRecordsIntoHintEvent();
+    void recorderCreatesEventBeforeAnyNote();
+    void recorderGrowsEventDuration();
+    void recorderBeginWithHintDoesNotDuplicate();
     void openFirstDeviceWhenPresent();
     void cancelReleasesHeldPreviewNotes();
     void matchTransportCc();
@@ -246,6 +249,76 @@ void TestMidi::recorderRecordsIntoHintEvent() {
     QCOMPARE(n.velocity, 90);
     QCOMPARE(n.startTick, project.samplesToTicks(5000));
     QCOMPARE(n.durationTicks, project.samplesToTicks(5250) - project.samplesToTicks(5000));
+}
+
+void TestMidi::recorderCreatesEventBeforeAnyNote() {
+    Project project;
+    Track* armed = project.addMidiTrack("Midi 1");
+    armed->setRecordArmed(true);
+
+    MidiRecorder rec;
+    const int64_t recordStart = 10000;
+
+    // First pump begins recording. Even though no note has been played yet, the
+    // recording event must exist immediately so the track view shows the clip
+    // being recorded from the start.
+    QVERIFY(!rec.pump(project, true, 10000, recordStart));
+
+    auto& events = project.tracks()[0].midiEvents();
+    QCOMPARE(events.size(), size_t(1));
+    QCOMPARE(events[0].startSample(), recordStart);
+    QVERIFY(events[0].durationSample() > 0);
+}
+
+void TestMidi::recorderGrowsEventDuration() {
+    Project project;
+    Track* armed = project.addMidiTrack("Midi 1");
+    armed->setRecordArmed(true);
+
+    MidiRecorder rec;
+    const int64_t recordStart = 0;
+    QVERIFY(!rec.pump(project, true, 0, recordStart));
+    QVERIFY(!rec.pump(project, true, 100000, recordStart));
+    QVERIFY(!rec.pump(project, true, 200000, recordStart));
+
+    // The event's duration grows with the playhead even with no notes recorded.
+    auto& events = project.tracks()[0].midiEvents();
+    QCOMPARE(events.size(), size_t(1));
+    QVERIFY(events[0].durationSample() >= 200000);
+
+    // Stop: the recorded extent is preserved, no snap back to a single PPQ.
+    QVERIFY(!rec.pump(project, false, 300000, recordStart));
+    QVERIFY(events[0].durationSample() >= 290000);
+}
+
+void TestMidi::recorderBeginWithHintDoesNotDuplicate() {
+    Project project;
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setRecordArmed(true);
+
+    MidiEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(100000);
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(1000);
+    ev.setClip(clip);
+    track->addMidiEvent(ev);
+    int64_t eventId = track->midiEvents().back().id();
+
+    MidiRecorder rec;
+    rec.setTargetHints({ { 0, eventId } });
+
+    // Beginning recording into an open piano-roll event must not create a
+    // duplicate; notes keep landing in the hinted event.
+    QVERIFY(!rec.pump(project, true, 0, 0));
+    QCOMPARE(track->midiEvents().size(), size_t(1));
+
+    rec.captureNote(5000, 72, 90, true);
+    rec.captureNote(5250, 72, 90, false);
+    QVERIFY(rec.pump(project, true, 5000, 0));
+    QCOMPARE(track->midiEvents().size(), size_t(1));
+    QCOMPARE(track->findMidiEvent(eventId)->activeClip()->notes().size(), size_t(1));
 }
 
 void TestMidi::openFirstDeviceWhenPresent() {
