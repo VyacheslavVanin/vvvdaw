@@ -52,7 +52,6 @@ public:
     void setSnapToGrid(bool snap) { m_snapToGrid = snap; }
     void setSnapUnit(double samples) { m_snapUnit = samples; }
     void setSamplesPerTick(double samplesPerTick) { m_samplesPerTick = samplesPerTick; }
-    void setMouseWheelScroll(bool enabled) { m_mouseWheelScroll = enabled; }
 
 signals:
     void scrollOffsetChanged(int64_t offset);
@@ -181,5 +180,9 @@ private:
     bool m_snapToGrid = true;
     double m_snapUnit = vvvdaw::DefaultSnapUnitSamples;
     double m_samplesPerTick = 25.0;
-    bool m_mouseWheelScroll = false;
+
+    // Middle-button drag panning state.
+    bool m_panning = false;
+    int m_panStartX = 0;
+    int64_t m_panStartOffset = 0;
 };

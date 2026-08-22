@@ -181,10 +181,6 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
     m_streamingThresholdSpin->setValue(m_settings.streamingThresholdSec);
     form->addRow("Stream Threshold:", m_streamingThresholdSpin);
 
-    m_mouseWheelCheck = new QCheckBox(this);
-    m_mouseWheelCheck->setChecked(m_settings.mouseWheelScroll);
-    form->addRow("Mouse Wheel Scroll:", m_mouseWheelCheck);
-
     m_knobsPerRowSpin = new QSpinBox(this);
     m_knobsPerRowSpin->setRange(2, 6);
     m_knobsPerRowSpin->setValue(m_settings.pluginKnobsPerRow);
@@ -331,7 +327,6 @@ void SettingsDialog::accept() {
     m_settings.midiTransportRecordControl = m_midiRecordSpin->value();
     m_settings.midiTransportStopControl = m_midiStopSpin->value();
     m_settings.streamingThresholdSec = m_streamingThresholdSpin->value();
-    m_settings.mouseWheelScroll = m_mouseWheelCheck->isChecked();
     m_settings.pluginKnobsPerRow = m_knobsPerRowSpin->value();
 
     m_settings.pluginScanPaths.clear();

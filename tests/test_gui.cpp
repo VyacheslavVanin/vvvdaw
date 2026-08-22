@@ -17,6 +17,8 @@
 #include <QDragLeaveEvent>
 #include <QFrame>
 #include <QDialog>
+#include <QWheelEvent>
+#include <QScrollBar>
 #include <algorithm>
 #include <memory>
 #include <portaudio.h>
@@ -47,6 +49,7 @@
 #include "gui/PluginListWidget.h"
 #include "gui/PluginWindow.h"
 #include "gui/PianoRollWindow.h"
+#include "gui/PianoRollWidget.h"
 #include "gui/ChannelRoutingDialog.h"
 #include "gui/SettingsDialog.h"
 
@@ -170,6 +173,10 @@ private slots:
     void settingsDialogHasMidiInputControls();
     void settingsDialogLearnFlow();
     void previewTargetFollowsFocusedPianoRoll();
+    void middleDragPansTrackView();
+    void ctrlWheelZoomAnchorsCursorFrame();
+    void pianoRollMiddleDragPans();
+    void pianoRollCtrlWheelZoomAnchorsCursor();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
 };
@@ -2357,6 +2364,177 @@ void MainWindowTest::previewTargetFollowsFocusedPianoRoll() {
     // Switching focus back (what the WindowActivate filter calls) retargets.
     window.setActiveMidiPreview(0, id0);
     QCOMPARE(engine.midiPreviewTrack(), 0);
+}
+
+void MainWindowTest::middleDragPansTrackView() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002);            // 1 px = 500 samples
+    view->setScrollOffset(48000);
+
+    // Drag right with the middle button: the content follows the cursor, so
+    // the scroll offset decreases.
+    QTest::mousePress(view, Qt::MiddleButton, Qt::NoModifier, QPoint(100, 40));
+    QTest::mouseMove(view, QPoint(150, 40));
+    QCOMPARE(view->scrollOffset(), int64_t(48000 - 50 * 500));
+
+    // Drag left: the offset tracks the total drag delta from the press.
+    QTest::mouseMove(view, QPoint(50, 40));
+    QCOMPARE(view->scrollOffset(), int64_t(48000 + 50 * 500));
+    QTest::mouseMove(view, QPoint(0, 40));
+    QCOMPARE(view->scrollOffset(), int64_t(48000 + 100 * 500));
+
+    // Releasing the middle button stops the pan: moves no longer scroll.
+    QTest::mouseRelease(view, Qt::MiddleButton, Qt::NoModifier, QPoint(0, 40));
+    QTest::mouseMove(view, QPoint(300, 40));
+    QCOMPARE(view->scrollOffset(), int64_t(48000 + 100 * 500));
+}
+
+void MainWindowTest::ctrlWheelZoomAnchorsCursorFrame() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001);
+    view->setScrollOffset(0);
+
+    const QPoint pos(200, 40);
+    const int64_t before = view->scrollOffset() + static_cast<int64_t>(pos.x() / view->zoom());
+
+    auto sendZoomWheel = [view](const QPoint& p, int deltaY) {
+        QWheelEvent ev(QPointF(p), QPointF(p), QPoint(0, 0), QPoint(0, deltaY),
+                       Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(view, &ev);
+    };
+
+    // First zoom-in notch: the frame under the cursor must not move.
+    sendZoomWheel(pos, 120);
+    QVERIFY(view->zoom() > 0.001);
+    QVERIFY(view->scrollOffset() != 0);
+    const int64_t after1 = view->scrollOffset() + static_cast<int64_t>(pos.x() / view->zoom());
+    QCOMPARE(after1, before);
+
+    // A second notch keeps the same frame anchored.
+    sendZoomWheel(pos, 120);
+    const int64_t after2 = view->scrollOffset() + static_cast<int64_t>(pos.x() / view->zoom());
+    QCOMPARE(after2, before);
+
+    // And zooming back out restores the original view.
+    sendZoomWheel(pos, -120);
+    sendZoomWheel(pos, -120);
+    QCOMPARE(view->scrollOffset() + static_cast<int64_t>(pos.x() / view->zoom()), before);
+}
+
+void MainWindowTest::pianoRollMiddleDragPans() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(MidiClip::kPPQ * 16); // content wider than the viewport
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    window.openPianoRoll(0, project.tracks()[0].midiEvents()[0].id());
+    QCoreApplication::processEvents();
+
+    auto* widget = window.m_pianoRollWindows[0]->findChild<PianoRollWidget*>();
+    QVERIFY(widget);
+    auto* scrollArea = widget->enclosingScrollArea();
+    QVERIFY(scrollArea);
+    QScrollBar* hbar = scrollArea->horizontalScrollBar();
+    QVERIFY(hbar->maximum() > 0); // there is room to scroll
+
+    hbar->setValue(50);
+    QCOMPARE(hbar->value(), 50);
+
+    // Drag right with the middle button: content follows, scroll decreases.
+    QTest::mousePress(widget, Qt::MiddleButton, Qt::NoModifier, QPoint(300, 100));
+    QTest::mouseMove(widget, QPoint(340, 100));
+    QCOMPARE(hbar->value(), 10);
+    QTest::mouseMove(widget, QPoint(300, 100));
+    QCOMPARE(hbar->value(), 50);
+    QTest::mouseMove(widget, QPoint(250, 100));
+    QCOMPARE(hbar->value(), 100);
+
+    // After release, moves no longer pan.
+    QTest::mouseRelease(widget, Qt::MiddleButton, Qt::NoModifier, QPoint(250, 100));
+    QTest::mouseMove(widget, QPoint(350, 100));
+    QCOMPARE(hbar->value(), 100);
+}
+
+void MainWindowTest::pianoRollCtrlWheelZoomAnchorsCursor() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(MidiClip::kPPQ * 16);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    window.openPianoRoll(0, project.tracks()[0].midiEvents()[0].id());
+    QCoreApplication::processEvents();
+
+    auto* widget = window.m_pianoRollWindows[0]->findChild<PianoRollWidget*>();
+    QVERIFY(widget);
+    auto* scrollArea = widget->enclosingScrollArea();
+    QVERIFY(scrollArea);
+    QScrollBar* hbar = scrollArea->horizontalScrollBar();
+    QVERIFY(hbar->maximum() > 0);
+
+    const double oldPps = 0.06; // PianoRollWidget default
+    hbar->setValue(100);
+    const int viewportX = 300; // cursor position within the viewport
+    const int mouseX = viewportX + 100;
+
+    QWheelEvent we(QPointF(mouseX, 100), QPointF(mouseX, 100), QPoint(0, 0), QPoint(0, 120),
+                   Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(widget, &we);
+    QCoreApplication::processEvents();
+
+    const double newPps = std::clamp(oldPps * 1.2, 0.004, 2.0);
+    QVERIFY(newPps > oldPps);
+    const double anchorTick = static_cast<double>(mouseX - 56) / oldPps;
+    const int expected = std::max(0, static_cast<int>(std::lround(
+        anchorTick * newPps - viewportX + 56)));
+    QCOMPARE(hbar->value(), expected);
 }
 
 void MainWindowTest::panSliderHighlightsDeviationFromCenter() {

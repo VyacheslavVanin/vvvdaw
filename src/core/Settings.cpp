@@ -30,7 +30,6 @@ Settings::Settings()
     , midiTransportRecordControl(111)
     , midiTransportStopControl(112)
     , streamingThresholdSec(30)
-    , mouseWheelScroll(false)
     , pluginKnobsPerRow(3)
     , busPanelVisible(false)
     , busPanelHeight(200)
@@ -103,7 +102,6 @@ QJsonObject Settings::toJson() const {
     obj["midiTransportStopControl"] = midiTransportStopControl;
     obj["lastProjectPath"] = lastProjectPath;
     obj["streamingThresholdSec"] = streamingThresholdSec;
-    obj["mouseWheelScroll"] = mouseWheelScroll;
     obj["pluginKnobsPerRow"] = pluginKnobsPerRow;
     obj["busPanelVisible"] = busPanelVisible;
     obj["busPanelHeight"] = busPanelHeight;
@@ -145,7 +143,6 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("midiTransportStopControl")) midiTransportStopControl = obj["midiTransportStopControl"].toInt(112);
     if (obj.contains("lastProjectPath")) lastProjectPath = obj["lastProjectPath"].toString();
     if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
-    if (obj.contains("mouseWheelScroll")) mouseWheelScroll = obj["mouseWheelScroll"].toBool(false);
     if (obj.contains("pluginKnobsPerRow")) pluginKnobsPerRow = obj["pluginKnobsPerRow"].toInt(3);
     if (obj.contains("busPanelVisible")) busPanelVisible = obj["busPanelVisible"].toBool(false);
     if (obj.contains("busPanelHeight")) busPanelHeight = obj["busPanelHeight"].toInt(200);

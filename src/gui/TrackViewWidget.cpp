@@ -505,23 +505,34 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
     int deltaY = static_cast<int>(event->angleDelta().y());
     if (event->modifiers() & Qt::ControlModifier && deltaY != 0) {
+        // Zoom anchored at the frame under the cursor: the sample under the
+        // mouse must stay under it after the zoom.
+        int mouseX = std::clamp(static_cast<int>(event->position().x()), 0, std::max(0, width() - 1));
+        const int64_t anchorSample = sampleAtX(mouseX);
         double factor = 1.0 + (std::abs(deltaY) / 120.0) * (vvvdaw::ZoomFactor - 1.0);
         if (deltaY > 0)
             setZoom(m_pixelsPerSample * factor);
         else
             setZoom(m_pixelsPerSample / factor);
-    } else if (!m_mouseWheelScroll) {
-        int deltaX = static_cast<int>(event->angleDelta().x());
-        if (deltaX != 0)
-            setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaX * vvvdaw::ScrollStepSamples));
+        setScrollOffset(anchorSample - static_cast<int64_t>(mouseX / m_pixelsPerSample));
     } else {
-        if (deltaY != 0)
-            setScrollOffset(m_scrollOffset + static_cast<int64_t>(-deltaY * vvvdaw::ScrollStepSamples));
+        // Plain wheel: let the enclosing scroll area handle it (scrolls the
+        // track list vertically). Horizontal panning is done by middle-drag.
+        event->ignore();
+        return;
     }
     event->accept();
 }
 
 void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::MiddleButton) {
+        m_panning = true;
+        m_panStartX = static_cast<int>(event->position().x());
+        m_panStartOffset = m_scrollOffset;
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && m_track) {
         int idx = -1;
         if (eventAtX(static_cast<int>(event->position().x()), idx) >= 0) {
@@ -581,6 +592,12 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
 
 void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
     int mouseX = static_cast<int>(event->position().x());
+
+    if (m_panning) {
+        int dx = mouseX - m_panStartX;
+        setScrollOffset(m_panStartOffset - static_cast<int64_t>(dx / m_pixelsPerSample));
+        return;
+    }
 
     if (m_edgeDrag != EdgeDrag::None && m_edgeDragEventIndex >= 0 && m_track) {
         int64_t currentMouseSample = sampleAtX(mouseX);
@@ -685,6 +702,12 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::MiddleButton && m_panning) {
+        m_panning = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         if (m_edgeDrag != EdgeDrag::None) {
             m_edgeDrag = EdgeDrag::None;

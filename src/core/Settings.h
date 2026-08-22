@@ -40,7 +40,6 @@ public:
     int midiTransportRecordControl;
     int midiTransportStopControl;
     int streamingThresholdSec;
-    bool mouseWheelScroll;
     int pluginKnobsPerRow;
 
     QString lastProjectPath;

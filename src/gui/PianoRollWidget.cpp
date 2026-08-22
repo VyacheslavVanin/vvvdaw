@@ -9,6 +9,8 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -34,17 +36,22 @@ PianoRollWidget::PianoRollWidget(Project& project, UndoStack& undo, int trackInd
     setMouseTracking(true);
     setFocusPolicy(Qt::ClickFocus);
     setMinimumSize(kKeysWidth + 60, 128 * kRowHeight + 4);
+    setMinimumWidth(contentWidth());
 }
 
 QSize PianoRollWidget::sizeHint() const {
-    MidiClip* c = clip();
-    int64_t len = c ? c->lengthTicks() : 0;
-    int contentW = kKeysWidth + 40 + static_cast<int>(std::max<int64_t>(len, MidiClip::kPPQ * 4) * m_pixelsPerTick);
-    return QSize(contentW, 128 * kRowHeight + 4);
+    return QSize(contentWidth(), 128 * kRowHeight + 4);
 }
 
 QSize PianoRollWidget::minimumSizeHint() const {
     return QSize(kKeysWidth + 60, 128 * kRowHeight + 4);
+}
+
+int PianoRollWidget::contentWidth() const {
+    MidiClip* c = clip();
+    int64_t len = c ? c->lengthTicks() : 0;
+    return kKeysWidth + 40
+        + static_cast<int>(std::max<int64_t>(len, MidiClip::kPPQ * 4) * m_pixelsPerTick);
 }
 
 MidiClip* PianoRollWidget::clip() const {
@@ -59,6 +66,15 @@ MidiEvent* PianoRollWidget::currentEvent() const {
     return m_project.tracks()[m_trackIndex].findMidiEvent(m_eventId);
 }
 
+QScrollArea* PianoRollWidget::enclosingScrollArea() const {
+    // QScrollArea::setWidget() reparents the widget to the viewport, so walk
+    // up the parent chain to find the enclosing scroll area.
+    for (QWidget* w = parentWidget(); w; w = w->parentWidget())
+        if (auto* area = qobject_cast<QScrollArea*>(w))
+            return area;
+    return nullptr;
+}
+
 bool PianoRollWidget::reload() {
     if (!clip()) {
         clearDragState();
@@ -68,6 +84,7 @@ bool PianoRollWidget::reload() {
     }
     clearDragState();
     m_selectedNoteIds.clear();
+    setMinimumWidth(contentWidth());
     updateGeometry();
     update();
     emit notesChanged();
@@ -290,9 +307,29 @@ void PianoRollWidget::paintEvent(QPaintEvent* /*event*/) {
 void PianoRollWidget::wheelEvent(QWheelEvent* event) {
     int delta = static_cast<int>(event->angleDelta().y());
     if (event->modifiers() & Qt::ControlModifier && delta != 0) {
+        // Zoom anchored at the tick under the cursor: that tick must stay
+        // under the cursor after the zoom.
         double factor = (delta > 0) ? 1.2 : 1.0 / 1.2;
-        m_pixelsPerTick = std::clamp(m_pixelsPerTick * factor, 0.004, 2.0);
+        double newPps = std::clamp(m_pixelsPerTick * factor, 0.004, 2.0);
+        QScrollArea* area = enclosingScrollArea();
+        QScrollBar* hbar = area ? area->horizontalScrollBar() : nullptr;
+        const int oldScroll = hbar ? hbar->value() : 0;
+        const int mouseX = static_cast<int>(event->position().x());
+        const int viewportX = mouseX - oldScroll;
+        const double anchorTick = static_cast<double>(mouseX - kKeysWidth) / m_pixelsPerTick;
+
+        m_pixelsPerTick = newPps;
+        // The scroll area (widgetResizable) otherwise clamps the widget to the
+        // viewport width; forcing the content width keeps a scrollbar range so
+        // we can reposition it. resize() updates that range synchronously.
+        const int newWidth = contentWidth();
+        setMinimumWidth(newWidth);
+        resize(newWidth, height());
         updateGeometry();
+        if (hbar) {
+            const double desired = anchorTick * newPps - viewportX + kKeysWidth;
+            hbar->setValue(std::max(0, static_cast<int>(std::lround(desired))));
+        }
         update();
         emit zoomChanged(m_pixelsPerTick);
         event->accept();
@@ -370,6 +407,17 @@ void PianoRollWidget::beginNoteDrag(int noteId, const QPoint& pos, bool resize) 
 }
 
 void PianoRollWidget::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::MiddleButton) {
+        if (QScrollArea* area = enclosingScrollArea()) {
+            m_panning = true;
+            m_panStartX = static_cast<int>(event->position().x());
+            m_panStartScroll = area->horizontalScrollBar()->value();
+        }
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+
     if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
@@ -464,6 +512,14 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
     int mx = static_cast<int>(event->position().x());
     int my = static_cast<int>(event->position().y());
 
+    if (m_panning) {
+        if (QScrollArea* area = enclosingScrollArea()) {
+            int dx = mx - m_panStartX;
+            area->horizontalScrollBar()->setValue(m_panStartScroll - dx);
+        }
+        return;
+    }
+
     if (m_keyPreviewPitch >= 0) {
         updateKeyPreview(my);
         return;
@@ -548,6 +604,12 @@ void PianoRollWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void PianoRollWidget::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::MiddleButton && m_panning) {
+        m_panning = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         if (m_keyPreviewPitch >= 0) {
             endKeyPreview();

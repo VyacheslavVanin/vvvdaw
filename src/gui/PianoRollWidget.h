@@ -5,6 +5,7 @@
 #include <set>
 #include <vector>
 
+class QScrollArea;
 class QFocusEvent;
 class QHideEvent;
 
@@ -36,6 +37,10 @@ public:
 
     void setDefaultVelocity(int v) { m_lastVelocity = v; }
     int defaultVelocity() const { return m_lastVelocity; }
+
+    // The QScrollArea this widget lives in (walked up from the viewport
+    // parent that QScrollArea::setWidget() reparented us into), or nullptr.
+    QScrollArea* enclosingScrollArea() const;
 
 signals:
     void playheadSetRequested(int64_t sample);
@@ -86,6 +91,7 @@ private:
     int64_t clickToTimelineSample(int x) const;
     int64_t xToTick(int x) const;
     int tickToX(int64_t tick) const;
+    int contentWidth() const;
     int pitchToY(int pitch) const;
     int yToPitch(int y) const;
     int64_t snapTick(int64_t tick) const;
@@ -128,4 +134,9 @@ private:
 
     // Piano-key note preview
     int m_keyPreviewPitch = -1;
+
+    // Middle-button drag panning state.
+    bool m_panning = false;
+    int m_panStartX = 0;
+    int m_panStartScroll = 0;
 };
