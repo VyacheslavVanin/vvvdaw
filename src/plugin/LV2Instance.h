@@ -80,6 +80,11 @@ public:
 
     bool hasNativeUI() const override { return !m_uiUri.isEmpty(); }
 
+    // Current values of all output control ports (meters such as gain
+    // reduction, input/output level, clip) as written by the plugin on the
+    // audio thread during run(). The native UI consumes these via port_event.
+    std::vector<std::pair<int, float>> outputControlPortValues() const;
+
 private:
     // load() steps
     bool loadPluginDescriptor(const QString& path);

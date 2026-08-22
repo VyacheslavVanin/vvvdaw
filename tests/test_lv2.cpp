@@ -57,6 +57,7 @@ private slots:
     void genericScanSmoke();
     void multiChannelOutputDiscovery();
     void multiChannelProcess();
+    void outputControlPortMetersFlow();
 };
 
 void TestLV2::sigGuardRecovers() {
@@ -396,6 +397,67 @@ void TestLV2::multiChannelProcess() {
     for (int c = 0; c < outCh; ++c)
         distinct.insert(outBufs[c]);
     QCOMPARE(static_cast<int>(distinct.size()), outCh);
+
+    QVERIFY(inst.deactivate());
+}
+
+void TestLV2::outputControlPortMetersFlow() {
+    // Regression: compressor UIs (x42-compressor, ZamComp, ...) drive their
+    // dynamic widgets — level meters, GR meter, the dot on the compression
+    // curve — from output control ports that the plugin writes during run().
+    // The host must read those back and forward them to the UI via port_event;
+    // otherwise the widgets render once at editor creation and stay static.
+    //
+    // The full UI path needs X11, so this tests the data source the forwarding
+    // consumes: the plugin's meter values must be visible on the output control
+    // ports after real compression.
+    LV2Instance inst;
+    if (!inst.load(kZamCompUri))
+        QSKIP("ZamComp LV2 plugin not installed");
+    QVERIFY(inst.activate(kSampleRate, kBlockSize));
+
+    int grIndex = -1;
+    int thrIndex = -1;
+    for (const auto& p : inst.ports()) {
+        if (p.type == PluginPortInfo::Type::Control &&
+            p.direction == PluginPortInfo::Direction::Output &&
+            p.name.contains("Gain Reduction"))
+            grIndex = p.index;
+        if (p.type == PluginPortInfo::Type::Control &&
+            p.direction == PluginPortInfo::Direction::Input &&
+            p.name.contains("Threshold"))
+            thrIndex = p.index;
+    }
+    QVERIFY2(grIndex >= 0, "ZamComp has no Gain Reduction output control port");
+    QVERIFY2(thrIndex >= 0, "ZamComp has no Threshold control port");
+
+    // The "Gain Reduction" port must be reported as an output control port.
+    bool grIsOutputCtrl = false;
+    for (auto& [idx, value] : inst.outputControlPortValues())
+        grIsOutputCtrl = grIsOutputCtrl || (idx == grIndex);
+    QVERIFY(grIsOutputCtrl);
+
+    // Low threshold so the compressor definitely engages on the loud sine.
+    inst.setParameter(thrIndex, -60.0f);
+
+    std::vector<float> inL(kBlockSize, 0.0f);
+    std::vector<float> inR(kBlockSize, 0.0f);
+    std::vector<float> outL(kBlockSize, 0.0f);
+    std::vector<float> outR(kBlockSize, 0.0f);
+    float* inBufs[2] = { inL.data(), inR.data() };
+    float* outBufs[2] = { outL.data(), outR.data() };
+    for (int block = 0; block < 20; ++block) {
+        for (int i = 0; i < kBlockSize; ++i)
+            inL[i] = inR[i] = 0.5f * std::sin(2.0 * M_PI * 440.0 * i / kSampleRate);
+        std::fill(outL.begin(), outL.end(), 0.0f);
+        std::fill(outR.begin(), outR.end(), 0.0f);
+        QVERIFY(inst.process(inBufs, outBufs, kBlockSize, kNumChannels));
+    }
+
+    // The GR meter (an output control port) must have moved; this is exactly
+    // the value drainUiEvents() forwards to the native UI as port_event.
+    float gr = inst.getParameter(grIndex);
+    QVERIFY2(gr > 0.1f, qPrintable(QString("expected Gain Reduction meter to move, got %1").arg(gr)));
 
     QVERIFY(inst.deactivate());
 }

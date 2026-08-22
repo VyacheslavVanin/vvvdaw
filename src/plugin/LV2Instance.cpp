@@ -757,6 +757,25 @@ void LV2Instance::drainUiEvents() {
                                     m_uridEventTransfer,
                                     msg.data.constData());
     }
+
+    // Forward output control port values (level meters, gain reduction, clip,
+    // ...) to the UI so its dynamic displays stay live. Without this the
+    // plugin's metering ports are only sent once at editor creation and the
+    // widgets render but never move.
+    for (auto& [portIndex, value] : outputControlPortValues())
+        m_uiHost->sendPortEvent(portIndex, value);
+}
+
+std::vector<std::pair<int, float>> LV2Instance::outputControlPortValues() const {
+    std::vector<std::pair<int, float>> out;
+    for (const auto& pi : m_portInfos) {
+        if (pi.type == PluginPortInfo::Type::Control &&
+            pi.direction == PluginPortInfo::Direction::Output &&
+            pi.index >= 0 && pi.index < static_cast<int>(m_ctrlValues.size())) {
+            out.emplace_back(pi.index, m_ctrlValues[pi.index]);
+        }
+    }
+    return out;
 }
 
 void LV2Instance::sendPatchSet(int portIndex, const QString& value, bool isPath) {
@@ -944,9 +963,11 @@ void* LV2Instance::createEditor(void* parentWindow) {
     m_idleTimer = new QTimer;
     QObject::connect(m_idleTimer, &QTimer::timeout, m_idleTimer, [this]() {
         if (!m_uiHost) return;
+        // Deliver atom messages and output-control (meter) values first so the
+        // repaint triggered by idle() in the same tick sees fresh data.
+        drainUiEvents();
         if (m_uiHost->hasIdleInterface())
             m_uiHost->idle();
-        drainUiEvents();
     });
     m_idleTimer->start(16);
 
