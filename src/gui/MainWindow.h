@@ -139,4 +139,5 @@ private:
 
     int m_midiPreviewTrack = -1;
     std::unordered_map<int, int64_t> m_midiTargetHints;
+    int m_recordingPreviewTick = 0;
 };

@@ -888,13 +888,36 @@ void MainWindow::syncRecordingPreviews() {
     bool recording = m_engine.transportState() == TransportState::Recording;
     int64_t start = m_engine.midiRecordStartSample();
     int64_t end = m_project.hasRecordRegion() ? m_project.recordRegionEnd() : -1;
-    for (auto& row : m_trackRows) {
-        bool active = false;
-        if (recording && row.view && row.view->track()) {
-            Track* track = row.view->track();
-            active = track->isRecordArmed() && track->type() == Track::Type::Audio;
+
+    // Refresh the live waveform peaks roughly every half second (12 ticks).
+    constexpr int kPeakRefreshTicks = 12;
+    bool refreshPeaks = false;
+    if (recording) {
+        refreshPeaks = (m_recordingPreviewTick == 0 || m_recordingPreviewTick % kPeakRefreshTicks == 0);
+        ++m_recordingPreviewTick;
+    } else {
+        m_recordingPreviewTick = 0;
+    }
+
+    for (size_t i = 0; i < m_trackRows.size(); ++i) {
+        TrackViewWidget* view = m_trackRows[i].view;
+        if (!view || !view->track())
+            continue;
+        Track* track = view->track();
+        bool active = recording && track->isRecordArmed() && track->type() == Track::Type::Audio;
+
+        if (active && refreshPeaks) {
+            std::vector<AudioClip::Peak> peaks;
+            int64_t recordedFrames = 0;
+            if (m_engine.recordingManager().copyRecordPeaks(static_cast<int>(i), peaks, recordedFrames))
+                view->setRecordingPeaks(std::move(peaks), AudioClip::PEAK_STEP_FRAMES, recordedFrames);
+            else
+                view->setRecordingPeaks({}, 0, 0);
+        } else if (!recording) {
+            view->setRecordingPeaks({}, 0, 0);
         }
-        row.view->setRecordingPreview(active, start, end);
+
+        view->setRecordingPreview(active, start, end);
     }
 }
 

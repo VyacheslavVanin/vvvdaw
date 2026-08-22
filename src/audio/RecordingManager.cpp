@@ -23,6 +23,17 @@ void RecordingManager::setScratchSize(size_t frames) {
     m_scratch.resize(frames);
 }
 
+bool RecordingManager::copyRecordPeaks(int trackIndex, std::vector<AudioClip::Peak>& out,
+                                       int64_t& outRecordedFrames) const {
+    std::unique_lock tracksLock(m_recordingTracksMutex);
+    auto it = m_recordingTracks.find(trackIndex);
+    if (it == m_recordingTracks.end() || !it->second.peaks)
+        return false;
+    out = it->second.peaks->snapshot();
+    outRecordedFrames = it->second.peaks->recordedFrames();
+    return true;
+}
+
 void RecordingManager::start(Project* project, int sampleRate, int64_t playPosition) {
     if (!project) return;
 
@@ -75,6 +86,7 @@ void RecordingManager::start(Project* project, int sampleRate, int64_t playPosit
             rt.filePath = filePath.toStdString();
             rt.info = info;
             rt.file = file;
+            rt.peaks = std::make_unique<RecordingPeaks>();
 
             qDebug() << "Recording to:" << filePath;
             m_recordingTracks.emplace(static_cast<int>(i), std::move(rt));
@@ -105,6 +117,15 @@ void RecordingManager::stop(Project* project) {
         m_writerRunning = false;
         m_writerCond.notify_one();
         m_writerThread.join();
+    }
+
+    // The final drain ran on the writer thread; push any trailing partial
+    // peak window so the live preview covers the whole capture.
+    {
+        std::unique_lock tracksLock(m_recordingTracksMutex);
+        for (auto& [idx, rt] : m_recordingTracks)
+            if (rt.peaks)
+                rt.peaks->flush();
     }
 
     if (!project) {
@@ -286,6 +307,9 @@ void RecordingManager::writerThreadFunc() {
                 size_t toRead = std::min(avail, tmp.size());
                 size_t readCount = rt.buffer->read(tmp.data(), toRead);
                 if (readCount == 0) break;
+                int ch = rt.info.channels > 0 ? rt.info.channels : 2;
+                if (rt.peaks)
+                    rt.peaks->addSamples(tmp.data(), readCount / static_cast<size_t>(ch), ch);
                 sf_writef_float(rt.file, tmp.data(), readCount / 2);
                 avail -= readCount;
             }

@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QMap>
 #include <memory>
+#include <vector>
 #include "core/Constants.h"
 #include "model/AudioClip.h"
 #include "model/AudioEvent.h"
@@ -31,6 +32,11 @@ public:
     // rectangle to a record region, or -1 to let it grow with the playhead.
     void setRecordingPreview(bool active, int64_t startSample, int64_t endSample = -1);
     bool recordingPreviewActive() const { return m_recordingActive; }
+
+    // Live waveform peaks (from the recording writer thread) rendered inside
+    // the recording preview rectangle. Pass empty to clear.
+    void setRecordingPeaks(std::vector<AudioClip::Peak> peaks, int64_t framesPerPeak,
+                           int64_t recordedFrames);
 
     void updateFromTrack();
     void deleteSelectedEvent();
@@ -108,6 +114,21 @@ private:
     bool m_recordingActive = false;
     int64_t m_recordStartSample = 0;
     int64_t m_recordEndSample = -1;
+    std::vector<AudioClip::Peak> m_recordingPeaks;
+    int64_t m_recordingFramesPerPeak = 0;
+    int64_t m_recordingRecordedFrames = 0;
+
+    // Cached image of the viewport-visible recording window, rendered at true
+    // sample positions so chunks are appended rather than stretched.
+    struct RecordingWaveCache {
+        QImage image;
+        int64_t peakCount = -1;
+        int64_t offsetFrame = -1;
+        int64_t visibleFrames = -1;
+        int width = -1;
+        int height = -1;
+    };
+    RecordingWaveCache m_recordingWaveCache;
 
     struct ClipCache {
         QImage thumbnail;

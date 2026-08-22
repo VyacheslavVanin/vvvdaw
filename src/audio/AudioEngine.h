@@ -114,6 +114,9 @@ public:
     MidiRecorder& midiRecorder() { return m_midiRecorder; }
     int64_t midiRecordStartSample() const { return m_recordingManager.recordStartSample(); }
 
+    // Access to the live recording state and waveform peaks (GUI thread).
+    RecordingManager& recordingManager() { return m_recordingManager; }
+
 private:
     friend class TestMidi;
 

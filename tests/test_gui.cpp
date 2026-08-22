@@ -26,6 +26,7 @@
 #include "audio/AudioUtils.h"
 #include "model/Project.h"
 #include "model/Track.h"
+#include "model/AudioClip.h"
 #include "model/AudioBus.h"
 #include "model/Instrument.h"
 #include "model/TemplateStore.h"
@@ -115,6 +116,8 @@ private slots:
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
     void trackViewDrawsRecordingPreview();
+    void trackViewDrawsLiveWaveformDuringRecording();
+    void trackViewRecordingWaveformAddsDiscretely();
     void audioTrackOutComboListsBuses();
     void busPanelStripHasCompactControls();
     void busPanelStripsStayFixedWidth();
@@ -463,6 +466,103 @@ void MainWindowTest::trackViewDrawsRecordingPreview() {
     view->setRecordingPreview(false, 0, -1);
     QImage cleared = view->grab().toImage();
     QCOMPARE(cleared.pixelColor(48, 40), cOff);
+}
+
+void MainWindowTest::trackViewDrawsLiveWaveformDuringRecording() {
+    Project project;
+    project.addTrack("A1");
+    project.tracks()[0].setRecordArmed(true);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002); // 1 sec = 96 px at 48 kHz
+    view->setScrollOffset(0);
+    view->setPlayheadPosition(48000);
+    view->setRecordingPreview(true, 0, -1);
+
+    // No peaks yet: only the green recording tint, no red waveform.
+    view->setRecordingPeaks({}, 0, 0);
+    QImage empty = view->grab().toImage();
+    QVERIFY(!empty.isNull());
+
+    // Two peaks cover 1024 recorded frames -> ~2 px of waveform at the content
+    // position (x=0..2). The rest of the rectangle stays empty (no stretching).
+    std::vector<AudioClip::Peak> peaks;
+    peaks.push_back({0.9f});
+    peaks.push_back({0.9f});
+    view->setRecordingPeaks(peaks, AudioClip::PEAK_STEP_FRAMES,
+                            static_cast<int64_t>(peaks.size()) * AudioClip::PEAK_STEP_FRAMES);
+    QImage filled = view->grab().toImage();
+    QVERIFY(!filled.isNull());
+
+    QColor cWave = filled.pixelColor(1, 40);   // on the 2 px waveform
+    QVERIFY(cWave.red() > cWave.green());      // red waveform bar present
+    // Beyond the recorded content the area stays exactly as without peaks.
+    QCOMPARE(filled.pixelColor(40, 40), empty.pixelColor(40, 40));
+
+    // Removing the peaks clears the waveform again.
+    view->setRecordingPeaks({}, 0, 0);
+    QImage cleared = view->grab().toImage();
+    QCOMPARE(cleared.pixelColor(1, 40), empty.pixelColor(1, 40));
+}
+
+void MainWindowTest::trackViewRecordingWaveformAddsDiscretely() {
+    Project project;
+    project.addTrack("A1");
+    project.tracks()[0].setRecordArmed(true);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002); // 1 sec = 96 px at 48 kHz
+    view->setScrollOffset(0);
+    view->setPlayheadPosition(48000); // rectangle spans x=0..96
+    view->setRecordingPreview(true, 0, -1);
+
+    // Baseline: nothing recorded yet.
+    view->setRecordingPeaks({}, 0, 0);
+    QImage baseline = view->grab().toImage();
+
+    // Chunk 1: 5 loud + 5 quiet peaks (5120 frames = ~10 px of waveform).
+    std::vector<AudioClip::Peak> p1;
+    for (int i = 0; i < 5; ++i) p1.push_back({0.9f});
+    for (int i = 0; i < 5; ++i) p1.push_back({0.2f});
+    view->setRecordingPeaks(p1, AudioClip::PEAK_STEP_FRAMES,
+                            static_cast<int64_t>(p1.size()) * AudioClip::PEAK_STEP_FRAMES);
+    QImage grab1 = view->grab().toImage();
+
+    // Chunk 2: same first 10 peaks + 10 medium peaks (10240 frames = ~20 px).
+    std::vector<AudioClip::Peak> p2 = p1;
+    for (int i = 0; i < 10; ++i) p2.push_back({0.6f});
+    view->setRecordingPeaks(p2, AudioClip::PEAK_STEP_FRAMES,
+                            static_cast<int64_t>(p2.size()) * AudioClip::PEAK_STEP_FRAMES);
+    QImage grab2 = view->grab().toImage();
+
+    // x=15 (frame ~7500) is beyond chunk 1's content (~10 px): it stays empty
+    // until chunk 2 lands, then shows the newly appended 0.6 chunk -> discrete
+    // addition, not stretching.
+    QCOMPARE(grab1.pixelColor(15, 40), baseline.pixelColor(15, 40));
+    QVERIFY(grab2.pixelColor(15, 40).red() > grab2.pixelColor(15, 40).green());
+
+    // The far right of the rectangle never fills with waveform: the recorded
+    // content is not stretched to cover the growing rectangle.
+    QCOMPARE(grab1.pixelColor(60, 40), baseline.pixelColor(60, 40));
+    QCOMPARE(grab2.pixelColor(60, 40), baseline.pixelColor(60, 40));
+
+    // The already-drawn region (x=8, frame ~4000, in the quiet section) is
+    // pixel-identical: adding a chunk must not re-stretch earlier content.
+    QCOMPARE(grab1.pixelColor(8, 40), grab2.pixelColor(8, 40));
 }
 
 void MainWindowTest::audioTrackOutComboListsBuses() {

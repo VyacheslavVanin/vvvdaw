@@ -12,6 +12,7 @@
 #include <QAction>
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 
 TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
     : QWidget(parent)
@@ -197,6 +198,20 @@ void TrackViewWidget::setRecordingPreview(bool active, int64_t startSample,
     m_recordingActive = active;
     m_recordStartSample = startSample;
     m_recordEndSample = endSample;
+    if (!active) {
+        m_recordingPeaks.clear();
+        m_recordingWaveCache = RecordingWaveCache();
+    }
+    update();
+}
+
+void TrackViewWidget::setRecordingPeaks(std::vector<AudioClip::Peak> peaks,
+                                        int64_t framesPerPeak,
+                                        int64_t recordedFrames) {
+    m_recordingPeaks = std::move(peaks);
+    m_recordingFramesPerPeak = framesPerPeak;
+    m_recordingRecordedFrames = recordedFrames;
+    m_recordingWaveCache = RecordingWaveCache();
     update();
 }
 
@@ -356,6 +371,49 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                 painter.setPen(Qt::NoPen);
                 painter.setBrush(QColor(0, 180, 100, 55));
                 painter.drawRect(recRect);
+
+                // Live waveform of the audio captured so far, drawn at true sample
+                // positions: each refresh appends a new chunk to the right and
+                // the not-yet-recorded part of the rectangle stays empty. Only
+                // the viewport-visible window is rendered, re-rendered when new
+                // peaks arrive or the view scrolls/zooms.
+                if (!m_recordingPeaks.empty() && m_recordingFramesPerPeak > 0
+                    && m_recordingRecordedFrames > 0) {
+                    const int64_t recStart = m_recordStartSample;
+                    const int64_t recFrames = m_recordingRecordedFrames;
+                    const int64_t viewLeft = m_scrollOffset;
+                    const int64_t viewRight = sampleAtX(width());
+                    const int64_t wl = std::max<int64_t>(0, viewLeft - recStart);
+                    const int64_t wr = std::min<int64_t>(recFrames, viewRight - recStart);
+                    if (wr > wl) {
+                        const int ih = std::max(1, trackHeight - 6);
+                        const int iw = std::max(1, static_cast<int>(
+                            std::llround(static_cast<double>(wr - wl) * m_pixelsPerSample)));
+                        const int imgX = static_cast<int>(std::llround(
+                            static_cast<double>(recStart + wl - m_scrollOffset) * m_pixelsPerSample));
+                        auto& cache = m_recordingWaveCache;
+                        if (cache.image.isNull()
+                            || cache.peakCount != static_cast<int64_t>(m_recordingPeaks.size())
+                            || cache.offsetFrame != wl
+                            || cache.visibleFrames != (wr - wl)
+                            || cache.width != iw || cache.height != ih) {
+                            cache.image = WaveformPainter::renderFromPeaks(
+                                m_recordingPeaks.data(), m_recordingPeaks.size(),
+                                static_cast<size_t>(m_recordingFramesPerPeak),
+                                static_cast<size_t>(recFrames),
+                                static_cast<size_t>(wl), static_cast<size_t>(wr - wl),
+                                iw, ih, WaveformPainter::recordingColor());
+                            cache.peakCount = static_cast<int64_t>(m_recordingPeaks.size());
+                            cache.offsetFrame = wl;
+                            cache.visibleFrames = wr - wl;
+                            cache.width = iw;
+                            cache.height = ih;
+                        }
+                        if (!cache.image.isNull())
+                            painter.drawImage(imgX, 3, cache.image);
+                    }
+                }
+
                 painter.setPen(QPen(QColor("#00d06a"), 1));
                 painter.setBrush(Qt::NoBrush);
                 painter.drawRect(recRect);
