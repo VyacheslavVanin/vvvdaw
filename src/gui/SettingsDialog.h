@@ -18,6 +18,7 @@ private:
     void populateSampleRates();
     void populateBufferSizes();
     void populateDevices();
+    void populateMidiInputDevices();
     void accept() override;
 
     Settings& m_settings;
@@ -27,6 +28,11 @@ private:
     QComboBox* m_bufferSizeCombo;
     QComboBox* m_inputDeviceCombo;
     QComboBox* m_outputDeviceCombo;
+    QComboBox* m_midiInputCombo;
+    QComboBox* m_midiTransportTypeCombo;
+    QSpinBox* m_midiPlaySpin;
+    QSpinBox* m_midiRecordSpin;
+    QSpinBox* m_midiStopSpin;
     QSpinBox* m_inputChannelSpin;
     QSpinBox* m_outputChannelSpin;
     QSpinBox* m_streamingThresholdSpin;

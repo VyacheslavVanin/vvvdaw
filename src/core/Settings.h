@@ -32,6 +32,11 @@ public:
     int outputDeviceId;
     int inputChannel;
     int outputChannel;
+    int midiInputDeviceId;
+    int midiTransportControlType;
+    int midiTransportPlayControl;
+    int midiTransportRecordControl;
+    int midiTransportStopControl;
     int streamingThresholdSec;
     bool mouseWheelScroll;
     int pluginKnobsPerRow;

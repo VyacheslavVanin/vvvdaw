@@ -47,6 +47,7 @@
 #include "gui/PluginWindow.h"
 #include "gui/PianoRollWindow.h"
 #include "gui/ChannelRoutingDialog.h"
+#include "gui/SettingsDialog.h"
 
 namespace {
 QComboBox* findComboContaining(QWidget* parent, const QString& text) {
@@ -161,6 +162,8 @@ private slots:
     void startDialogSelectingTemplateSetsChoice();
     void mainWindowFileMenuHasSaveAsTemplate();
     void replaceProjectSwapsAndRebuilds();
+    void midiTrackShowsArmButton();
+    void settingsDialogHasMidiInputControls();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
 };
@@ -447,7 +450,11 @@ void MainWindowTest::audioTrackOutComboListsBuses() {
     for (int i = 0; i < midiOut->count(); ++i) {
         if (midiOut->itemText(i).contains("Inst: Pad"))
             foundInst = true;
-        QVERIFY(!midiOut->itemText(i).contains("Master"));
+        // The MIDI out combo must not list any project bus as an item (checked
+        // by exact name: a MIDI output device may legitimately contain "Master"
+        // as a substring in its own name).
+        for (const auto& bus : project.buses())
+            QVERIFY(midiOut->itemText(i) != bus.name());
     }
     QVERIFY(foundInst);
 }
@@ -2084,6 +2091,55 @@ void MainWindowTest::replaceProjectSwapsAndRebuilds() {
     QCOMPARE(window.m_project.name(), freshName);
     QCOMPARE(window.m_trackRows.size(), size_t(2));
     QVERIFY(window.m_project.filePath().isEmpty());
+}
+
+void MainWindowTest::midiTrackShowsArmButton() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(1));
+
+    TrackPanelWidget* panel = window.m_trackRows[0].panel;
+    QVERIFY(panel);
+    QCOMPARE(panel->track(), &project.tracks()[0]);
+
+    // MIDI tracks expose the record-arm button so input can be captured.
+    auto* arm = panel->findChild<QPushButton*>("armButton");
+    QVERIFY(arm);
+    QVERIFY(arm->isVisibleTo(panel));
+
+    arm->click();
+    QVERIFY(project.tracks()[0].isRecordArmed());
+    arm->click();
+    QVERIFY(!project.tracks()[0].isRecordArmed());
+}
+
+void MainWindowTest::settingsDialogHasMidiInputControls() {
+    Project project;
+    Settings settings;
+    AudioEngine engine;
+    SettingsDialog dialog(settings, engine);
+
+    auto* midiCombo = dialog.findChild<QComboBox*>("midiInputCombo");
+    QVERIFY(midiCombo);
+    QVERIFY(midiCombo->count() >= 1);
+    QCOMPARE(midiCombo->itemData(0).toInt(), -1); // "None" default
+
+    auto* typeCombo = dialog.findChild<QComboBox*>("midiTransportTypeCombo");
+    QVERIFY(typeCombo);
+    QCOMPARE(typeCombo->currentData().toInt(), settings.midiTransportControlType);
+
+    auto* playSpin = dialog.findChild<QSpinBox*>("midiPlaySpin");
+    QVERIFY(playSpin);
+    QCOMPARE(playSpin->value(), settings.midiTransportPlayControl);
+    auto* recordSpin = dialog.findChild<QSpinBox*>("midiRecordSpin");
+    QVERIFY(recordSpin);
+    QCOMPARE(recordSpin->value(), settings.midiTransportRecordControl);
+    auto* stopSpin = dialog.findChild<QSpinBox*>("midiStopSpin");
+    QVERIFY(stopSpin);
+    QCOMPARE(stopSpin->value(), settings.midiTransportStopControl);
 }
 
 void MainWindowTest::panSliderHighlightsDeviationFromCenter() {

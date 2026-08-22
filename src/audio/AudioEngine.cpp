@@ -146,6 +146,15 @@ bool AudioEngine::init(const Settings& settings) {
     }
 
     generateClickEnvelope();
+
+    MidiTransportControls controls;
+    controls.type = settings.midiTransportControlType;
+    controls.play = settings.midiTransportPlayControl;
+    controls.record = settings.midiTransportRecordControl;
+    controls.stop = settings.midiTransportStopControl;
+    m_midiInput.setTransportControls(controls);
+    if (settings.midiInputDeviceId >= 0)
+        m_midiInput.open(settings.midiInputDeviceId);
     return true;
 }
 
@@ -169,6 +178,7 @@ void AudioEngine::shutdown() {
         Pa_CloseStream(m_stream);
         m_stream = nullptr;
     }
+    m_midiInput.closeAll();
 }
 
 bool AudioEngine::startStream() {
@@ -214,6 +224,9 @@ void AudioEngine::setTransportState(TransportState state) {
             stopRecording();
         if (prev == TransportState::Playing || prev == TransportState::Recording || prev == TransportState::Paused || prev == TransportState::Precounting)
             stopPlayback();
+        // Release preview notes held from the MIDI keyboard (a held key must
+        // not keep ringing after stop).
+        cancelPreviewNotes();
         // Force the next playback block to flush notes still held by
         // instruments (their note-offs cannot be delivered while stopped).
         m_midiTransportActive = false;
@@ -339,6 +352,7 @@ void AudioEngine::processAudio(const float* input, float* output,
                 return;
             }
 
+            pollMidiInput(proj, pos, frameCount, state);
             processBusMixing(proj, output, frameCount, pos, outCh, input, inCh);
 
             if (state == TransportState::Recording)
@@ -351,13 +365,46 @@ void AudioEngine::processAudio(const float* input, float* output,
     }
 
     if ((state == TransportState::Stopped || state == TransportState::Paused)
-        && ((input && inCh > 0) || m_previewCount.load(std::memory_order_acquire) > 0)) {
+        && ((input && inCh > 0) || m_previewCount.load(std::memory_order_acquire) > 0
+            || m_midiInput.hasPendingNotes())) {
         auto* proj = m_project.load(std::memory_order_acquire);
         if (!proj) return;
         std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
         if (!projectLock) return;
         int64_t pos = m_playPosition.load(std::memory_order_acquire);
+        pollMidiInput(proj, pos, frameCount, state);
         processBusMixing(proj, output, frameCount, pos, outCh, input, inCh, true);
+    }
+}
+
+void AudioEngine::pollMidiInput(Project* proj, int64_t pos, unsigned long frameCount,
+                                vvvdaw::TransportState state) {
+    if (!m_midiInput.hasPendingNotes())
+        return;
+
+    MidiMessage msgs[64];
+    int n = m_midiInput.pollNotes(msgs, 64);
+    if (n == 0)
+        return;
+
+    bool recording = (state == TransportState::Recording);
+    int previewTrack = m_midiPreviewTrack.load(std::memory_order_acquire);
+    bool canPreview = previewTrack >= 0 && previewTrack < static_cast<int>(proj->tracks().size())
+        && proj->tracks()[static_cast<size_t>(previewTrack)].type() == Track::Type::Midi;
+
+    for (int i = 0; i < n; ++i) {
+        const MidiMessage& m = msgs[i];
+        if (m.isNoteOn()) {
+            if (recording)
+                m_midiRecorder.captureNote(pos, m.data1, m.data2, true);
+            if (canPreview)
+                previewNoteOn(previewTrack, m.data1, m.data2);
+        } else if (m.isNoteOff()) {
+            if (recording)
+                m_midiRecorder.captureNote(pos, m.data1, 0, false);
+            if (canPreview)
+                previewNoteOff(previewTrack, m.data1);
+        }
     }
 }
 
@@ -1220,6 +1267,20 @@ void AudioEngine::refreshMidiOutputs() {
 void AudioEngine::panicMidi() {
     for (int id : m_openMidiDevices)
         m_midiOutput.sendAllNotesOff(id);
+}
+
+void AudioEngine::setMidiPreviewTrack(int trackIndex) {
+    m_midiPreviewTrack.store(trackIndex, std::memory_order_release);
+}
+
+void AudioEngine::setMidiTransportControls(const MidiTransportControls& controls) {
+    m_midiInput.setTransportControls(controls);
+}
+
+std::vector<MidiTransportCommand> AudioEngine::takeMidiTransportCommands() {
+    MidiTransportCommand cmds[16];
+    int n = m_midiInput.pollTransport(cmds, 16);
+    return std::vector<MidiTransportCommand>(cmds, cmds + n);
 }
 
 void AudioEngine::setProject(Project* project) {

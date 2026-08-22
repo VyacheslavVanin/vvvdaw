@@ -15,7 +15,9 @@
 #include "StreamingManager.h"
 #include "TimeStretch.h"
 #include "midi/MidiBuffer.h"
+#include "midi/MidiInputManager.h"
 #include "midi/MidiOutputManager.h"
+#include "MidiRecorder.h"
 
 class Project;
 class Track;
@@ -84,6 +86,23 @@ public:
         return MidiOutputManager::enumerateOutputDevices();
     }
 
+    static std::vector<MidiInputManager::Device> enumerateMidiInputDevices() {
+        return MidiInputManager::enumerateInputDevices();
+    }
+
+    // MIDI keyboard preview target (the track of the active piano roll).
+    void setMidiPreviewTrack(int trackIndex);
+    int midiPreviewTrack() const { return m_midiPreviewTrack.load(std::memory_order_acquire); }
+
+    void setMidiTransportControls(const MidiTransportControls& controls);
+
+    // GUI-thread consumer of MIDI transport commands.
+    std::vector<MidiTransportCommand> takeMidiTransportCommands();
+
+    // Capture/playback hook for MIDI recording (GUI thread drives pump()).
+    MidiRecorder& midiRecorder() { return m_midiRecorder; }
+    int64_t midiRecordStartSample() const { return m_recordingManager.recordStartSample(); }
+
 private:
     static int audioCallback(const void* input, void* output,
                              unsigned long frameCount,
@@ -125,6 +144,10 @@ private:
     void flushActiveMidiNotes();
     void releaseInstruments();
     void injectPreviewMidi();
+    // Consume MIDI keyboard input for this block: feed preview notes into the
+    // active piano-roll track and capture notes while recording.
+    void pollMidiInput(Project* proj, int64_t pos, unsigned long frameCount,
+                       vvvdaw::TransportState state);
 
     // Mix each audible track into its target bus buffer (monitoring, event
     // playback and track plugin chains).
@@ -196,6 +219,9 @@ private:
     std::vector<float*> m_multiOutBufs;
     MidiOutputManager m_midiOutput;
     std::set<int> m_openMidiDevices;
+    MidiInputManager m_midiInput;
+    MidiRecorder m_midiRecorder;
+    std::atomic<int> m_midiPreviewTrack{-1};
 
     // Held piano-roll preview notes (GUI thread queues them, audio thread
     // injects note-ons once and delivers note-offs).

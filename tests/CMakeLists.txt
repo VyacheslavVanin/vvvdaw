@@ -16,6 +16,11 @@ add_executable(vvvdaw_test_audio test_audio.cpp)
 target_link_libraries(vvvdaw_test_audio PRIVATE vvvdaw_audio vvvdaw_model vvvdaw_core Qt6::Test)
 add_test(NAME test_audio COMMAND vvvdaw_test_audio)
 
+add_executable(vvvdaw_test_midi test_midi.cpp)
+target_link_libraries(vvvdaw_test_midi PRIVATE
+    vvvdaw_audio vvvdaw_midi vvvdaw_model vvvdaw_core Qt6::Test)
+add_test(NAME test_midi COMMAND vvvdaw_test_midi)
+
 add_executable(vvvdaw_test_lv2 test_lv2.cpp)
 target_link_libraries(vvvdaw_test_lv2 PRIVATE vvvdaw_model vvvdaw_core Qt6::Test)
 add_test(NAME test_lv2 COMMAND vvvdaw_test_lv2)

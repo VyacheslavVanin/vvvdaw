@@ -9,6 +9,7 @@
 #include "core/Constants.h"
 #include "core/UndoStack.h"
 #include "plugin/PluginManager.h"
+#include <unordered_map>
 
 class Project;
 class AudioEngine;
@@ -60,6 +61,9 @@ private:
     void openPluginEditor(PluginInstance* plugin);
     void openPianoRoll(int trackIndex, int64_t eventId);
     void resyncPianoRollWindows();
+    // Recompute the MIDI keyboard preview track and piano-roll recording hints
+    // from the currently open piano roll windows.
+    void updateMidiPreviewTarget();
     class PluginChain* findChainForPlugin(PluginInstance* plugin);
     void closeAllPluginWindows();
     void closePluginWindowsFor(const std::vector<PluginInstance*>& plugins);
@@ -126,4 +130,7 @@ private:
     double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;
     double m_snapResolution = 4.0;
+
+    int m_midiPreviewTrack = -1;
+    std::unordered_map<int, int64_t> m_midiTargetHints;
 };

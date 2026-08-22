@@ -29,6 +29,7 @@ target_include_directories(vvvdaw_core PUBLIC ${APP_INCLUDE_DIRS})
 target_link_libraries(vvvdaw_core PUBLIC Qt6::Core)
 
 add_library(vvvdaw_midi STATIC
+    src/midi/MidiInputManager.cpp
     src/midi/MidiOutputManager.cpp
 )
 target_include_directories(vvvdaw_midi PUBLIC ${APP_INCLUDE_DIRS})
@@ -98,6 +99,7 @@ target_link_libraries(vvvdaw_commands PUBLIC
 
 add_library(vvvdaw_audio STATIC
     src/audio/AudioEngine.cpp
+    src/audio/MidiRecorder.cpp
     src/audio/RecordingManager.cpp
     src/audio/StreamingManager.cpp
     src/audio/TimeStretch.cpp
@@ -105,6 +107,7 @@ add_library(vvvdaw_audio STATIC
 target_include_directories(vvvdaw_audio PUBLIC ${APP_INCLUDE_DIRS})
 target_link_libraries(vvvdaw_audio PUBLIC
     vvvdaw_model
+    vvvdaw_midi
     vvvdaw_plugin
     PkgConfig::PORTAUDIO
     PkgConfig::SNDFILE

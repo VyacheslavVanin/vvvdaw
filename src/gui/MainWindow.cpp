@@ -744,6 +744,57 @@ void MainWindow::setupTimer() {
         syncPlayheadViews(pos);
         for (auto* pr : m_pianoRollWindows)
             pr->setPlayheadSample(pos);
+
+        // MIDI transport control (CC / note mapping from the input device).
+        auto commands = m_engine.takeMidiTransportCommands();
+        if (!commands.empty()) {
+            for (MidiTransportCommand cmd : commands) {
+                switch (cmd) {
+                case MidiTransportCommand::Play: {
+                    TransportState st = m_engine.transportState();
+                    if (st == TransportState::Recording) {
+                        m_engine.setTransportState(TransportState::Stopped);
+                        m_transportPanel->setRecording(false);
+                    }
+                    m_engine.setTransportState(TransportState::Playing);
+                    m_transportPanel->setPlaying(true);
+                    break;
+                }
+                case MidiTransportCommand::Stop:
+                    m_engine.setTransportState(TransportState::Stopped);
+                    m_engine.setPlayPosition(0);
+                    syncPlayheadViews(0);
+                    m_transportPanel->setPlaying(false);
+                    m_transportPanel->setRecording(false);
+                    break;
+                case MidiTransportCommand::Record: {
+                    TransportState st = m_engine.transportState();
+                    if (st == TransportState::Recording) {
+                        m_engine.setTransportState(TransportState::Stopped);
+                        m_transportPanel->setRecording(false);
+                    } else {
+                        m_engine.setTransportState(TransportState::Recording);
+                        m_transportPanel->setRecording(true);
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+            for (auto& row : m_trackRows)
+                row.view->update();
+        }
+
+        // MIDI recording: apply captured notes to the armed tracks' clips.
+        bool recording = m_engine.transportState() == TransportState::Recording;
+        bool midiChanged = m_engine.midiRecorder().pump(
+            m_project, recording, m_engine.playPosition(), m_engine.midiRecordStartSample());
+        if (midiChanged) {
+            resyncPianoRollWindows();
+            for (auto& row : m_trackRows)
+                row.view->update();
+        }
     });
     timer->start(40);
 }
@@ -1592,6 +1643,17 @@ void MainWindow::syncScrollPositions(int value) {
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (event->type() == QEvent::WindowActivate) {
+        for (auto* w : m_pianoRollWindows) {
+            if (w == obj) {
+                m_midiPreviewTrack = w->trackIndex();
+                m_engine.setMidiPreviewTrack(m_midiPreviewTrack);
+                m_midiTargetHints[m_midiPreviewTrack] = w->eventId();
+                m_engine.midiRecorder().setTargetHints(m_midiTargetHints);
+                break;
+            }
+        }
+    }
     if (obj == m_busPanelGrip) {
         auto* me = static_cast<QMouseEvent*>(event);
         if (event->type() == QEvent::MouseButtonPress && me->button() == Qt::LeftButton) {
@@ -1674,15 +1736,35 @@ void MainWindow::openPianoRoll(int trackIndex, int64_t eventId) {
 
     auto* window = new PianoRollWindow(m_project, m_undoStack, m_engine, trackIndex, eventId, this);
     m_pianoRollWindows.push_back(window);
+    window->installEventFilter(this);
     connect(window, &PianoRollWindow::windowClosed, this, [this, window]() {
         m_pianoRollWindows.erase(
             std::remove(m_pianoRollWindows.begin(), m_pianoRollWindows.end(), window),
             m_pianoRollWindows.end());
+        updateMidiPreviewTarget();
     });
     connect(window, &PianoRollWindow::undoRequested, this, &MainWindow::performUndo);
     connect(window, &PianoRollWindow::redoRequested, this, &MainWindow::performRedo);
     connect(window, &PianoRollWindow::toggleSnapRequested, this, &MainWindow::toggleSnapToGrid);
     window->show();
+
+    m_midiPreviewTrack = trackIndex;
+    m_engine.setMidiPreviewTrack(trackIndex);
+    m_midiTargetHints[trackIndex] = eventId;
+    m_engine.midiRecorder().setTargetHints(m_midiTargetHints);
+}
+
+void MainWindow::updateMidiPreviewTarget() {
+    m_midiTargetHints.clear();
+    for (auto* w : m_pianoRollWindows)
+        m_midiTargetHints[w->trackIndex()] = w->eventId();
+    m_engine.midiRecorder().setTargetHints(m_midiTargetHints);
+
+    int target = m_midiPreviewTrack;
+    if (m_midiTargetHints.count(target) == 0)
+        target = m_pianoRollWindows.empty() ? -1 : m_pianoRollWindows.back()->trackIndex();
+    m_midiPreviewTrack = target;
+    m_engine.setMidiPreviewTrack(target);
 }
 
 void MainWindow::resyncPianoRollWindows() {

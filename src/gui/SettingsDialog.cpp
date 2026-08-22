@@ -8,6 +8,16 @@
 #include <QFileDialog>
 #include <QLabel>
 
+namespace {
+QSpinBox* makeControlSpin(int value, const QString& tooltip, QWidget* parent = nullptr) {
+    auto* spin = new QSpinBox(parent);
+    spin->setRange(1, 127);
+    spin->setValue(value);
+    spin->setToolTip(tooltip);
+    return spin;
+}
+} // namespace
+
 SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget* parent)
     : QDialog(parent)
     , m_settings(settings)
@@ -33,6 +43,37 @@ SettingsDialog::SettingsDialog(Settings& settings, AudioEngine& engine, QWidget*
     populateDevices();
     form->addRow("Input Device:", m_inputDeviceCombo);
     form->addRow("Output Device:", m_outputDeviceCombo);
+
+    m_midiInputCombo = new QComboBox(this);
+    m_midiInputCombo->setObjectName("midiInputCombo");
+    populateMidiInputDevices();
+    form->addRow("MIDI Input Device:", m_midiInputCombo);
+
+    auto* transportRow = new QWidget(this);
+    auto* transportLayout = new QHBoxLayout(transportRow);
+    transportLayout->setContentsMargins(0, 0, 0, 0);
+    transportLayout->setSpacing(4);
+    m_midiTransportTypeCombo = new QComboBox(this);
+    m_midiTransportTypeCombo->setObjectName("midiTransportTypeCombo");
+    m_midiTransportTypeCombo->addItem("None", 0);
+    m_midiTransportTypeCombo->addItem("CC", 1);
+    m_midiTransportTypeCombo->addItem("Note", 2);
+    m_midiTransportTypeCombo->setCurrentIndex(
+        m_settings.midiTransportControlType >= 0 && m_settings.midiTransportControlType <= 2
+            ? m_settings.midiTransportControlType : 0);
+    m_midiTransportTypeCombo->setToolTip("MIDI message type used for transport control");
+    m_midiPlaySpin = makeControlSpin(m_settings.midiTransportPlayControl, "Play");
+    m_midiPlaySpin->setObjectName("midiPlaySpin");
+    m_midiRecordSpin = makeControlSpin(m_settings.midiTransportRecordControl, "Record");
+    m_midiRecordSpin->setObjectName("midiRecordSpin");
+    m_midiStopSpin = makeControlSpin(m_settings.midiTransportStopControl, "Stop");
+    m_midiStopSpin->setObjectName("midiStopSpin");
+    transportLayout->addWidget(m_midiTransportTypeCombo);
+    transportLayout->addWidget(m_midiPlaySpin);
+    transportLayout->addWidget(m_midiRecordSpin);
+    transportLayout->addWidget(m_midiStopSpin);
+    transportLayout->addStretch();
+    form->addRow("MIDI Transport:", transportRow);
 
     m_inputChannelSpin = new QSpinBox(this);
     m_inputChannelSpin->setRange(0, 64);
@@ -173,6 +214,18 @@ void SettingsDialog::populateDevices() {
     m_outputDeviceCombo->setCurrentIndex(outputIdx);
 }
 
+void SettingsDialog::populateMidiInputDevices() {
+    auto midiInputs = AudioEngine::enumerateMidiInputDevices();
+    m_midiInputCombo->addItem("None", -1);
+    int inputIdx = 0;
+    for (size_t i = 0; i < midiInputs.size(); ++i) {
+        m_midiInputCombo->addItem(midiInputs[i].name, midiInputs[i].id);
+        if (midiInputs[i].id == m_settings.midiInputDeviceId)
+            inputIdx = static_cast<int>(i) + 1;
+    }
+    m_midiInputCombo->setCurrentIndex(inputIdx);
+}
+
 void SettingsDialog::accept() {
     m_settings.sampleRate = m_sampleRateCombo->currentData().toInt();
     m_settings.bufferSize = m_bufferSizeCombo->currentData().toInt();
@@ -180,6 +233,11 @@ void SettingsDialog::accept() {
     m_settings.outputDeviceId = m_outputDeviceCombo->currentData().toInt();
     m_settings.inputChannel = m_inputChannelSpin->value();
     m_settings.outputChannel = m_outputChannelSpin->value();
+    m_settings.midiInputDeviceId = m_midiInputCombo->currentData().toInt();
+    m_settings.midiTransportControlType = m_midiTransportTypeCombo->currentData().toInt();
+    m_settings.midiTransportPlayControl = m_midiPlaySpin->value();
+    m_settings.midiTransportRecordControl = m_midiRecordSpin->value();
+    m_settings.midiTransportStopControl = m_midiStopSpin->value();
     m_settings.streamingThresholdSec = m_streamingThresholdSpin->value();
     m_settings.mouseWheelScroll = m_mouseWheelCheck->isChecked();
     m_settings.pluginKnobsPerRow = m_knobsPerRowSpin->value();

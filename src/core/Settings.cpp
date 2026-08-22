@@ -22,6 +22,11 @@ Settings::Settings()
     , outputDeviceId(-1)
     , inputChannel(0)
     , outputChannel(0)
+    , midiInputDeviceId(-1)
+    , midiTransportControlType(1)
+    , midiTransportPlayControl(110)
+    , midiTransportRecordControl(111)
+    , midiTransportStopControl(112)
     , streamingThresholdSec(30)
     , mouseWheelScroll(false)
     , pluginKnobsPerRow(3)
@@ -87,6 +92,11 @@ QJsonObject Settings::toJson() const {
     obj["outputDeviceId"] = outputDeviceId;
     obj["inputChannel"] = inputChannel;
     obj["outputChannel"] = outputChannel;
+    obj["midiInputDeviceId"] = midiInputDeviceId;
+    obj["midiTransportControlType"] = midiTransportControlType;
+    obj["midiTransportPlayControl"] = midiTransportPlayControl;
+    obj["midiTransportRecordControl"] = midiTransportRecordControl;
+    obj["midiTransportStopControl"] = midiTransportStopControl;
     obj["lastProjectPath"] = lastProjectPath;
     obj["streamingThresholdSec"] = streamingThresholdSec;
     obj["mouseWheelScroll"] = mouseWheelScroll;
@@ -122,6 +132,11 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("outputDeviceId")) outputDeviceId = obj["outputDeviceId"].toInt();
     if (obj.contains("inputChannel")) inputChannel = obj["inputChannel"].toInt();
     if (obj.contains("outputChannel")) outputChannel = obj["outputChannel"].toInt();
+    if (obj.contains("midiInputDeviceId")) midiInputDeviceId = obj["midiInputDeviceId"].toInt(-1);
+    if (obj.contains("midiTransportControlType")) midiTransportControlType = obj["midiTransportControlType"].toInt(1);
+    if (obj.contains("midiTransportPlayControl")) midiTransportPlayControl = obj["midiTransportPlayControl"].toInt(110);
+    if (obj.contains("midiTransportRecordControl")) midiTransportRecordControl = obj["midiTransportRecordControl"].toInt(111);
+    if (obj.contains("midiTransportStopControl")) midiTransportStopControl = obj["midiTransportStopControl"].toInt(112);
     if (obj.contains("lastProjectPath")) lastProjectPath = obj["lastProjectPath"].toString();
     if (obj.contains("streamingThresholdSec")) streamingThresholdSec = obj["streamingThresholdSec"].toInt(30);
     if (obj.contains("mouseWheelScroll")) mouseWheelScroll = obj["mouseWheelScroll"].toBool(false);

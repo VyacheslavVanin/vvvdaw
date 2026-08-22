@@ -76,6 +76,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
             "QPushButton:checked { background: #cc2222; color: white; border: 2px solid #ff4444; font-weight: bold; font-size: 12px"
         ));
     m_armButton->setToolTip("Record Arm");
+    m_armButton->setObjectName("armButton");
 
     m_soloButton = makeBtn("S",
         btnStyle(
@@ -253,8 +254,8 @@ void TrackPanelWidget::applyTrackType() {
     m_panRow->setVisible(!isMidi);
     m_volRow->setVisible(!isMidi);
     m_inRow->setVisible(!isMidi);
-    m_armButton->setVisible(!isMidi);
     m_monitorButton->setVisible(!isMidi);
+    m_armButton->setVisible(true);
     m_channelsBadge->setText(isMidi ? "MIDI" : (m_track && m_track->channels() == 1 ? "M" : "S"));
     m_channelsBadge->setFixedWidth(isMidi ? 30 : 16);
 }

@@ -196,6 +196,7 @@ private slots:
     void removeRecentProject();
     void panelStateJsonRoundTrip();
     void windowSizeJsonRoundTrip();
+    void midiInputJsonRoundTrip();
 };
 
 void TestSettings::initTestCase() {
@@ -330,6 +331,38 @@ void TestSettings::windowSizeJsonRoundTrip() {
     Settings defaults;
     QCOMPARE(defaults.mainWindowWidth, 1400);
     QCOMPARE(defaults.mainWindowHeight, 800);
+
+    Settings::setConfigDirOverride("");
+}
+
+void TestSettings::midiInputJsonRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings::setConfigDirOverride(dir.path());
+
+    Settings settings;
+    settings.midiInputDeviceId = 3;
+    settings.midiTransportControlType = 2;
+    settings.midiTransportPlayControl = 114;
+    settings.midiTransportRecordControl = 118;
+    settings.midiTransportStopControl = 117;
+    settings.save();
+
+    Settings loaded;
+    loaded.load();
+    QCOMPARE(loaded.midiInputDeviceId, 3);
+    QCOMPARE(loaded.midiTransportControlType, 2);
+    QCOMPARE(loaded.midiTransportPlayControl, 114);
+    QCOMPARE(loaded.midiTransportRecordControl, 118);
+    QCOMPARE(loaded.midiTransportStopControl, 117);
+
+    // Missing keys fall back to the app defaults.
+    Settings defaults;
+    QCOMPARE(defaults.midiInputDeviceId, -1);
+    QCOMPARE(defaults.midiTransportControlType, 1);
+    QCOMPARE(defaults.midiTransportPlayControl, 110);
+    QCOMPARE(defaults.midiTransportRecordControl, 111);
+    QCOMPARE(defaults.midiTransportStopControl, 112);
 
     Settings::setConfigDirOverride("");
 }
