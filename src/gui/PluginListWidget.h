@@ -7,6 +7,7 @@
 #include <QMenu>
 #include <QPoint>
 #include <QPointF>
+#include <QFrame>
 #include <vector>
 
 class QLayoutItem;
@@ -45,6 +46,7 @@ signals:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
@@ -56,6 +58,11 @@ private:
     void buildRow(PluginInstance* plugin, int index);
     PluginChain* targetChain() const;
     int rowAtPos(const QPoint& pos) const;
+    // Drag & drop insertion point (boundary index 0..count, in container
+    // coordinates) and the Y position of the indicator line for that boundary.
+    int insertionIndexAt(int y) const;
+    int insertionLineY(int index) const;
+    void updateInsertionLine(const QDropEvent* event);
 
     Track* m_track = nullptr;
     AudioBus* m_bus = nullptr;
@@ -75,6 +82,8 @@ private:
     std::vector<QWidget*> m_rows;
     int m_dragFromIndex = -1;
     QPointF m_dragStartPos;
+    // Thin horizontal line marking the plugin insertion point during a drag.
+    QFrame* m_insertionLine = nullptr;
     // Spacer absorbing surplus vertical space so plugin rows keep a compact
     // height instead of stretching to fill the list.
     QLayoutItem* m_trailingStretch = nullptr;

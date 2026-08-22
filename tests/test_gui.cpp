@@ -11,6 +11,11 @@
 #include <QSignalSpy>
 #include <QTimer>
 #include <QContextMenuEvent>
+#include <QMimeData>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QDragLeaveEvent>
+#include <QFrame>
 #include <algorithm>
 #include <memory>
 #include <portaudio.h>
@@ -135,6 +140,8 @@ private slots:
     void pluginListRowsStayCompact();
     void pluginListHasNoRemoveButton();
     void pluginListContextMenuRemovesPlugin();
+    void pluginListDragShowsInsertionLine();
+    void pluginListDropFollowsInsertionLine();
     void pluginWindowStaysOnTop();
     void pianoRollWindowStaysOnTop();
     void instrumentOutComboShowsMultiChannel();
@@ -1477,6 +1484,132 @@ void MainWindowTest::pluginListContextMenuRemovesPlugin() {
     QCoreApplication::processEvents();
 
     QCOMPARE(bus.pluginChain().count(), 0);
+}
+
+void MainWindowTest::pluginListDragShowsInsertionLine() {
+    static const char* const kMimePluginIndex = "application/x-vvvdaw-plugin-index";
+
+    // Exposes the protected drag handlers so the widget's own drag logic can
+    // be exercised directly. Qt's global QDragManager intercepts synthetic
+    // drag events sent via QApplication::sendEvent, so we call the handlers
+    // the way the drag state machine would.
+    class TestablePluginList : public PluginListWidget {
+    public:
+        using PluginListWidget::dragMoveEvent;
+        using PluginListWidget::dragLeaveEvent;
+        using PluginListWidget::dropEvent;
+    };
+
+    AudioBus bus;
+    for (int i = 0; i < 3; ++i)
+        bus.pluginChain().addPlugin(std::make_unique<StubSynth>());
+
+    TestablePluginList list;
+    list.setBus(&bus);
+    list.rebuild();
+    list.resize(240, 200);
+    list.show();
+    QCoreApplication::processEvents();
+
+    // Locate the rendered rows (the widget holding each ON/OFF button).
+    std::vector<QWidget*> rows;
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON" || b->text() == "OFF")
+            rows.push_back(b->parentWidget());
+    QCOMPARE(static_cast<int>(rows.size()), 3);
+
+    auto* line = list.findChild<QFrame*>("pluginInsertionLine");
+    QVERIFY(line);
+    QVERIFY(!line->isVisible());
+
+    // Drag plugin 0 over the upper half of the third row: the line must sit at
+    // the boundary above that row (container coordinates), full width.
+    QMimeData mime;
+    mime.setData(kMimePluginIndex, QByteArray::number(0));
+    QPoint listPos = rows[2]->mapTo(&list, QPoint(0, 2));
+    QDragMoveEvent moveEv(listPos, Qt::MoveAction, &mime,
+                          Qt::LeftButton, Qt::NoModifier);
+    list.dragMoveEvent(&moveEv);
+
+    QVERIFY(line->isVisible());
+    QCOMPARE(line->x(), 0);
+    QCOMPARE(line->height(), 2);
+    QCOMPARE(line->y(), rows[2]->pos().y() - 1);
+    QVERIFY(line->width() >= rows[0]->width());
+
+    // Leaving the list hides the line again.
+    QDragLeaveEvent leaveEv;
+    list.dragLeaveEvent(&leaveEv);
+    QVERIFY(!line->isVisible());
+}
+
+void MainWindowTest::pluginListDropFollowsInsertionLine() {
+    static const char* const kMimePluginIndex = "application/x-vvvdaw-plugin-index";
+
+    class TestablePluginList : public PluginListWidget {
+    public:
+        using PluginListWidget::dropEvent;
+    };
+
+    AudioBus bus;
+    PluginInstance* p0 = nullptr;
+    PluginInstance* p1 = nullptr;
+    PluginInstance* p2 = nullptr;
+    for (int i = 0; i < 3; ++i) {
+        auto synth = std::make_unique<StubSynth>();
+        if (i == 0) p0 = synth.get();
+        if (i == 1) p1 = synth.get();
+        if (i == 2) p2 = synth.get();
+        bus.pluginChain().addPlugin(std::move(synth));
+    }
+
+    TestablePluginList list;
+    list.setBus(&bus);
+    list.rebuild();
+    list.resize(240, 200);
+    list.show();
+    QCoreApplication::processEvents();
+
+    std::vector<QWidget*> rows;
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON" || b->text() == "OFF")
+            rows.push_back(b->parentWidget());
+    QCOMPARE(static_cast<int>(rows.size()), 3);
+
+    // Drop plugin 0 at the upper half of the third row: the boundary is before
+    // the third row, so the order becomes p1, p0, p2.
+    QMimeData mime;
+    mime.setData(kMimePluginIndex, QByteArray::number(0));
+    QPoint listPos = rows[2]->mapTo(&list, QPoint(0, 2));
+    QDropEvent dropEv(QPointF(listPos), Qt::MoveAction, &mime,
+                      Qt::LeftButton, Qt::NoModifier);
+    list.dropEvent(&dropEv);
+
+    QCOMPARE(bus.pluginChain().plugin(0), p1);
+    QCOMPARE(bus.pluginChain().plugin(1), p0);
+    QCOMPARE(bus.pluginChain().plugin(2), p2);
+
+    // Dropping below the last row appends the dragged plugin at the end.
+    list.rebuild();
+    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    rows.clear();
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON" || b->text() == "OFF")
+            rows.push_back(b->parentWidget());
+    QCOMPARE(static_cast<int>(rows.size()), 3);
+
+    QMimeData mime2;
+    mime2.setData(kMimePluginIndex, QByteArray::number(0)); // drag p1 (now at index 0)
+    QPoint below = rows[2]->mapTo(&list, QPoint(0, rows[2]->height()));
+    QDropEvent dropBelow(QPointF(below), Qt::MoveAction, &mime2,
+                         Qt::LeftButton, Qt::NoModifier);
+    list.dropEvent(&dropBelow);
+
+    // Order was [p1, p0, p2]; dragging p1 past the end appends it.
+    QCOMPARE(bus.pluginChain().plugin(0), p0);
+    QCOMPARE(bus.pluginChain().plugin(1), p2);
+    QCOMPARE(bus.pluginChain().plugin(2), p1);
 }
 
 void MainWindowTest::pluginWindowStaysOnTop() {

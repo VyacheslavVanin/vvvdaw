@@ -68,6 +68,14 @@ PluginListWidget::PluginListWidget(QWidget* parent)
 
     m_scrollArea->setWidget(m_container);
 
+    // Thin horizontal line marking the plugin insertion point during a drag &
+    // drop. Child of the container so it scrolls together with the rows.
+    m_insertionLine = new QFrame(m_container);
+    m_insertionLine->setObjectName("pluginInsertionLine");
+    m_insertionLine->setFixedHeight(2);
+    m_insertionLine->setStyleSheet("QFrame { background: #4488cc; border: none; }");
+    m_insertionLine->hide();
+
     // Header row: optional caption on the left, the "+" add button on the
     // right, above the list.
     auto* header = new QHBoxLayout;
@@ -351,27 +359,73 @@ int PluginListWidget::rowAtPos(const QPoint& pos) const {
 }
 
 void PluginListWidget::dragEnterEvent(QDragEnterEvent* event) {
-    if (event->mimeData()->hasFormat(kMimePluginIndex))
+    if (event->mimeData()->hasFormat(kMimePluginIndex)) {
         event->acceptProposedAction();
+        updateInsertionLine(event);
+    }
 }
 
 void PluginListWidget::dragMoveEvent(QDragMoveEvent* event) {
     if (event->mimeData()->hasFormat(kMimePluginIndex)) {
         event->acceptProposedAction();
+        updateInsertionLine(event);
     }
 }
 
+void PluginListWidget::dragLeaveEvent(QDragLeaveEvent* event) {
+    m_insertionLine->hide();
+    QWidget::dragLeaveEvent(event);
+}
+
+int PluginListWidget::insertionIndexAt(int y) const {
+    const int n = static_cast<int>(m_rows.size());
+    if (n == 0) return 0;
+    for (int i = 0; i < n; ++i) {
+        const QRect g = m_rows[i]->geometry();
+        if (y < g.top() + g.height() / 2) return i;
+        if (y < g.bottom()) return i + 1;
+    }
+    return n;
+}
+
+int PluginListWidget::insertionLineY(int index) const {
+    const int n = static_cast<int>(m_rows.size());
+    if (n == 0) return 0;
+    if (index <= 0) return std::max(0, m_rows[0]->geometry().top() - 1);
+    if (index >= n) return m_rows[n - 1]->geometry().bottom() + 1;
+    return m_rows[index]->geometry().top() - 1;
+}
+
+void PluginListWidget::updateInsertionLine(const QDropEvent* event) {
+    if (!m_insertionLine || !event) return;
+    // Drag/drop events arrive on this widget; the rows' geometry lives in the
+    // container's coordinate system, so map the position across the widget
+    // hierarchy (accounts for the header and any scroll offset).
+    QPoint containerPos = m_container->mapFrom(this, event->position().toPoint());
+    const int k = insertionIndexAt(containerPos.y());
+    m_insertionLine->setGeometry(0, insertionLineY(k), m_container->width(), 2);
+    m_insertionLine->raise();
+    m_insertionLine->show();
+}
+
 void PluginListWidget::dropEvent(QDropEvent* event) {
+    m_insertionLine->hide();
     if (!event->mimeData()->hasFormat(kMimePluginIndex)) return;
 
     int fromIndex = event->mimeData()->data(kMimePluginIndex).toInt();
-    int toIndex = rowAtPos(event->position().toPoint());
 
     auto* chain = targetChain();
     if (!chain || fromIndex < 0 || fromIndex >= chain->count()) return;
-    if (toIndex < 0) toIndex = chain->count() - 1;
-    if (toIndex >= chain->count()) toIndex = chain->count() - 1;
-    if (fromIndex == toIndex) return;
+
+    // Insert boundary (0..count) computed in container coordinates, matching
+    // the indicator line shown during the drag.
+    QPoint containerPos = m_container->mapFrom(this, event->position().toPoint());
+    int k = insertionIndexAt(containerPos.y());
+    if (k == fromIndex) return;
+
+    // convert the boundary into a movePlugin target index in the original list
+    int toIndex = (fromIndex < k) ? k - 1 : k;
+    if (toIndex == fromIndex) return;
 
     emit pluginWillBeMoved(fromIndex, toIndex);
     chain->movePlugin(fromIndex, toIndex);
