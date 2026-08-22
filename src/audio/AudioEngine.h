@@ -98,6 +98,15 @@ public:
 
     void setMidiTransportControls(const MidiTransportControls& controls);
 
+    // Open/close the MIDI input device live (safe while the stream runs). Used
+    // by the settings dialog to learn transport mappings on the chosen device.
+    void setMidiInputDevice(int deviceId);
+
+    // Transport-mapping learning from the MIDI input device.
+    void setMidiLearnTarget(MidiLearnTarget target);
+    MidiLearnTarget midiLearnTarget() const;
+    bool popLearnedMidiControl(MidiTransportControls& out);
+
     // GUI-thread consumer of MIDI transport commands.
     std::vector<MidiTransportCommand> takeMidiTransportCommands();
 
@@ -226,6 +235,7 @@ private:
     MidiInputManager m_midiInput;
     MidiRecorder m_midiRecorder;
     std::atomic<int> m_midiPreviewTrack{-1};
+    int m_midiInputDeviceId = -1;
 
     // Held piano-roll preview notes (GUI thread queues them, audio thread
     // injects note-ons once and delivers note-offs).

@@ -25,6 +25,12 @@ private slots:
     void recorderRecordsIntoHintEvent();
     void openFirstDeviceWhenPresent();
     void cancelReleasesHeldPreviewNotes();
+    void matchTransportCc();
+    void matchTransportNote();
+    void matchTransportTypeScoping();
+    void matchTransportChannelFilter();
+    void matchTransportKind();
+    void isLearnableDetection();
 };
 
 void TestMidi::ringPushPop() {
@@ -286,6 +292,176 @@ void TestMidi::cancelReleasesHeldPreviewNotes() {
     // The audio block flush delivers the note-offs and clears the held set.
     engine.injectPreviewMidi();
     QCOMPARE(engine.m_previewCount.load(), 0);
+}
+
+void TestMidi::matchTransportCc() {
+    MidiTransportControls c;
+    c.type = 1;
+    c.play = 110; c.record = 111; c.stop = 112;
+
+    MidiMessage msg;
+    msg.status = 0xB0; msg.data1 = 110;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+    msg.data1 = 112;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Stop);
+    msg.data1 = 111;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Record);
+    msg.data1 = 0;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::None);
+
+    // CC value (data2) does not matter.
+    msg.data1 = 110; msg.data2 = 0;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+}
+
+void TestMidi::matchTransportNote() {
+    MidiTransportControls c;
+    c.type = 2;
+    c.play = 114; c.record = 118; c.stop = 117;
+
+    MidiMessage msg;
+    msg.status = 0x90; msg.data1 = 114; msg.data2 = 127;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+    msg.data1 = 117;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Stop);
+    msg.data1 = 118;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Record);
+    msg.data1 = 60;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::None);
+
+    // A note-off (0x90 with velocity 0) never triggers transport.
+    msg.data1 = 114; msg.data2 = 0;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::None);
+}
+
+void TestMidi::matchTransportTypeScoping() {
+    MidiTransportControls c;
+    c.type = 1;
+    c.play = 110; c.record = 111; c.stop = 112;
+
+    // type == 1 must ignore note messages.
+    MidiMessage note;
+    note.status = 0x90; note.data1 = 110; note.data2 = 100;
+    QCOMPARE(MidiInputManager::matchTransport(note, c), MidiTransportCommand::None);
+
+    // type == 0 disables transport control entirely.
+    c.type = 0;
+    MidiMessage cc;
+    cc.status = 0xB0; cc.data1 = 110;
+    QCOMPARE(MidiInputManager::matchTransport(cc, c), MidiTransportCommand::None);
+}
+
+void TestMidi::matchTransportChannelFilter() {
+    MidiTransportControls c;
+    c.type = 1;
+    c.channel = 9; // MIDI channel 10
+    c.play = 110; c.record = 111; c.stop = 112;
+
+    // CC on channel 9 (0x9 = channel 10): matches.
+    MidiMessage msg;
+    msg.status = 0xB9; msg.data1 = 110;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+
+    // Same controller on a different channel: ignored.
+    msg.status = 0xB0; msg.data1 = 110;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::None);
+
+    // Note mapping on channel 9 matches; other channel does not.
+    c.type = 2;
+    c.play = 114;
+    msg.status = 0x99; msg.data1 = 114; msg.data2 = 127;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+    msg.status = 0x90; msg.data1 = 114; msg.data2 = 127;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::None);
+
+    // channel -1 means any channel.
+    c.type = 1;
+    c.channel = -1;
+    c.play = 110;
+    msg.status = 0xB0; msg.data1 = 110;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+    msg.status = 0xB5; msg.data1 = 110;
+    QCOMPARE(MidiInputManager::matchTransport(msg, c), MidiTransportCommand::Play);
+}
+
+void TestMidi::matchTransportKind() {
+    // A pad that sends a note-off (0x80) or note-on with velocity 0 must be
+    // learnable and, once learned with `kind`, trigger transport on the same
+    // message family.
+    MidiTransportControls c;
+    c.type = 2;
+    c.kind = 0x80; // learned from a note-off pad press
+    c.play = 70;
+    c.channel = 9;
+
+    MidiMessage noteOff;
+    noteOff.status = 0x89; noteOff.data1 = 70; noteOff.data2 = 0;
+    QCOMPARE(MidiInputManager::matchTransport(noteOff, c), MidiTransportCommand::Play);
+
+    // The same pad pressed again sends a normal note-on press: that is a
+    // different message family and must not re-trigger.
+    MidiMessage noteOn;
+    noteOn.status = 0x99; noteOn.data1 = 70; noteOn.data2 = 100;
+    QCOMPARE(MidiInputManager::matchTransport(noteOn, c), MidiTransportCommand::None);
+
+    // Poly pressure / program change learned pads also match their own kind.
+    MidiTransportControls poly;
+    poly.type = 2;
+    poly.kind = 0xA0;
+    poly.record = 71;
+    MidiMessage polyMsg;
+    polyMsg.status = 0xA0; polyMsg.data1 = 71; polyMsg.data2 = 100;
+    QCOMPARE(MidiInputManager::matchTransport(polyMsg, poly), MidiTransportCommand::Record);
+
+    MidiTransportControls pc;
+    pc.type = 2;
+    pc.kind = 0xC0;
+    pc.stop = 5;
+    MidiMessage pcMsg;
+    pcMsg.status = 0xC0; pcMsg.data1 = 5;
+    QCOMPARE(MidiInputManager::matchTransport(pcMsg, pc), MidiTransportCommand::Stop);
+}
+
+void TestMidi::isLearnableDetection() {
+    MidiMessage cc;
+    cc.status = 0xB0; cc.data1 = 110; cc.data2 = 127;
+    QVERIFY(MidiInputManager::isLearnable(cc));
+    cc.data2 = 0; // CC release still carries the controller number
+    QVERIFY(MidiInputManager::isLearnable(cc));
+
+    MidiMessage noteOn;
+    noteOn.status = 0x90; noteOn.data1 = 60; noteOn.data2 = 100;
+    QVERIFY(MidiInputManager::isLearnable(noteOn));
+
+    // Pads and buttons often send a release-style message (note-off, or note-on
+    // with velocity 0); they must be learnable so those controls can be mapped.
+    MidiMessage noteOff;
+    noteOff.status = 0x80; noteOff.data1 = 60; noteOff.data2 = 0;
+    QVERIFY(MidiInputManager::isLearnable(noteOff));
+
+    MidiMessage noteOnVel0;
+    noteOnVel0.status = 0x90; noteOnVel0.data1 = 60; noteOnVel0.data2 = 0;
+    QVERIFY(MidiInputManager::isLearnable(noteOnVel0));
+
+    // Poly pressure, program change and channel pressure carry a value in data1.
+    MidiMessage poly;
+    poly.status = 0xA0; poly.data1 = 70; poly.data2 = 100;
+    QVERIFY(MidiInputManager::isLearnable(poly));
+    MidiMessage programChange;
+    programChange.status = 0xC0; programChange.data1 = 5;
+    QVERIFY(MidiInputManager::isLearnable(programChange));
+    MidiMessage channelPressure;
+    channelPressure.status = 0xD0; channelPressure.data1 = 100;
+    QVERIFY(MidiInputManager::isLearnable(channelPressure));
+
+    // Pitch bend is a 14-bit value, not a discrete control; system messages
+    // (0xF0+) are not learnable.
+    MidiMessage pitchBend;
+    pitchBend.status = 0xE0;
+    QVERIFY(!MidiInputManager::isLearnable(pitchBend));
+    MidiMessage sysEx;
+    sysEx.status = 0xF0;
+    QVERIFY(!MidiInputManager::isLearnable(sysEx));
 }
 
 QTEST_MAIN(TestMidi)

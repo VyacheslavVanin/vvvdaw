@@ -149,12 +149,13 @@ bool AudioEngine::init(const Settings& settings) {
 
     MidiTransportControls controls;
     controls.type = settings.midiTransportControlType;
+    controls.kind = settings.midiTransportKind;
+    controls.channel = settings.midiTransportChannel;
     controls.play = settings.midiTransportPlayControl;
     controls.record = settings.midiTransportRecordControl;
     controls.stop = settings.midiTransportStopControl;
     m_midiInput.setTransportControls(controls);
-    if (settings.midiInputDeviceId >= 0)
-        m_midiInput.open(settings.midiInputDeviceId);
+    setMidiInputDevice(settings.midiInputDeviceId);
     return true;
 }
 
@@ -179,6 +180,7 @@ void AudioEngine::shutdown() {
         m_stream = nullptr;
     }
     m_midiInput.closeAll();
+    m_midiInputDeviceId = -1;
 }
 
 bool AudioEngine::startStream() {
@@ -1275,6 +1277,28 @@ void AudioEngine::setMidiPreviewTrack(int trackIndex) {
 
 void AudioEngine::setMidiTransportControls(const MidiTransportControls& controls) {
     m_midiInput.setTransportControls(controls);
+}
+
+void AudioEngine::setMidiInputDevice(int deviceId) {
+    if (deviceId == m_midiInputDeviceId)
+        return;
+    if (deviceId >= 0)
+        m_midiInput.open(deviceId);
+    else
+        m_midiInput.closeAll();
+    m_midiInputDeviceId = deviceId;
+}
+
+void AudioEngine::setMidiLearnTarget(MidiLearnTarget target) {
+    m_midiInput.setLearnTarget(target);
+}
+
+MidiLearnTarget AudioEngine::midiLearnTarget() const {
+    return m_midiInput.learnTarget();
+}
+
+bool AudioEngine::popLearnedMidiControl(MidiTransportControls& out) {
+    return m_midiInput.popLearned(out);
 }
 
 std::vector<MidiTransportCommand> AudioEngine::takeMidiTransportCommands() {

@@ -343,6 +343,8 @@ void TestSettings::midiInputJsonRoundTrip() {
     Settings settings;
     settings.midiInputDeviceId = 3;
     settings.midiTransportControlType = 2;
+    settings.midiTransportKind = 0xA0;
+    settings.midiTransportChannel = 9;
     settings.midiTransportPlayControl = 114;
     settings.midiTransportRecordControl = 118;
     settings.midiTransportStopControl = 117;
@@ -352,6 +354,8 @@ void TestSettings::midiInputJsonRoundTrip() {
     loaded.load();
     QCOMPARE(loaded.midiInputDeviceId, 3);
     QCOMPARE(loaded.midiTransportControlType, 2);
+    QCOMPARE(loaded.midiTransportKind, 0xA0);
+    QCOMPARE(loaded.midiTransportChannel, 9);
     QCOMPARE(loaded.midiTransportPlayControl, 114);
     QCOMPARE(loaded.midiTransportRecordControl, 118);
     QCOMPARE(loaded.midiTransportStopControl, 117);
@@ -360,6 +364,8 @@ void TestSettings::midiInputJsonRoundTrip() {
     Settings defaults;
     QCOMPARE(defaults.midiInputDeviceId, -1);
     QCOMPARE(defaults.midiTransportControlType, 1);
+    QCOMPARE(defaults.midiTransportKind, 0);
+    QCOMPARE(defaults.midiTransportChannel, -1);
     QCOMPARE(defaults.midiTransportPlayControl, 110);
     QCOMPARE(defaults.midiTransportRecordControl, 111);
     QCOMPARE(defaults.midiTransportStopControl, 112);

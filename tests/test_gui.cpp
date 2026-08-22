@@ -164,6 +164,7 @@ private slots:
     void replaceProjectSwapsAndRebuilds();
     void midiTrackShowsArmButton();
     void settingsDialogHasMidiInputControls();
+    void settingsDialogLearnFlow();
     void previewTargetFollowsFocusedPianoRoll();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
@@ -2132,6 +2133,10 @@ void MainWindowTest::settingsDialogHasMidiInputControls() {
     QVERIFY(typeCombo);
     QCOMPARE(typeCombo->currentData().toInt(), settings.midiTransportControlType);
 
+    auto* channelCombo = dialog.findChild<QComboBox*>("midiChannelCombo");
+    QVERIFY(channelCombo);
+    QCOMPARE(channelCombo->currentData().toInt(), settings.midiTransportChannel);
+
     auto* playSpin = dialog.findChild<QSpinBox*>("midiPlaySpin");
     QVERIFY(playSpin);
     QCOMPARE(playSpin->value(), settings.midiTransportPlayControl);
@@ -2141,6 +2146,37 @@ void MainWindowTest::settingsDialogHasMidiInputControls() {
     auto* stopSpin = dialog.findChild<QSpinBox*>("midiStopSpin");
     QVERIFY(stopSpin);
     QCOMPARE(stopSpin->value(), settings.midiTransportStopControl);
+}
+
+void MainWindowTest::settingsDialogLearnFlow() {
+    Project project;
+    Settings settings;
+    AudioEngine engine;
+    SettingsDialog dialog(settings, engine);
+
+    auto* midiCombo = dialog.findChild<QComboBox*>("midiInputCombo");
+    auto* playBtn = dialog.findChild<QPushButton*>("midiLearnPlayBtn");
+    auto* recordBtn = dialog.findChild<QPushButton*>("midiLearnRecordBtn");
+    auto* stopBtn = dialog.findChild<QPushButton*>("midiLearnStopBtn");
+    QVERIFY(midiCombo);
+    QVERIFY(playBtn);
+    QVERIFY(recordBtn);
+    QVERIFY(stopBtn);
+
+    // With no device selected, Learn must not enter learning state.
+    playBtn->click();
+    QCOMPARE(engine.midiLearnTarget(), MidiLearnTarget::None);
+
+    if (midiCombo->count() < 2)
+        QSKIP("No MIDI input device available on this machine");
+
+    midiCombo->setCurrentIndex(1);
+    playBtn->click();
+    QCOMPARE(engine.midiLearnTarget(), MidiLearnTarget::Play);
+
+    // Clicking the same button again cancels the learning.
+    playBtn->click();
+    QCOMPARE(engine.midiLearnTarget(), MidiLearnTarget::None);
 }
 
 void MainWindowTest::previewTargetFollowsFocusedPianoRoll() {

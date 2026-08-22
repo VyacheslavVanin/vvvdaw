@@ -24,6 +24,8 @@ Settings::Settings()
     , outputChannel(0)
     , midiInputDeviceId(-1)
     , midiTransportControlType(1)
+    , midiTransportKind(0)
+    , midiTransportChannel(-1)
     , midiTransportPlayControl(110)
     , midiTransportRecordControl(111)
     , midiTransportStopControl(112)
@@ -94,6 +96,8 @@ QJsonObject Settings::toJson() const {
     obj["outputChannel"] = outputChannel;
     obj["midiInputDeviceId"] = midiInputDeviceId;
     obj["midiTransportControlType"] = midiTransportControlType;
+    obj["midiTransportKind"] = midiTransportKind;
+    obj["midiTransportChannel"] = midiTransportChannel;
     obj["midiTransportPlayControl"] = midiTransportPlayControl;
     obj["midiTransportRecordControl"] = midiTransportRecordControl;
     obj["midiTransportStopControl"] = midiTransportStopControl;
@@ -134,6 +138,8 @@ void Settings::fromJson(const QJsonObject& obj) {
     if (obj.contains("outputChannel")) outputChannel = obj["outputChannel"].toInt();
     if (obj.contains("midiInputDeviceId")) midiInputDeviceId = obj["midiInputDeviceId"].toInt(-1);
     if (obj.contains("midiTransportControlType")) midiTransportControlType = obj["midiTransportControlType"].toInt(1);
+    if (obj.contains("midiTransportKind")) midiTransportKind = obj["midiTransportKind"].toInt(0);
+    if (obj.contains("midiTransportChannel")) midiTransportChannel = obj["midiTransportChannel"].toInt(-1);
     if (obj.contains("midiTransportPlayControl")) midiTransportPlayControl = obj["midiTransportPlayControl"].toInt(110);
     if (obj.contains("midiTransportRecordControl")) midiTransportRecordControl = obj["midiTransportRecordControl"].toInt(111);
     if (obj.contains("midiTransportStopControl")) midiTransportStopControl = obj["midiTransportStopControl"].toInt(112);

@@ -5,15 +5,30 @@
 #include <RtMidi.h>
 #endif
 
+namespace {
+
+struct LearnCapture {
+    uint8_t target = 0;
+    uint8_t type = 0;    // 1 = CC, 2 = other channel voice message
+    uint8_t kind = 0;    // status & 0xF0 of the learned message
+    uint8_t channel = 0;
+    uint8_t value = 0;
+};
+
+} // namespace
+
 struct MidiInputManager::Impl {
     std::mutex controlsMutex;
     MidiTransportControls controls;
+    std::mutex deviceMutex;
 
 #if defined(HAVE_RTMIDI)
     struct DeviceState {
         std::unique_ptr<RtMidiIn> in;
         MidiRingBuffer<MidiMessage> notes{4096};
         MidiRingBuffer<uint8_t> transport{64};
+        MidiRingBuffer<LearnCapture> learned{8};
+        std::atomic<MidiLearnTarget> learnTarget{MidiLearnTarget::None};
         std::mutex controlsMutex;
         MidiTransportControls controls;
     };
@@ -61,6 +76,46 @@ bool MidiInputManager::parseMessage(const std::vector<uint8_t>& bytes, MidiMessa
     return true;
 }
 
+MidiTransportCommand MidiInputManager::matchTransport(const MidiMessage& msg,
+                                                      const MidiTransportControls& controls) {
+    if (controls.type == 0)
+        return MidiTransportCommand::None;
+    // Restrict to the configured channel (when one is set).
+    if (controls.channel >= 0 && controls.channel <= 15
+        && (msg.status & 0x0F) != static_cast<uint8_t>(controls.channel))
+        return MidiTransportCommand::None;
+
+    // A note-on with velocity 0 is a note-off; treat the two identically so a
+    // release (note-on vel 0 or explicit note-off) never re-triggers transport.
+    int msgKind = msg.status & 0xF0;
+    if (msgKind == 0x90 && !msg.isNoteOn())
+        msgKind = 0x80;
+
+    // The exact message kind learned (or derived from the coarse type).
+    int kind = controls.kind;
+    if (kind == 0)
+        kind = (controls.type == 1) ? 0xB0 : 0x90;
+    if (msgKind != kind)
+        return MidiTransportCommand::None;
+
+    // For note-on, only a real press (velocity > 0) triggers; for note-off
+    // (0x80) only the release message itself triggers. Other channel voice
+    // messages (poly pressure, program change, channel pressure, CC) are
+    // one-shot presses.
+    uint8_t v = msg.data1;
+    if (v == controls.play) return MidiTransportCommand::Play;
+    if (v == controls.stop) return MidiTransportCommand::Stop;
+    if (v == controls.record) return MidiTransportCommand::Record;
+    return MidiTransportCommand::None;
+}
+
+bool MidiInputManager::isLearnable(const MidiMessage& msg) {
+    uint8_t kind = msg.status & 0xF0;
+    // Any channel voice message carrying a value in data1 (note on/off, poly
+    // pressure, CC, program change, channel pressure) is a learn candidate.
+    return kind >= 0x80 && kind <= 0xDF;
+}
+
 #if defined(HAVE_RTMIDI)
 void MidiInputManager::midiCallback(double /*deltaTime*/, std::vector<unsigned char>* message,
                                     void* userData) {
@@ -69,34 +124,36 @@ void MidiInputManager::midiCallback(double /*deltaTime*/, std::vector<unsigned c
     if (!MidiInputManager::parseMessage(*message, msg))
         return;
 
+    // Learn mode: capture the first channel voice message and consume it (one
+    // press = one capture, and the message does not also reach the
+    // note/transport rings).
+    MidiLearnTarget learn = state->learnTarget.load(std::memory_order_relaxed);
+    if (learn != MidiLearnTarget::None && isLearnable(msg)) {
+        LearnCapture c;
+        c.target = static_cast<uint8_t>(learn);
+        c.type = ((msg.status & 0xF0) == 0xB0) ? 1 : 2;
+        c.kind = msg.status & 0xF0;
+        // A note-on with velocity 0 is a note-off; store the normalized kind so
+        // matching (matchTransport) accepts the same message family.
+        if (c.kind == 0x90 && !msg.isNoteOn())
+            c.kind = 0x80;
+        c.channel = msg.status & 0x0F;
+        c.value = msg.data1;
+        state->learned.push(c);
+        state->learnTarget.store(MidiLearnTarget::None, std::memory_order_relaxed);
+        return;
+    }
+
     MidiTransportControls controls;
     {
         std::lock_guard<std::mutex> lock(state->controlsMutex);
         controls = state->controls;
     }
 
-    if (controls.type != 0) {
-        uint8_t value = 0;
-        bool isTransport = false;
-        if ((msg.status & 0xF0) == 0xB0) {
-            uint8_t cc = msg.data1;
-            if (cc == controls.play) value = static_cast<uint8_t>(MidiTransportCommand::Play);
-            else if (cc == controls.stop) value = static_cast<uint8_t>(MidiTransportCommand::Stop);
-            else if (cc == controls.record) value = static_cast<uint8_t>(MidiTransportCommand::Record);
-            isTransport = (value != 0);
-        } else if (controls.type == 2 && (msg.status & 0xF0) == 0x90) {
-            if (msg.isNoteOn()) {
-                uint8_t note = msg.data1;
-                if (note == controls.play) value = static_cast<uint8_t>(MidiTransportCommand::Play);
-                else if (note == controls.stop) value = static_cast<uint8_t>(MidiTransportCommand::Stop);
-                else if (note == controls.record) value = static_cast<uint8_t>(MidiTransportCommand::Record);
-            }
-            isTransport = (value != 0);
-        }
-        if (isTransport) {
-            state->transport.push(value);
-            return;
-        }
+    MidiTransportCommand cmd = matchTransport(msg, controls);
+    if (cmd != MidiTransportCommand::None) {
+        state->transport.push(static_cast<uint8_t>(cmd));
+        return;
     }
 
     if (msg.isNoteOn() || msg.isNoteOff())
@@ -119,8 +176,10 @@ void MidiInputManager::open(int deviceId) {
         state->in->openPort(static_cast<unsigned int>(deviceId), "vvvdaw input");
         state->in->ignoreTypes(false, false, false);
         state->in->setCallback(&MidiInputManager::midiCallback, state.get());
+        std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
         m_impl->device = std::move(state);
     } catch (...) {
+        std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
         m_impl->device.reset();
     }
 #else
@@ -135,6 +194,7 @@ void MidiInputManager::close(int deviceId) {
 
 void MidiInputManager::closeAll() {
 #if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
     if (m_impl->device) {
         try {
             m_impl->device->in->closePort();
@@ -147,6 +207,7 @@ void MidiInputManager::closeAll() {
 
 bool MidiInputManager::isActive() const {
 #if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
     return m_impl->device != nullptr;
 #else
     return false;
@@ -159,16 +220,64 @@ void MidiInputManager::setTransportControls(const MidiTransportControls& control
         m_impl->controls = controls;
     }
 #if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
     if (m_impl->device) {
-        std::lock_guard<std::mutex> lock(m_impl->device->controlsMutex);
+        std::lock_guard<std::mutex> cl(m_impl->device->controlsMutex);
         m_impl->device->controls = controls;
     }
 #endif
 }
 
+void MidiInputManager::setLearnTarget(MidiLearnTarget target) {
+#if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
+    if (m_impl->device)
+        m_impl->device->learnTarget.store(target, std::memory_order_relaxed);
+#else
+    (void)target;
+#endif
+}
+
+MidiLearnTarget MidiInputManager::learnTarget() const {
+#if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
+    return m_impl->device ? m_impl->device->learnTarget.load(std::memory_order_relaxed)
+                          : MidiLearnTarget::None;
+#else
+    return MidiLearnTarget::None;
+#endif
+}
+
+bool MidiInputManager::popLearned(MidiTransportControls& out) {
+#if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
+    if (!m_impl->device)
+        return false;
+    LearnCapture c;
+    if (!m_impl->device->learned.pop(c))
+        return false;
+    out.type = c.type;
+    out.kind = c.kind;
+    out.channel = c.channel;
+    switch (static_cast<MidiLearnTarget>(c.target)) {
+    case MidiLearnTarget::Play: out.play = c.value; break;
+    case MidiLearnTarget::Record: out.record = c.value; break;
+    case MidiLearnTarget::Stop: out.stop = c.value; break;
+    default: return false;
+    }
+    return true;
+#else
+    (void)out;
+    return false;
+#endif
+}
+
 bool MidiInputManager::hasPendingNotes() const {
 #if defined(HAVE_RTMIDI)
-    return m_impl->device && !m_impl->device->notes.empty();
+    std::unique_lock<std::mutex> lock(m_impl->deviceMutex, std::try_to_lock);
+    if (!lock.owns_lock() || !m_impl->device)
+        return false;
+    return !m_impl->device->notes.empty();
 #else
     return false;
 #endif
@@ -176,7 +285,8 @@ bool MidiInputManager::hasPendingNotes() const {
 
 int MidiInputManager::pollNotes(MidiMessage* out, int maxCount) {
 #if defined(HAVE_RTMIDI)
-    if (!m_impl->device || maxCount <= 0)
+    std::unique_lock<std::mutex> lock(m_impl->deviceMutex, std::try_to_lock);
+    if (!lock.owns_lock() || !m_impl->device || maxCount <= 0)
         return 0;
     int n = 0;
     while (n < maxCount) {
@@ -195,6 +305,7 @@ int MidiInputManager::pollNotes(MidiMessage* out, int maxCount) {
 
 int MidiInputManager::pollTransport(MidiTransportCommand* out, int maxCount) {
 #if defined(HAVE_RTMIDI)
+    std::lock_guard<std::mutex> lock(m_impl->deviceMutex);
     if (!m_impl->device || maxCount <= 0)
         return 0;
     int n = 0;

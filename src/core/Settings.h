@@ -34,6 +34,8 @@ public:
     int outputChannel;
     int midiInputDeviceId;
     int midiTransportControlType;
+    int midiTransportKind;
+    int midiTransportChannel;
     int midiTransportPlayControl;
     int midiTransportRecordControl;
     int midiTransportStopControl;
