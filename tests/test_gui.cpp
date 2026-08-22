@@ -16,6 +16,7 @@
 #include <QDropEvent>
 #include <QDragLeaveEvent>
 #include <QFrame>
+#include <QDialog>
 #include <algorithm>
 #include <memory>
 #include <portaudio.h>
@@ -29,6 +30,7 @@
 #include "model/Instrument.h"
 #include "model/TemplateStore.h"
 #include "plugin/PluginInstance.h"
+#include "plugin/PluginManager.h"
 #include "gui/MainWindow.h"
 #include "gui/StartDialog.h"
 #include "gui/TrackPanelWidget.h"
@@ -140,6 +142,9 @@ private slots:
     void pluginListRowsStayCompact();
     void pluginListHasNoRemoveButton();
     void pluginListContextMenuRemovesPlugin();
+    void pluginListContextMenuEmptySpaceOffersAddPlugin();
+    void pluginListContextMenuRowOffersAddAndRemove();
+    void pluginListContextMenuAddOpensPicker();
     void pluginListDragShowsInsertionLine();
     void pluginListDropFollowsInsertionLine();
     void pluginWindowStaysOnTop();
@@ -1484,6 +1489,144 @@ void MainWindowTest::pluginListContextMenuRemovesPlugin() {
     QCoreApplication::processEvents();
 
     QCOMPARE(bus.pluginChain().count(), 0);
+}
+
+void MainWindowTest::pluginListContextMenuEmptySpaceOffersAddPlugin() {
+    AudioBus bus;
+    bus.pluginChain().addPlugin(std::make_unique<StubSynth>());
+
+    PluginListWidget list;
+    list.setBus(&bus);
+    list.rebuild();
+    list.resize(240, 200);
+    list.show();
+    QCoreApplication::processEvents();
+
+    QPushButton* enableBtn = nullptr;
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON") { enableBtn = b; break; }
+    QVERIFY(enableBtn);
+    QWidget* row = enableBtn->parentWidget();
+    QWidget* container = row->parentWidget();
+    QVERIFY(container);
+
+    bool hasAdd = false;
+    bool hasRemove = false;
+    QTimer::singleShot(0, [&hasAdd, &hasRemove] {
+        QMenu* menu = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets())
+            if (auto* m = qobject_cast<QMenu*>(w)) { menu = m; break; }
+        if (!menu) return;
+        for (QAction* a : menu->actions()) {
+            if (a->text().contains("Add Plugin")) hasAdd = true;
+            if (a->text().contains("Remove")) hasRemove = true;
+        }
+        menu->close();
+    });
+
+    // Right-click empty space below the last row.
+    QPoint emptyPos(container->width() / 2, row->geometry().bottom() + 20);
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, emptyPos,
+                         container->mapToGlobal(emptyPos));
+    QApplication::sendEvent(container, &ev);
+    QCoreApplication::processEvents();
+
+    QVERIFY(hasAdd);
+    QVERIFY(!hasRemove); // no row under the cursor
+}
+
+void MainWindowTest::pluginListContextMenuRowOffersAddAndRemove() {
+    AudioBus bus;
+    bus.pluginChain().addPlugin(std::make_unique<StubSynth>());
+
+    PluginListWidget list;
+    list.setBus(&bus);
+    list.rebuild();
+    list.resize(240, 120);
+    list.show();
+    QCoreApplication::processEvents();
+
+    QPushButton* enableBtn = nullptr;
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON") { enableBtn = b; break; }
+    QVERIFY(enableBtn);
+    QWidget* row = enableBtn->parentWidget();
+
+    bool hasAdd = false;
+    bool hasRemove = false;
+    QTimer::singleShot(0, [&hasAdd, &hasRemove] {
+        QMenu* menu = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets())
+            if (auto* m = qobject_cast<QMenu*>(w)) { menu = m; break; }
+        if (!menu) return;
+        for (QAction* a : menu->actions()) {
+            if (a->text().contains("Add Plugin")) hasAdd = true;
+            if (a->text().contains("Remove")) hasRemove = true;
+        }
+        menu->close();
+    });
+
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, row->rect().center(),
+                         row->mapToGlobal(row->rect().center()));
+    QApplication::sendEvent(row, &ev);
+    QCoreApplication::processEvents();
+
+    QVERIFY(hasAdd);
+    QVERIFY(hasRemove);
+}
+
+void MainWindowTest::pluginListContextMenuAddOpensPicker() {
+    AudioBus bus;
+    bus.pluginChain().addPlugin(std::make_unique<StubSynth>());
+
+    PluginManager manager;
+    PluginListWidget list;
+    list.setBus(&bus);
+    list.setPluginManager(&manager);
+    list.rebuild();
+    list.resize(240, 200);
+    list.show();
+    QCoreApplication::processEvents();
+
+    QPushButton* enableBtn = nullptr;
+    for (QPushButton* b : list.findChildren<QPushButton*>())
+        if (b->text() == "ON") { enableBtn = b; break; }
+    QVERIFY(enableBtn);
+    QWidget* row = enableBtn->parentWidget();
+    QWidget* container = row->parentWidget();
+    QVERIFY(container);
+
+    bool dialogSeen = false;
+    QTimer::singleShot(0, [&dialogSeen] {
+        // The "Add Plugin..." action opens a modal picker dialog; the second
+        // timer runs inside that dialog's event loop.
+        QTimer::singleShot(0, [&dialogSeen] {
+            for (QWidget* w : QApplication::topLevelWidgets()) {
+                if (auto* dlg = qobject_cast<QDialog*>(w)) {
+                    if (dlg->findChild<QListWidget*>()) {
+                        dialogSeen = true;
+                        dlg->reject();
+                        return;
+                    }
+                }
+            }
+        });
+        QMenu* menu = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets())
+            if (auto* m = qobject_cast<QMenu*>(w)) { menu = m; break; }
+        if (!menu) return;
+        for (QAction* a : menu->actions())
+            if (a->text().contains("Add Plugin")) { a->trigger(); break; }
+        menu->close();
+    });
+
+    QPoint emptyPos(container->width() / 2, row->geometry().bottom() + 20);
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, emptyPos,
+                         container->mapToGlobal(emptyPos));
+    QApplication::sendEvent(container, &ev);
+    QCoreApplication::processEvents();
+
+    QVERIFY(dialogSeen);
 }
 
 void MainWindowTest::pluginListDragShowsInsertionLine() {

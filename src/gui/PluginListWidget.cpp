@@ -62,6 +62,7 @@ PluginListWidget::PluginListWidget(QWidget* parent)
 
     m_container = new QWidget();
     m_container->setAcceptDrops(true);
+    m_container->installEventFilter(this);
     m_containerLayout = new QVBoxLayout(m_container);
     m_containerLayout->setContentsMargins(2, 2, 2, 2);
     m_containerLayout->setSpacing(1);
@@ -269,25 +270,34 @@ void PluginListWidget::onRemoveClicked(int index) {
 bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
     auto* w = qobject_cast<QWidget*>(obj);
     if (!w) return QWidget::eventFilter(obj, event);
+    const bool isRowWidget = std::find(m_rows.begin(), m_rows.end(), w) != m_rows.end();
 
     if (event->type() == QEvent::ContextMenu) {
         auto* ce = static_cast<QContextMenuEvent*>(event);
-        int idx = rowAtPos(w->pos());
+        // Rows and the container both pass through here; use container
+        // coordinates (scroll-safe) to find the row under the cursor.
+        int idx = rowAtPos(m_container->mapFromGlobal(ce->globalPos()));
         auto* chain = targetChain();
+
+        QMenu menu(w);
+        QAction* addAction = menu.addAction("Add Plugin...");
+        connect(addAction, &QAction::triggered, this, [this] {
+            onAddClicked();
+        });
         if (idx >= 0 && chain && idx < chain->count()) {
-            QMenu menu(w);
+            menu.addSeparator();
             QAction* removeAction = menu.addAction("Remove Plugin");
             connect(removeAction, &QAction::triggered, this, [this, idx] {
                 onRemoveClicked(idx);
             });
-            menu.exec(ce->globalPos());
         }
+        menu.exec(ce->globalPos());
         return true;
     }
 
     if (event->type() == QEvent::MouseButtonDblClick) {
         auto* me = static_cast<QMouseEvent*>(event);
-        if (me->button() == Qt::LeftButton) {
+        if (me->button() == Qt::LeftButton && isRowWidget) {
             int idx = rowAtPos(w->pos());
             if (idx >= 0) {
                 auto* chain = targetChain();
@@ -302,7 +312,7 @@ bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
 
     if (event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
-        if (me->button() == Qt::LeftButton) {
+        if (me->button() == Qt::LeftButton && isRowWidget) {
             m_dragFromIndex = rowAtPos(w->pos());
             m_dragStartPos = me->pos();
             w->setCursor(Qt::ClosedHandCursor);
@@ -312,7 +322,8 @@ bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
 
     if (event->type() == QEvent::MouseMove) {
         auto* me = static_cast<QMouseEvent*>(event);
-        if (m_dragFromIndex >= 0 && (me->pos() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()) {
+        if (isRowWidget && m_dragFromIndex >= 0 &&
+            (me->pos() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()) {
             auto* drag = new QDrag(this);
             auto* mime = new QMimeData();
             mime->setData(kMimePluginIndex, QByteArray::number(m_dragFromIndex));
@@ -334,7 +345,7 @@ bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
 
     if (event->type() == QEvent::MouseButtonRelease) {
         auto* me = static_cast<QMouseEvent*>(event);
-        if (me->button() == Qt::LeftButton) {
+        if (me->button() == Qt::LeftButton && isRowWidget) {
             m_dragFromIndex = -1;
             w->setCursor(Qt::OpenHandCursor);
             return false;
