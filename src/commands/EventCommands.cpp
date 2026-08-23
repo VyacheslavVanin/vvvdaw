@@ -79,15 +79,18 @@ bool MoveEventCommand::mergeWith(const UndoCommand* other) {
 // --- TrimEventCommand ---
 
 TrimEventCommand::TrimEventCommand(Project& project, int trackIndex, int64_t eventId,
+                                   int64_t oldStart, int64_t newStart,
                                    int64_t oldOffset, int64_t oldDuration,
                                    int64_t newOffset, int64_t newDuration)
     : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
+      m_oldStart(oldStart), m_newStart(newStart),
       m_oldOffset(oldOffset), m_oldDuration(oldDuration),
       m_newOffset(newOffset), m_newDuration(newDuration) {}
 
 void TrimEventCommand::execute() {
     if (Track* track = m_project.trackAt(m_trackIndex)) {
         if (AudioEvent* ev = track->findEvent(m_eventId)) {
+            ev->setStartSample(m_newStart);
             ev->setOffsetSample(m_newOffset);
             ev->setDurationSample(m_newDuration);
         }
@@ -97,6 +100,7 @@ void TrimEventCommand::execute() {
 void TrimEventCommand::undo() {
     if (Track* track = m_project.trackAt(m_trackIndex)) {
         if (AudioEvent* ev = track->findEvent(m_eventId)) {
+            ev->setStartSample(m_oldStart);
             ev->setOffsetSample(m_oldOffset);
             ev->setDurationSample(m_oldDuration);
         }
@@ -106,6 +110,7 @@ void TrimEventCommand::undo() {
 bool TrimEventCommand::mergeWith(const UndoCommand* other) {
     auto* cmd = static_cast<const TrimEventCommand*>(other);
     if (m_trackIndex != cmd->m_trackIndex || m_eventId != cmd->m_eventId) return false;
+    m_newStart = cmd->m_newStart;
     m_newOffset = cmd->m_newOffset;
     m_newDuration = cmd->m_newDuration;
     return true;
@@ -232,4 +237,52 @@ void CutEventCommand::undo() {
     restored.setActiveTakeIndex(m_savedActiveTakeIndex);
     track->importEvent(std::move(restored));
     m_didCut = false;
+}
+
+// --- MoveEventToTrackCommand ---
+
+MoveEventToTrackCommand::MoveEventToTrackCommand(Project& project, int srcTrackIndex,
+                                                 int dstTrackIndex, int64_t eventId,
+                                                 int64_t oldStart, int64_t newStart)
+    : m_project(project), m_srcTrackIndex(srcTrackIndex), m_dstTrackIndex(dstTrackIndex),
+      m_eventId(eventId), m_oldStart(oldStart), m_newStart(newStart) {}
+
+void MoveEventToTrackCommand::execute() {
+    Track* src = m_project.trackAt(m_srcTrackIndex);
+    Track* dst = m_project.trackAt(m_dstTrackIndex);
+    if (!src || !dst) return;
+
+    if (src->type() == Track::Type::Midi) {
+        MidiEvent* ev = src->findMidiEvent(m_eventId);
+        if (!ev) return;
+        ev->setStartSample(m_newStart);
+        dst->importMidiEvent(*ev);
+        src->removeMidiEvent(m_eventId);
+    } else {
+        AudioEvent* ev = src->findEvent(m_eventId);
+        if (!ev) return;
+        ev->setStartSample(m_newStart);
+        dst->importEvent(*ev);
+        src->removeEvent(m_eventId);
+    }
+}
+
+void MoveEventToTrackCommand::undo() {
+    Track* src = m_project.trackAt(m_srcTrackIndex);
+    Track* dst = m_project.trackAt(m_dstTrackIndex);
+    if (!src || !dst) return;
+
+    if (dst->type() == Track::Type::Midi) {
+        MidiEvent* ev = dst->findMidiEvent(m_eventId);
+        if (!ev) return;
+        ev->setStartSample(m_oldStart);
+        src->importMidiEvent(*ev);
+        dst->removeMidiEvent(m_eventId);
+    } else {
+        AudioEvent* ev = dst->findEvent(m_eventId);
+        if (!ev) return;
+        ev->setStartSample(m_oldStart);
+        src->importEvent(*ev);
+        dst->removeEvent(m_eventId);
+    }
 }

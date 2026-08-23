@@ -9,11 +9,12 @@
 #include "model/MidiEvent.h"
 
 class Track;
+class Project;
 
 class TrackViewWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit TrackViewWidget(Track* track, QWidget* parent = nullptr);
+    explicit TrackViewWidget(Track* track, Project* project, QWidget* parent = nullptr);
 
     void setTrack(Track* track) { m_track = track; }
     Track* track() const { return m_track; }
@@ -61,10 +62,14 @@ signals:
     void scrollOffsetChanged(int64_t offset);
     void eventMoved(int64_t eventId, int64_t newStartSample);
     void eventsChanged();
-    void eventDragFinished(int64_t eventId, int64_t newStartSample, QPoint globalPos);
+    void eventDragFinished(int64_t eventId, int64_t oldStart, int64_t newStart,
+                           QPoint globalPos, bool wasDuplicate);
     void dragInProgress(int64_t eventId, int64_t currentStartSample, QPoint globalPos);
     void eventDragStarted();
-    void eventEdgeTrimStarted();
+    void eventTrimFinished(int64_t eventId,
+                           int64_t oldStart, int64_t newStart,
+                           int64_t oldOffset, int64_t newOffset,
+                           int64_t oldDuration, int64_t newDuration);
     void zoomChanged(double zoom);
     void takeSwitchStarted();
     void eventDoubleClicked(int64_t eventId);
@@ -119,6 +124,7 @@ private:
     std::shared_ptr<MidiClip> midiClipAt(int index) const;
 
     Track* m_track = nullptr;
+    Project* m_project = nullptr;
     int64_t m_scrollOffset = 0;
     double m_pixelsPerSample = vvvdaw::DefaultZoom;
     int64_t m_playheadPos = -1;
@@ -178,6 +184,7 @@ private:
     int m_dragEventIndex = -1;
     int64_t m_dragStartSample = 0;
     int m_dragStartMouseX = 0;
+    bool m_dragWasDuplicate = false;
 
     // Hover
     int m_hoverEventIndex = -1;

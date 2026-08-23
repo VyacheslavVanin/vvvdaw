@@ -45,6 +45,9 @@ private slots:
     void removeEventCommand();
     void moveEventCommand();
     void trimEventCommand();
+    void trimEventCommandRestoresStart();
+    void moveEventToTrackCommand();
+    void moveMidiEventToTrackCommand();
     void cutEventCommand();
     void cutEventCommandPreservesRate();
     void cutEventCommandBoundaryDoesNothing();
@@ -52,6 +55,8 @@ private slots:
     void cutEventCommandSnapsAfterGrid();
     void cutEventCommandSnapOnGrid();
     void addMidiEventCommand();
+    void moveMidiEventCommand();
+    void trimMidiEventCommand();
     void addNoteCommand();
     void moveNoteCommand();
     void resizeNoteCommand();
@@ -692,12 +697,98 @@ void TestCommands::trimEventCommand() {
     int64_t id = p.tracks()[0].events()[0].id();
 
     UndoStack stack;
-    stack.execute(std::make_unique<TrimEventCommand>(p, 0, id, 0, 100, 50, 50));
+    // Left trim: start and offset advance, duration shrinks.
+    stack.execute(std::make_unique<TrimEventCommand>(p, 0, id, 0, 50, 0, 100, 50, 50));
+    QCOMPARE(p.tracks()[0].events()[0].startSample(), int64_t(50));
     QCOMPARE(p.tracks()[0].events()[0].offsetSample(), int64_t(50));
     QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(50));
     stack.undo();
+    QCOMPARE(p.tracks()[0].events()[0].startSample(), int64_t(0));
     QCOMPARE(p.tracks()[0].events()[0].offsetSample(), int64_t(0));
     QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(100));
+}
+
+void TestCommands::trimEventCommandRestoresStart() {
+    // Right-edge trim keeps the start; the start params must still round-trip.
+    Project p;
+    p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(1000);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(200);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<TrimEventCommand>(p, 0, id, 1000, 1000, 0, 200, 0, 120));
+    QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(120));
+    QCOMPARE(p.tracks()[0].events()[0].startSample(), int64_t(1000));
+    stack.undo();
+    QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(200));
+    QCOMPARE(p.tracks()[0].events()[0].startSample(), int64_t(1000));
+}
+
+void TestCommands::moveEventToTrackCommand() {
+    Project p;
+    p.addTrack("A1");
+    p.addTrack("A2");
+    AudioEvent ev;
+    ev.setStartSample(100);
+    ev.setOffsetSample(10);
+    ev.setDurationSample(2000);
+    ev.setSourceFrames(3000);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<MoveEventToTrackCommand>(p, 0, 1, id, 100, 900));
+    QCOMPARE(p.tracks()[0].events().size(), size_t(0));
+    QCOMPARE(p.tracks()[1].events().size(), size_t(1));
+    const AudioEvent& moved = p.tracks()[1].events()[0];
+    QCOMPARE(moved.id(), id);
+    QCOMPARE(moved.startSample(), int64_t(900));
+    QCOMPARE(moved.offsetSample(), int64_t(10));
+    QCOMPARE(moved.durationSample(), int64_t(2000));
+    QCOMPARE(moved.sourceFrames(), int64_t(3000));
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(1));
+    QCOMPARE(p.tracks()[1].events().size(), size_t(0));
+    QCOMPARE(p.tracks()[0].events()[0].startSample(), int64_t(100));
+
+    stack.redo();
+    QCOMPARE(p.tracks()[1].events().size(), size_t(1));
+    QCOMPARE(p.tracks()[1].events()[0].startSample(), int64_t(900));
+}
+
+void TestCommands::moveMidiEventToTrackCommand() {
+    Project p;
+    p.addMidiTrack("M1");
+    p.addMidiTrack("M2");
+    auto clip = std::make_shared<MidiClip>();
+    clip->addNote(60, 100, 0, 240);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(500);
+    ev.setDurationSample(4800);
+    p.tracks()[0].addMidiEvent(ev);
+    int64_t id = p.tracks()[0].midiEvents()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<MoveEventToTrackCommand>(p, 0, 1, id, 500, 700));
+    QCOMPARE(p.tracks()[1].midiEvents().size(), size_t(1));
+    QCOMPARE(p.tracks()[0].midiEvents().size(), size_t(0));
+    QCOMPARE(p.tracks()[1].midiEvents()[0].startSample(), int64_t(700));
+    QVERIFY(p.tracks()[1].midiEvents()[0].clip() == clip);
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].midiEvents().size(), size_t(1));
+    QCOMPARE(p.tracks()[1].midiEvents().size(), size_t(0));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].startSample(), int64_t(500));
+
+    stack.redo();
+    QCOMPARE(p.tracks()[1].midiEvents().size(), size_t(1));
+    QCOMPARE(p.tracks()[1].midiEvents()[0].startSample(), int64_t(700));
 }
 
 void TestCommands::cutEventCommand() {
@@ -913,6 +1004,43 @@ void TestCommands::addMidiEventCommand() {
     QVERIFY(p.tracks()[0].midiEvents()[0].clip());
     stack.undo();
     QCOMPARE(p.tracks()[0].midiEvents().size(), size_t(0));
+}
+
+void TestCommands::moveMidiEventCommand() {
+    Project p;
+    p.addMidiTrack("M");
+    UndoStack stack;
+    stack.execute(std::make_unique<AddMidiEventCommand>(p, 0, makeMidiEventJson()));
+    int64_t id = p.tracks()[0].midiEvents()[0].id();
+
+    stack.execute(std::make_unique<MoveMidiEventCommand>(p, 0, id, 0, 5000));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].startSample(), int64_t(5000));
+    stack.undo();
+    QCOMPARE(p.tracks()[0].midiEvents()[0].startSample(), int64_t(0));
+    stack.redo();
+    QCOMPARE(p.tracks()[0].midiEvents()[0].startSample(), int64_t(5000));
+}
+
+void TestCommands::trimMidiEventCommand() {
+    Project p;
+    p.addMidiTrack("M");
+    UndoStack stack;
+    stack.execute(std::make_unique<AddMidiEventCommand>(p, 0, makeMidiEventJson()));
+    MidiEvent* ev = &p.tracks()[0].midiEvents()[0];
+    ev->setStartSample(1000);
+    ev->setOffsetSample(0);
+    ev->setDurationSample(2000);
+    int64_t id = ev->id();
+
+    // Left trim: start and offset advance, duration shrinks.
+    stack.execute(std::make_unique<TrimMidiEventCommand>(p, 0, id, 1000, 1300, 0, 2000, 300, 1700));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].startSample(), int64_t(1300));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].offsetSample(), int64_t(300));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].durationSample(), int64_t(1700));
+    stack.undo();
+    QCOMPARE(p.tracks()[0].midiEvents()[0].startSample(), int64_t(1000));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].offsetSample(), int64_t(0));
+    QCOMPARE(p.tracks()[0].midiEvents()[0].durationSample(), int64_t(2000));
 }
 
 void TestCommands::addNoteCommand() {

@@ -51,6 +51,7 @@ private:
 class TrimEventCommand : public UndoCommand {
 public:
     TrimEventCommand(Project& project, int trackIndex, int64_t eventId,
+                     int64_t oldStart, int64_t newStart,
                      int64_t oldOffset, int64_t oldDuration,
                      int64_t newOffset, int64_t newDuration);
     void execute() override;
@@ -61,6 +62,7 @@ private:
     Project& m_project;
     int m_trackIndex;
     int64_t m_eventId;
+    int64_t m_oldStart, m_newStart;
     int64_t m_oldOffset, m_oldDuration;
     int64_t m_newOffset, m_newDuration;
 };
@@ -115,4 +117,23 @@ private:
 
     int64_t m_rightEventId = -1;
     bool m_didCut = false;
+};
+
+// Move an event from one track to another. The move already happened live
+// (drag release); the command records the before/after so undo relocates it
+// back and redo reapplies it. Both parts keep the same event id.
+class MoveEventToTrackCommand : public UndoCommand {
+public:
+    MoveEventToTrackCommand(Project& project, int srcTrackIndex, int dstTrackIndex,
+                            int64_t eventId, int64_t oldStart, int64_t newStart);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 46; }
+private:
+    Project& m_project;
+    int m_srcTrackIndex;
+    int m_dstTrackIndex;
+    int64_t m_eventId;
+    int64_t m_oldStart;
+    int64_t m_newStart;
 };

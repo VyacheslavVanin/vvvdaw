@@ -22,6 +22,9 @@
 #include <QScrollBar>
 #include <algorithm>
 #include <memory>
+#include <thread>
+#include <atomic>
+#include <chrono>
 #include <portaudio.h>
 
 #include "core/Settings.h"
@@ -54,6 +57,8 @@
 #include "gui/PianoRollWidget.h"
 #include "gui/ChannelRoutingDialog.h"
 #include "gui/SettingsDialog.h"
+#include "commands/TrackCommands.h"
+#include "commands/SnapshotCommand.h"
 
 namespace {
 QComboBox* findComboContaining(QWidget* parent, const QString& text) {
@@ -207,6 +212,12 @@ private slots:
     void trackViewMouseCursorTracksAndClears();
     void trackViewContextMenuCutSplitsEvent();
     void trackViewContextMenuCutAndSnapAlignsToGrid();
+    void executeCommandAcquiresProjectWriteLock();
+    void undoRedoAcquireProjectWriteLock();
+    void sameTrackDragUndoRestoresPosition();
+    void edgeTrimUndoRestoresEdges();
+    void midiSameTrackDragUndoRestoresPosition();
+    void midiEdgeTrimUndoRestoresEdges();
     void pianoRollMiddleDragPans();
     void pianoRollCtrlWheelZoomAnchorsCursor();
 private:
@@ -2816,6 +2827,235 @@ void MainWindowTest::trackViewContextMenuCutAndSnapAlignsToGrid() {
     QCOMPARE(left.endSample(), int64_t(24000));
     QCOMPARE(right.startSample(), int64_t(24000)); // snapped to the grid line
     QCOMPARE(left.endSample(), right.startSample());
+}
+
+// Regression: undo/redo/execute of a command must acquire the project write
+// lock, otherwise the audio callback thread (which reads the project under a
+// shared lock) can be destroyed underneath by wholesale mutations (e.g. undo's
+// Project::fromJson clearing plugin chains) -> use-after-free in
+// PluginChain::process. Each case holds the project's shared lock from another
+// thread for 300 ms and asserts the GUI call blocks until it is released.
+void MainWindowTest::executeCommandAcquiresProjectWriteLock() {
+    Project project;
+    project.addTrack("A1");
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    std::atomic<bool> held{false};
+    std::thread holder([&] {
+        auto lk = project.readLock();
+        held = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    });
+    while (!held.load()) {}
+
+    const size_t before = project.tracks().size();
+    auto t0 = std::chrono::steady_clock::now();
+    window.executeCommand(
+        std::make_unique<AddTrackCommand>(project, static_cast<int>(before), 2));
+    auto dtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    holder.join();
+
+    QVERIFY(dtMs >= 200); // blocked on the write lock until the reader released
+    QCOMPARE(project.tracks().size(), before + 1);
+}
+
+void MainWindowTest::undoRedoAcquireProjectWriteLock() {
+    Project project;
+    project.addTrack("A1");
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    // Give undo/redo something to do: a snapshot taken before a change.
+    window.m_undoStack.push(std::make_unique<SnapshotCommand>(project));
+    project.tracks()[0].setVolume(0.3f);
+
+    std::atomic<bool> held{false};
+    std::thread holder([&] {
+        auto lk = project.readLock();
+        held = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    });
+    while (!held.load()) {}
+
+    auto t0 = std::chrono::steady_clock::now();
+    window.performUndo();
+    auto dtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    holder.join();
+
+    QVERIFY(dtMs >= 200);
+    QVERIFY(project.tracks()[0].volume() != 0.3f); // snapshot restored
+
+    // Same for redo.
+    held = false;
+    std::thread holder2([&] {
+        auto lk = project.readLock();
+        held = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    });
+    while (!held.load()) {}
+
+    t0 = std::chrono::steady_clock::now();
+    window.performRedo();
+    dtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    holder2.join();
+
+    QVERIFY(dtMs >= 200);
+    QCOMPARE(project.tracks()[0].volume(), 0.3f);
+}
+
+void MainWindowTest::sameTrackDragUndoRestoresPosition() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002);       // 1 px = 500 samples
+    view->setScrollOffset(0);
+    view->setSnapToGrid(false);
+
+    // Drag the event 40 px right: start moves 40 * 500 = 20000 samples.
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(40, 40));
+    QTest::mouseMove(view, QPoint(80, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(80, 40));
+    QCOMPARE(track.events()[0].startSample(), int64_t(20000));
+
+    window.performUndo();
+    QCOMPARE(track.events()[0].startSample(), int64_t(0));
+    QCOMPARE(track.events()[0].durationSample(), int64_t(48000));
+}
+
+void MainWindowTest::edgeTrimUndoRestoresEdges() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002);       // 1 px = 500 samples; event spans 96 px
+    view->setScrollOffset(0);
+    view->setSnapToGrid(false);
+
+    // Right edge: drag out by 8 px -> duration grows by 4000 samples.
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(92, 40));
+    QTest::mouseMove(view, QPoint(100, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(100, 40));
+    QCOMPARE(track.events()[0].durationSample(), int64_t(52000));
+    QCOMPARE(track.events()[0].startSample(), int64_t(0));
+
+    window.performUndo();
+    QCOMPARE(track.events()[0].durationSample(), int64_t(48000));
+    QCOMPARE(track.events()[0].startSample(), int64_t(0));
+
+    // Left edge: drag right by 7 px -> start/offset advance, duration shrinks.
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(3, 40));
+    QTest::mouseMove(view, QPoint(10, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(10, 40));
+    QCOMPARE(track.events()[0].startSample(), int64_t(3500));
+    QCOMPARE(track.events()[0].offsetSample(), int64_t(3500));
+    QCOMPARE(track.events()[0].durationSample(), int64_t(44500));
+
+    window.performUndo();
+    QCOMPARE(track.events()[0].startSample(), int64_t(0));
+    QCOMPARE(track.events()[0].offsetSample(), int64_t(0));
+    QCOMPARE(track.events()[0].durationSample(), int64_t(48000));
+}
+
+void MainWindowTest::midiSameTrackDragUndoRestoresPosition() {
+    Project project;
+    project.addMidiTrack("M1");
+    Track& track = project.tracks()[0];
+    MidiEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002);       // 1 px = 500 samples
+    view->setScrollOffset(0);
+    view->setSnapToGrid(false);
+
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(40, 40));
+    QTest::mouseMove(view, QPoint(80, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(80, 40));
+    QCOMPARE(track.midiEvents()[0].startSample(), int64_t(20000));
+
+    window.performUndo();
+    QCOMPARE(track.midiEvents()[0].startSample(), int64_t(0));
+    window.performRedo();
+    QCOMPARE(track.midiEvents()[0].startSample(), int64_t(20000));
+}
+
+void MainWindowTest::midiEdgeTrimUndoRestoresEdges() {
+    Project project;
+    project.addMidiTrack("M1");
+    Track& track = project.tracks()[0];
+    MidiEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(48000);
+    track.addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.002);       // 1 px = 500 samples; event spans 96 px
+    view->setScrollOffset(0);
+    view->setSnapToGrid(false);
+
+    // Right edge: drag out by 8 px -> duration grows by 4000 samples.
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(92, 40));
+    QTest::mouseMove(view, QPoint(100, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(100, 40));
+    QCOMPARE(track.midiEvents()[0].durationSample(), int64_t(52000));
+
+    window.performUndo();
+    QCOMPARE(track.midiEvents()[0].durationSample(), int64_t(48000));
+    QCOMPARE(track.midiEvents()[0].startSample(), int64_t(0));
+    QCOMPARE(track.midiEvents()[0].offsetSample(), int64_t(0));
 }
 
 void MainWindowTest::pianoRollMiddleDragPans() {

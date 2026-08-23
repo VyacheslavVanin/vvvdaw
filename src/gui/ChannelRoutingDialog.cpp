@@ -126,7 +126,13 @@ void ChannelRoutingDialog::createBusesForChannels() {
         bus.setVolume(1.0f);
         bus.setPan(0.0f);
         bus.setOutputBusIndex(0);
-        int newBusIdx = m_project.addBus(std::move(bus));
+        int newBusIdx;
+        {
+            // The audio thread iterates proj->buses() under a shared lock;
+            // hold the write lock while inserting a bus.
+            auto lock = m_project.writeLock();
+            newBusIdx = m_project.addBus(std::move(bus));
+        }
         m_createdBusIndices.push_back(newBusIdx);
 
         if (auto* busCombo = qobject_cast<QComboBox*>(m_table->cellWidget(c, 1))) {
@@ -155,8 +161,10 @@ void ChannelRoutingDialog::accept() {
 void ChannelRoutingDialog::reject() {
     // Undo any buses created while the dialog was open. They are always the
     // highest-index buses, so removing them in reverse order is index-stable.
-    for (int i = static_cast<int>(m_createdBusIndices.size()) - 1; i >= 0; --i)
+    for (int i = static_cast<int>(m_createdBusIndices.size()) - 1; i >= 0; --i) {
+        auto lock = m_project.writeLock();
         m_project.removeBus(m_createdBusIndices[i]);
+    }
     m_createdBusIndices.clear();
     QDialog::reject();
 }

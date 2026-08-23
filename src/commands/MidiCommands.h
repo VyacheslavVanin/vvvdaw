@@ -56,6 +56,7 @@ private:
 class TrimMidiEventCommand : public UndoCommand {
 public:
     TrimMidiEventCommand(Project& project, int trackIndex, int64_t eventId,
+                         int64_t oldStart, int64_t newStart,
                          int64_t oldOffset, int64_t oldDuration,
                          int64_t newOffset, int64_t newDuration);
     void execute() override;
@@ -67,6 +68,7 @@ private:
     Project& m_project;
     int m_trackIndex;
     int64_t m_eventId;
+    int64_t m_oldStart, m_newStart;
     int64_t m_oldOffset, m_oldDuration;
     int64_t m_newOffset, m_newDuration;
 };

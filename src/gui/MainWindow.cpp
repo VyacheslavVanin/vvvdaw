@@ -802,7 +802,13 @@ void MainWindow::setupTimer() {
 }
 
 void MainWindow::executeCommand(std::unique_ptr<UndoCommand> cmd) {
-    m_undoStack.execute(std::move(cmd));
+    {
+        // The audio thread reads the project under a shared lock; hold the
+        // write lock so a command that destroys tracks/buses/plugin chains
+        // cannot race a running callback.
+        auto lock = m_project.writeLock();
+        m_undoStack.execute(std::move(cmd));
+    }
     rebuildTracks();
     refreshBusCombos();
     resyncPianoRollWindows();
@@ -819,7 +825,12 @@ void MainWindow::performUndo() {
     auto* cmd = m_undoStack.topCommand();
     if (!cmd || cmd->requiresPluginWindowsClose())
         closeAllPluginWindows();
-    if (m_undoStack.undo()) {
+    bool done = false;
+    {
+        auto lock = m_project.writeLock();
+        done = m_undoStack.undo();
+    }
+    if (done) {
         rebuildTracks();
         refreshBusCombos();
         resyncPianoRollWindows();
@@ -835,7 +846,12 @@ void MainWindow::performRedo() {
     auto* cmd = m_undoStack.topCommand();
     if (!cmd || cmd->requiresPluginWindowsClose())
         closeAllPluginWindows();
-    if (m_undoStack.redo()) {
+    bool done = false;
+    {
+        auto lock = m_project.writeLock();
+        done = m_undoStack.redo();
+    }
+    if (done) {
         rebuildTracks();
         refreshBusCombos();
         resyncPianoRollWindows();
@@ -1221,18 +1237,23 @@ bool MainWindow::moveEventToTrack(int srcIdx, int dstIdx, int64_t eventId, int64
     if (src.type() != dst.type())
         return false;
 
-    if (src.type() == Track::Type::Midi) {
-        MidiEvent* ev = src.findMidiEvent(eventId);
-        if (!ev) return false;
-        ev->setStartSample(newStartSample);
-        dst.importMidiEvent(*ev);
-        src.removeMidiEvent(eventId);
-    } else {
-        AudioEvent* ev = src.findEvent(eventId);
-        if (!ev) return false;
-        ev->setStartSample(newStartSample);
-        dst.importEvent(*ev);
-        src.removeEvent(eventId);
+    {
+        // The move removes from and adds to the event vectors the audio thread
+        // iterates; hold the write lock for the mutation.
+        auto lock = m_project.writeLock();
+        if (src.type() == Track::Type::Midi) {
+            MidiEvent* ev = src.findMidiEvent(eventId);
+            if (!ev) return false;
+            ev->setStartSample(newStartSample);
+            dst.importMidiEvent(*ev);
+            src.removeMidiEvent(eventId);
+        } else {
+            AudioEvent* ev = src.findEvent(eventId);
+            if (!ev) return false;
+            ev->setStartSample(newStartSample);
+            dst.importEvent(*ev);
+            src.removeEvent(eventId);
+        }
     }
 
     m_trackRows[srcIdx].view->updateFromTrack();
@@ -1295,7 +1316,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
         row.pluginList->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
         row.pluginList->rebuild();
 
-        row.view = new TrackViewWidget(&track, m_trackContainer);
+        row.view = new TrackViewWidget(&track, &m_project, m_trackContainer);
         row.view->setAlternateRow(odd);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
@@ -1448,6 +1469,9 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
         });
 
         connect(row.view, &TrackViewWidget::eventDragStarted, this, [this] {
+            // Pushed only for Ctrl/Shift-drag duplicates; plain moves and
+            // cross-track moves are recorded by MoveEventCommand /
+            // MoveEventToTrackCommand at drag release.
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
@@ -1459,8 +1483,20 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
                 m_project, idx, eventId, cutSample, snapToGrid, snapUnit));
         });
 
-        connect(row.view, &TrackViewWidget::eventEdgeTrimStarted, this, [this] {
-            pushCommand(std::make_unique<SnapshotCommand>(m_project));
+        connect(row.view, &TrackViewWidget::eventTrimFinished, this,
+                [this, idx = trackIndex](int64_t eventId,
+                                         int64_t oldStart, int64_t newStart,
+                                         int64_t oldOffset, int64_t newOffset,
+                                         int64_t oldDuration, int64_t newDuration) {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
+            if (m_project.tracks()[idx].type() == Track::Type::Midi)
+                pushCommand(std::make_unique<TrimMidiEventCommand>(
+                    m_project, idx, eventId, oldStart, newStart,
+                    oldOffset, oldDuration, newOffset, newDuration));
+            else
+                pushCommand(std::make_unique<TrimEventCommand>(
+                    m_project, idx, eventId, oldStart, newStart,
+                    oldOffset, oldDuration, newOffset, newDuration));
         });
 
         connect(row.view, &TrackViewWidget::takeSwitchStarted, this, [this] {
@@ -1522,18 +1558,36 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 
         connect(row.view, &TrackViewWidget::eventDragFinished, this,
                 [this, srcIdx = static_cast<int>(&track - m_project.tracks().data())]
-                (int64_t eventId, int64_t newStartSample, QPoint globalPos) {
+                (int64_t eventId, int64_t oldStart, int64_t newStart,
+                 QPoint globalPos, bool wasDuplicate) {
             for (auto& r : m_trackRows) {
                 r.view->clearDragPreview();
                 r.view->setDragSourceVisible(true);
             }
 
             QWidget* widget = QApplication::widgetAt(globalPos);
+            int dstTrack = -1;
             for (size_t t = 0; t < m_trackRows.size(); ++t) {
                 if (m_trackRows[t].view == widget && static_cast<int>(t) != srcIdx) {
-                    moveEventToTrack(srcIdx, static_cast<int>(t), eventId, newStartSample);
+                    dstTrack = static_cast<int>(t);
                     break;
                 }
+            }
+
+            if (dstTrack >= 0) {
+                moveEventToTrack(srcIdx, dstTrack, eventId, newStart);
+                // Duplicates are already covered by the snapshot pushed at
+                // drag start; only record the plain relocation.
+                if (!wasDuplicate)
+                    pushCommand(std::make_unique<MoveEventToTrackCommand>(
+                        m_project, srcIdx, dstTrack, eventId, oldStart, newStart));
+            } else if (!wasDuplicate) {
+                if (m_project.tracks()[srcIdx].type() == Track::Type::Midi)
+                    pushCommand(std::make_unique<MoveMidiEventCommand>(
+                        m_project, srcIdx, eventId, oldStart, newStart));
+                else
+                    pushCommand(std::make_unique<MoveEventCommand>(
+                        m_project, srcIdx, eventId, oldStart, newStart));
             }
         });
 

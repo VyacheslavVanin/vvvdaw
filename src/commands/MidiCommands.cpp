@@ -107,15 +107,18 @@ bool MoveMidiEventCommand::mergeWith(const UndoCommand* other) {
 // --- TrimMidiEventCommand ---
 
 TrimMidiEventCommand::TrimMidiEventCommand(Project& project, int trackIndex, int64_t eventId,
+                                           int64_t oldStart, int64_t newStart,
                                            int64_t oldOffset, int64_t oldDuration,
                                            int64_t newOffset, int64_t newDuration)
     : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
+      m_oldStart(oldStart), m_newStart(newStart),
       m_oldOffset(oldOffset), m_oldDuration(oldDuration),
       m_newOffset(newOffset), m_newDuration(newDuration) {}
 
 void TrimMidiEventCommand::execute() {
     MidiEvent* ev = findMidiEvent(m_project, m_trackIndex, m_eventId);
     if (ev) {
+        ev->setStartSample(m_newStart);
         ev->setOffsetSample(m_newOffset);
         ev->setDurationSample(m_newDuration);
     }
@@ -124,6 +127,7 @@ void TrimMidiEventCommand::execute() {
 void TrimMidiEventCommand::undo() {
     MidiEvent* ev = findMidiEvent(m_project, m_trackIndex, m_eventId);
     if (ev) {
+        ev->setStartSample(m_oldStart);
         ev->setOffsetSample(m_oldOffset);
         ev->setDurationSample(m_oldDuration);
     }
@@ -132,6 +136,7 @@ void TrimMidiEventCommand::undo() {
 bool TrimMidiEventCommand::mergeWith(const UndoCommand* other) {
     auto* cmd = static_cast<const TrimMidiEventCommand*>(other);
     if (m_trackIndex != cmd->m_trackIndex || m_eventId != cmd->m_eventId) return false;
+    m_newStart = cmd->m_newStart;
     m_newOffset = cmd->m_newOffset;
     m_newDuration = cmd->m_newDuration;
     return true;

@@ -2,6 +2,7 @@
 #include "core/TimeUtils.h"
 #include "WaveformPainter.h"
 #include "model/Track.h"
+#include "model/Project.h"
 #include "model/AudioClip.h"
 #include <QPainter>
 #include <QPaintEvent>
@@ -14,9 +15,10 @@
 #include <cstdlib>
 #include <cmath>
 
-TrackViewWidget::TrackViewWidget(Track* track, QWidget* parent)
+TrackViewWidget::TrackViewWidget(Track* track, Project* project, QWidget* parent)
     : QWidget(parent)
     , m_track(track)
+    , m_project(project)
 {
     setMinimumHeight(60);
     setMouseTracking(true);
@@ -571,7 +573,6 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
                 m_edgeDragStartSample = eventStart(idx);
                 m_edgeDragStartMouseSample = sampleAtX(static_cast<int>(event->position().x()));
                 setCursor(Qt::SizeHorCursor);
-                emit eventEdgeTrimStarted();
                 update();
                 return;
             }
@@ -581,8 +582,11 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             bool ctrlDrag = (event->modifiers() & Qt::ControlModifier);
             bool shiftDrag = (event->modifiers() & Qt::ShiftModifier);
             bool duplicate = ctrlDrag || (isMidiMode() && shiftDrag);
+            m_dragWasDuplicate = duplicate;
             if (duplicate) {
                 emit eventDragStarted();
+                auto lock = m_project ? m_project->writeLock()
+                                      : std::unique_lock<std::shared_mutex>();
                 if (isMidiMode()) {
                     MidiEvent copy = shiftDrag ? m_track->midiEvents()[idx].cloneDeep()
                                                : m_track->midiEvents()[idx];
@@ -604,9 +608,6 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             m_dragStartSample = eventStart(m_selectedEventIndex);
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
-
-            if (!duplicate)
-                emit eventDragStarted();
         } else {
             m_selectedEventIndex = -1;
         }
@@ -740,11 +741,17 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
     if (event->button() == Qt::LeftButton) {
         if (m_edgeDrag != EdgeDrag::None) {
+            int idx = m_edgeDragEventIndex;
             m_edgeDrag = EdgeDrag::None;
             m_edgeDragEventIndex = -1;
             unsetCursor();
-            if (m_track && m_selectedEventIndex >= 0 && m_selectedEventIndex < eventCount())
-                emit eventsChanged();
+            if (m_track && idx >= 0 && idx < eventCount()) {
+                int64_t id = eventIdAt(idx);
+                emit eventTrimFinished(id,
+                    m_edgeDragStartSample, eventStart(idx),
+                    m_edgeDragStartOffset, eventOffset(idx),
+                    m_edgeDragStartDuration, eventDuration(idx));
+            }
             update();
             return;
         }
@@ -756,9 +763,12 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
                 int64_t id = eventIdAt(m_dragEventIndex);
                 int64_t start = eventStart(m_dragEventIndex);
                 emit eventMoved(id, start);
-                emit eventDragFinished(id, start, event->globalPosition().toPoint());
+                emit eventDragFinished(id, m_dragStartSample, start,
+                                       event->globalPosition().toPoint(),
+                                       m_dragWasDuplicate);
             }
             m_dragEventIndex = -1;
+            m_dragWasDuplicate = false;
             update();
         }
     }
@@ -798,6 +808,8 @@ void TrackViewWidget::deleteSelectedEvent() {
     if (!m_track || m_selectedEventIndex < 0 || m_selectedEventIndex >= eventCount())
         return;
 
+    auto lock = m_project ? m_project->writeLock()
+                          : std::unique_lock<std::shared_mutex>();
     int64_t id = eventIdAt(m_selectedEventIndex);
     if (isMidiMode())
         m_track->removeMidiEvent(id);
@@ -995,6 +1007,8 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     connect(duplicateAction, &QAction::triggered, this, [this, idx] {
         if (!m_track || idx < 0 || idx >= eventCount()) return;
         emit takeSwitchStarted();
+        auto lock = m_project ? m_project->writeLock()
+                              : std::unique_lock<std::shared_mutex>();
         if (isMidiMode()) {
             MidiEvent copy = m_track->midiEvents()[idx];
             copy.setStartSample(copy.startSample() +
