@@ -43,6 +43,21 @@ function exceeds `VVDRAW_COMPLEXITY_MAX` (default 40). New or modified code
 should not introduce functions above the warn threshold; when a function grows
 past ~10 branches, extract helpers instead of adding more nesting.
 
+Prefer **early returns** (guard clauses): invert the guard condition and
+`return`/`continue` at the top instead of wrapping the rest of the body in a
+nested `if`. This keeps bodies flat and readable. Example:
+
+    // instead of
+    if (valid) {
+        // ... long body ...
+    }
+    // prefer
+    if (!valid) return;
+    // ... long body ...
+
+Early returns are a pure structural change — keep the exact same conditions and
+never reorder realtime audio operations.
+
 Notes:
 - `test_gui_*` and `test_lv2` need `QT_QPA_PLATFORM=offscreen`; CTest already
   sets it via ENVIRONMENT, so prefer `ctest` over running binaries directly.
