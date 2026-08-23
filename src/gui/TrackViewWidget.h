@@ -83,8 +83,16 @@ private:
     int eventAtX(int x, int& eventIndex);
     EdgeDrag edgeAtX(int x, int eventIndex) const;
     void renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
-                        size_t offsetFrame, size_t visibleFrames,
-                        int x, int y, int w, int h);
+                         int64_t eventStartSample, int64_t eventDuration,
+                         size_t offsetFrame, size_t sourceFrames,
+                         int y, int h);
+    QImage renderAudioWindow(const std::shared_ptr<AudioClip>& clip,
+                             size_t clipFrom, size_t clipTo,
+                             int width, int height, double dpr, double pps,
+                             const QColor& color);
+    bool decodeStreamWindow(const std::shared_ptr<AudioClip>& clip,
+                            size_t from, size_t to,
+                            size_t& winStart, std::vector<float>& samples);
     void renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
                            int64_t offsetSample, int64_t durationSample,
                            int x, int y, int w, int h);
@@ -126,14 +134,29 @@ private:
         int64_t visibleFrames = -1;
         int width = -1;
         int height = -1;
+        double devicePixelRatio = -1;
     };
     RecordingWaveCache m_recordingWaveCache;
 
     struct ClipCache {
         QImage thumbnail;
-        int64_t frameCount = 0;
+        int64_t clipOffset = -1;
+        int64_t visibleFrames = -1;
+        int width = -1;
+        int height = -1;
+        double devicePixelRatio = -1;
+        double pixelsPerSample = -1;
     };
     QMap<std::shared_ptr<AudioClip>, ClipCache> m_thumbnailCache;
+
+    // Decoded visible window of a streaming clip (block-aligned, reused while
+    // the view stays within the same block).
+    struct DecodeCache {
+        size_t startFrame = 0;
+        size_t frameCount = 0;
+        std::vector<float> samples;
+    };
+    QMap<std::shared_ptr<AudioClip>, DecodeCache> m_decodeCache;
 
     struct MidiThumbCache {
         QImage image;

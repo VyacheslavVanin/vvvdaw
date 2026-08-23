@@ -76,52 +76,130 @@ bool AudioClip::saveToFile(const QString& filePath, int sampleRate) const {
     return true;
 }
 
-namespace {
+bool AudioClip::readFrames(size_t startFrame, size_t frameCount,
+                           std::vector<float>& out) const {
+    out.clear();
+    if (m_frameCount == 0 || m_channels == 0 || frameCount == 0)
+        return false;
+    if (startFrame >= m_frameCount)
+        return false;
 
-// Number of peak slots for a given frame count.
-size_t peakSlotCount(size_t frames) {
-    return (frames + AudioClip::PEAK_STEP_FRAMES - 1) / AudioClip::PEAK_STEP_FRAMES;
+    size_t count = std::min(frameCount, m_frameCount - startFrame);
+
+    if (!m_streaming) {
+        out.resize(count * m_channels);
+        std::memcpy(out.data(),
+                    m_samples.data() + startFrame * m_channels,
+                    count * m_channels * sizeof(float));
+        return true;
+    }
+
+    SF_INFO info;
+    std::memset(&info, 0, sizeof(info));
+    SNDFILE* file = sf_open(m_filePath.toUtf8().constData(), SFM_READ, &info);
+    if (!file) {
+        qWarning() << "Failed to open audio file for reading:" << m_filePath
+                   << sf_strerror(nullptr);
+        return false;
+    }
+
+    out.resize(count * m_channels);
+    sf_seek(file, static_cast<sf_count_t>(startFrame), SEEK_SET);
+    sf_count_t read = sf_readf_float(file, out.data(), static_cast<sf_count_t>(count));
+    sf_close(file);
+
+    if (read <= 0) {
+        out.clear();
+        return false;
+    }
+    if (static_cast<size_t>(read) < count)
+        out.resize(static_cast<size_t>(read) * m_channels);
+    return true;
 }
 
-// Peak absolute value of the first channel across `frames` interleaved frames.
-float peakOfChannel(const float* data, size_t frames, int channels) {
-    float maxAbs = 0.0f;
+namespace {
+
+// Number of peak slots for a given frame count and step.
+size_t peakSlotCount(size_t frames, size_t step) {
+    return (frames + step - 1) / step;
+}
+
+// Peak (signed min/max of the first channel) across `frames` interleaved frames.
+AudioClip::Peak peakOfChannel(const float* data, size_t frames, int channels) {
+    float min = 0.0f;
+    float max = 0.0f;
+    bool first = true;
     for (size_t i = 0; i < frames; ++i) {
-        float s = std::abs(data[i * channels]);
-        if (s > maxAbs) maxAbs = s;
+        float s = data[i * channels];
+        if (first) {
+            min = max = s;
+            first = false;
+        } else {
+            if (s < min) min = s;
+            if (s > max) max = s;
+        }
     }
-    return maxAbs;
+    return {min, max};
+}
+
+// Build the coarse peak level by folding groups of fine peaks.
+std::vector<AudioClip::Peak> coarseFromFine(const std::vector<AudioClip::Peak>& fine) {
+    std::vector<AudioClip::Peak> coarse;
+    const size_t per = AudioClip::PEAK_STEP_FRAMES / AudioClip::FINE_PEAK_STEP_FRAMES;
+    coarse.reserve(fine.size() / per + 1);
+    AudioClip::Peak acc{0.0f, 0.0f};
+    size_t n = 0;
+    for (const auto& p : fine) {
+        if (n == 0) {
+            acc = p;
+        } else {
+            if (p.min < acc.min) acc.min = p.min;
+            if (p.max > acc.max) acc.max = p.max;
+        }
+        if (++n >= per) {
+            coarse.push_back(acc);
+            acc = {0.0f, 0.0f};
+            n = 0;
+        }
+    }
+    if (n > 0) coarse.push_back(acc);
+    return coarse;
 }
 
 } // namespace
 
 void AudioClip::computePeaks() {
     m_peaks.clear();
+    m_finePeaks.clear();
     if (m_frameCount == 0 || m_channels == 0) return;
 
-    m_peaks.reserve(peakSlotCount(m_frameCount));
+    m_finePeaks.reserve(peakSlotCount(m_frameCount, FINE_PEAK_STEP_FRAMES));
 
-    for (size_t f = 0; f < m_frameCount; f += PEAK_STEP_FRAMES) {
-        size_t end = std::min(f + PEAK_STEP_FRAMES, m_frameCount);
-        m_peaks.push_back({peakOfChannel(m_samples.data() + f * m_channels,
-                                         end - f, m_channels)});
+    for (size_t f = 0; f < m_frameCount; f += FINE_PEAK_STEP_FRAMES) {
+        size_t end = std::min(f + FINE_PEAK_STEP_FRAMES, m_frameCount);
+        m_finePeaks.push_back(peakOfChannel(m_samples.data() + f * m_channels,
+                                            end - f, m_channels));
     }
+    m_peaks = coarseFromFine(m_finePeaks);
 }
 
 void AudioClip::computePeaksFromFile(SNDFILE* file, const SF_INFO& info) {
     m_peaks.clear();
+    m_finePeaks.clear();
     if (info.frames == 0 || info.channels == 0) return;
 
-    m_peaks.reserve(peakSlotCount(static_cast<size_t>(info.frames)));
+    m_finePeaks.reserve(peakSlotCount(static_cast<size_t>(info.frames),
+                                      FINE_PEAK_STEP_FRAMES));
 
-    std::vector<float> buf(static_cast<size_t>(PEAK_STEP_FRAMES) * info.channels);
+    std::vector<float> buf(static_cast<size_t>(FINE_PEAK_STEP_FRAMES) * info.channels);
 
-    for (sf_count_t f = 0; f < info.frames; f += PEAK_STEP_FRAMES) {
-        sf_count_t toRead = std::min<sf_count_t>(PEAK_STEP_FRAMES, info.frames - f);
+    for (sf_count_t f = 0; f < info.frames; f += FINE_PEAK_STEP_FRAMES) {
+        sf_count_t toRead = std::min<sf_count_t>(FINE_PEAK_STEP_FRAMES, info.frames - f);
         sf_count_t read = sf_readf_float(file, buf.data(), toRead);
-        m_peaks.push_back({peakOfChannel(buf.data(), static_cast<size_t>(read),
-                                         info.channels)});
+        m_finePeaks.push_back(peakOfChannel(buf.data(), static_cast<size_t>(read),
+                                            info.channels));
     }
+    m_peaks = coarseFromFine(m_finePeaks);
 }
 
 double AudioClip::durationSeconds() const {

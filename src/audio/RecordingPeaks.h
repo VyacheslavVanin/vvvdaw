@@ -8,23 +8,29 @@
 #include "model/AudioClip.h"
 
 // Live waveform peaks for a recording in progress. The writer thread appends
-// one max-abs peak per `AudioClip::PEAK_STEP_FRAMES` window while it flushes
-// captured audio to disk; the GUI thread reads a snapshot for the growing
-// recording preview. Safe for a single writer + single reader.
+// one min/max peak per `AudioClip::FINE_PEAK_STEP_FRAMES` window while it
+// flushes captured audio to disk; the GUI thread reads a snapshot for the
+// growing recording preview. Safe for a single writer + single reader.
 class RecordingPeaks {
 public:
     void addSamples(const float* samples, size_t frames, int channels) {
         if (!samples || frames == 0 || channels <= 0)
             return;
         std::lock_guard<std::mutex> lock(m_mutex);
-        const size_t step = AudioClip::PEAK_STEP_FRAMES;
+        const size_t step = AudioClip::FINE_PEAK_STEP_FRAMES;
         for (size_t f = 0; f < frames; ++f) {
-            float v = std::abs(samples[f * channels]);
-            if (v > m_slotPeak)
-                m_slotPeak = v;
+            float v = samples[f * channels];
+            if (m_slotFrames == 0) {
+                m_slotMin = v;
+                m_slotMax = v;
+            } else {
+                if (v < m_slotMin) m_slotMin = v;
+                if (v > m_slotMax) m_slotMax = v;
+            }
             if (++m_slotFrames >= step) {
-                m_peaks.push_back({m_slotPeak});
-                m_slotPeak = 0.0f;
+                m_peaks.push_back({m_slotMin, m_slotMax});
+                m_slotMin = 0.0f;
+                m_slotMax = 0.0f;
                 m_slotFrames = 0;
             }
         }
@@ -35,8 +41,9 @@ public:
     void flush() {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_slotFrames > 0) {
-            m_peaks.push_back({m_slotPeak});
-            m_slotPeak = 0.0f;
+            m_peaks.push_back({m_slotMin, m_slotMax});
+            m_slotMin = 0.0f;
+            m_slotMax = 0.0f;
             m_slotFrames = 0;
         }
     }
@@ -51,12 +58,13 @@ public:
         return m_recordedFrames;
     }
 
-    size_t framesPerPeak() const { return AudioClip::PEAK_STEP_FRAMES; }
+    size_t framesPerPeak() const { return AudioClip::FINE_PEAK_STEP_FRAMES; }
 
 private:
     mutable std::mutex m_mutex;
     std::vector<AudioClip::Peak> m_peaks;
-    float m_slotPeak = 0.0f;
+    float m_slotMin = 0.0f;
+    float m_slotMax = 0.0f;
     size_t m_slotFrames = 0;
     int64_t m_recordedFrames = 0;
 };

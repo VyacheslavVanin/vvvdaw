@@ -67,6 +67,7 @@ void TrackViewWidget::setZoom(double pixelsPerSample) {
 void TrackViewWidget::updateFromTrack() {
     m_thumbnailCache.clear();
     m_midiThumbCache.clear();
+    m_decodeCache.clear();
     update();
 }
 
@@ -174,8 +175,8 @@ TrackViewWidget::EdgeDrag TrackViewWidget::edgeAtX(int x, int eventIndex) const 
     if (!m_track || eventIndex < 0 || eventIndex >= eventCount())
         return EdgeDrag::None;
 
-    int ex = static_cast<int>((eventStart(eventIndex) - m_scrollOffset) * m_pixelsPerSample);
-    int ew = static_cast<int>(eventDuration(eventIndex) * m_pixelsPerSample);
+    int64_t ex = static_cast<int64_t>((eventStart(eventIndex) - m_scrollOffset) * m_pixelsPerSample);
+    int64_t ew = static_cast<int64_t>(eventDuration(eventIndex) * m_pixelsPerSample);
 
     if (ew < EdgeHandleWidth * 2) {
         if (x >= ex && x < ex + ew)
@@ -244,9 +245,15 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             if (!ev.clip() || !ev.clip()->isValid()) continue;
         }
 
-        int x = static_cast<int>((eventStart(i) - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(eventDuration(i) * m_pixelsPerSample);
-        if (x + w < 0 || x > width()) continue;
+        // Pixel math in int64: at deep zoom a long clip can exceed int range.
+        int64_t x64 = static_cast<int64_t>(
+            (eventStart(i) - m_scrollOffset) * m_pixelsPerSample);
+        int64_t w64 = static_cast<int64_t>(eventDuration(i) * m_pixelsPerSample);
+        if (x64 + w64 < 0 || x64 > width()) continue;
+        int x = static_cast<int>(std::clamp<int64_t>(x64, -2000000000LL, 2000000000LL));
+        // The waveform itself is clipped to the visible window; the event rect
+        // only needs to cover the viewport.
+        int w = static_cast<int>(std::min<int64_t>(w64, 2LL * width() + 2000));
 
         QRect eventRect(x, 2, w, trackHeight - 4);
 
@@ -276,8 +283,10 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             int th = eventRect.height() - 2;
             auto& ev = m_track->events()[i];
             renderThumbnail(painter, ev.clip(),
-                            ev.offsetSample(), ev.sourceFrames(),
-                            eventRect.x() + 1, eventRect.y() + 1, w, th);
+                            ev.startSample(), ev.durationSample(),
+                            static_cast<size_t>(ev.offsetSample()),
+                            static_cast<size_t>(ev.sourceFrames()),
+                            eventRect.y() + 1, th);
         }
 
         // Edge handles
@@ -333,9 +342,13 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         }
     } else if (m_dragPreview.audioEvent && m_dragPreview.audioEvent->clip()
                && m_dragPreview.audioEvent->clip()->isValid()) {
-        int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(m_dragPreview.audioEvent->durationSample() * m_pixelsPerSample);
-        if (x + w >= 0 && x <= width()) {
+        int64_t x64 = static_cast<int64_t>(
+            (m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
+        int64_t w64 = static_cast<int64_t>(
+            m_dragPreview.audioEvent->durationSample() * m_pixelsPerSample);
+        if (x64 + w64 >= 0 && x64 <= width()) {
+            int x = static_cast<int>(std::clamp<int64_t>(x64, -2000000000LL, 2000000000LL));
+            int w = static_cast<int>(std::min<int64_t>(w64, 2LL * width() + 2000));
             QRect eventRect(x, 2, w, trackHeight - 4);
 
             painter.setPen(QPen(QColor("#ffcc00"), 2));
@@ -346,8 +359,11 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                 auto clip = m_dragPreview.audioEvent->clip();
                 int th = eventRect.height() - 2;
                 renderThumbnail(painter, clip,
-                                m_dragPreview.audioEvent->offsetSample(), m_dragPreview.audioEvent->sourceFrames(),
-                                eventRect.x() + 1, eventRect.y() + 1, w, th);
+                                m_dragPreview.startSample,
+                                m_dragPreview.audioEvent->durationSample(),
+                                static_cast<size_t>(m_dragPreview.audioEvent->offsetSample()),
+                                static_cast<size_t>(m_dragPreview.audioEvent->sourceFrames()),
+                                eventRect.y() + 1, th);
             }
 
             painter.setPen(QPen(QColor("#ffcc00"), 1));
@@ -391,23 +407,26 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                             std::llround(static_cast<double>(wr - wl) * m_pixelsPerSample)));
                         const int imgX = static_cast<int>(std::llround(
                             static_cast<double>(recStart + wl - m_scrollOffset) * m_pixelsPerSample));
+                        const double dpr = devicePixelRatio();
                         auto& cache = m_recordingWaveCache;
                         if (cache.image.isNull()
                             || cache.peakCount != static_cast<int64_t>(m_recordingPeaks.size())
                             || cache.offsetFrame != wl
                             || cache.visibleFrames != (wr - wl)
-                            || cache.width != iw || cache.height != ih) {
+                            || cache.width != iw || cache.height != ih
+                            || cache.devicePixelRatio != dpr) {
                             cache.image = WaveformPainter::renderFromPeaks(
                                 m_recordingPeaks.data(), m_recordingPeaks.size(),
                                 static_cast<size_t>(m_recordingFramesPerPeak),
                                 static_cast<size_t>(recFrames),
                                 static_cast<size_t>(wl), static_cast<size_t>(wr - wl),
-                                iw, ih, WaveformPainter::recordingColor());
+                                iw, ih, dpr, WaveformPainter::recordingColor());
                             cache.peakCount = static_cast<int64_t>(m_recordingPeaks.size());
                             cache.offsetFrame = wl;
                             cache.visibleFrames = wr - wl;
                             cache.width = iw;
                             cache.height = ih;
+                            cache.devicePixelRatio = dpr;
                         }
                         if (!cache.image.isNull())
                             painter.drawImage(imgX, 3, cache.image);
@@ -768,42 +787,160 @@ void TrackViewWidget::deleteSelectedEvent() {
     m_selectedEventIndex = -1;
     m_thumbnailCache.clear();
     m_midiThumbCache.clear();
+    m_decodeCache.clear();
     update();
     emit eventsChanged();
 }
 
 void TrackViewWidget::renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
-                                       size_t offsetFrame, size_t visibleFrames,
-                                       int x, int y, int w, int h) {
-    bool isFullClip = (offsetFrame == 0 && visibleFrames == clip->frameCount());
+                                       int64_t eventStartSample, int64_t eventDuration,
+                                       size_t offsetFrame, size_t sourceFrames,
+                                       int y, int h) {
+    if (!clip || !clip->isValid() || h <= 0)
+        return;
 
-    if (isFullClip) {
-        auto& cache = m_thumbnailCache[clip];
-        if (cache.thumbnail.isNull() || cache.thumbnail.width() != w ||
-            cache.frameCount != clip->frameCount()) {
-            if (!clip->peaks().empty()) {
-                cache.thumbnail = WaveformPainter::renderFromPeaks(
-                    clip->peaks().data(), clip->peaks().size(),
-                    clip->peaksPerFrame(), clip->frameCount(),
-                    w, h);
-            } else {
-                cache.thumbnail = QImage();
-            }
-            cache.frameCount = clip->frameCount();
-        }
-        if (!cache.thumbnail.isNull())
-            painter.drawImage(x, y, cache.thumbnail);
-    } else {
-        if (!clip->peaks().empty()) {
-            QImage thumb = WaveformPainter::renderFromPeaks(
-                clip->peaks().data(), clip->peaks().size(),
-                clip->peaksPerFrame(), clip->frameCount(),
-                offsetFrame, visibleFrames,
-                w, h);
-            if (!thumb.isNull())
-                painter.drawImage(x, y, thumb);
-        }
+    // Only the viewport-visible part of the event is rasterized: at deep zoom
+    // rendering the whole event would create enormous images for no benefit.
+    const double pps = m_pixelsPerSample;
+    const int64_t evFrom = eventStartSample;
+    const int64_t evTo = eventStartSample + eventDuration;
+    const int64_t viewFrom = m_scrollOffset;
+    const int64_t viewTo = m_scrollOffset
+        + static_cast<int64_t>(std::ceil(static_cast<double>(width()) / pps));
+
+    int64_t tlFrom = std::max(evFrom, viewFrom);
+    int64_t tlTo = std::min(evTo, viewTo);
+    if (tlTo <= tlFrom) return;
+
+    size_t clipFrom = static_cast<size_t>(tlFrom - evFrom) + offsetFrame;
+    size_t clipTo = static_cast<size_t>(tlTo - evFrom) + offsetFrame;
+    const size_t srcEnd = offsetFrame + sourceFrames;
+    if (clipFrom < offsetFrame) clipFrom = offsetFrame;
+    if (clipTo > srcEnd) clipTo = srcEnd;
+    if (clipTo <= clipFrom) return;
+
+    clipFrom = std::min<size_t>(clipFrom, clip->frameCount());
+    clipTo = std::min<size_t>(clipTo, clip->frameCount());
+    if (clipTo <= clipFrom) return;
+
+    const int imgX = static_cast<int>((tlFrom - m_scrollOffset) * pps);
+    const int imgXEnd = static_cast<int>((tlTo - m_scrollOffset) * pps);
+    int iw = std::max(1, imgXEnd - imgX);
+    if (iw > width()) iw = width();
+
+    const double dpr = devicePixelRatio();
+    const int64_t visible = static_cast<int64_t>(clipTo - clipFrom);
+
+    auto& cache = m_thumbnailCache[clip];
+    if (cache.thumbnail.isNull()
+        || cache.clipOffset != static_cast<int64_t>(clipFrom)
+        || cache.visibleFrames != visible
+        || cache.width != iw || cache.height != h
+        || cache.devicePixelRatio != dpr
+        || cache.pixelsPerSample != pps) {
+        cache.thumbnail = renderAudioWindow(clip, clipFrom, clipTo, iw, h, dpr, pps,
+                                            WaveformPainter::defaultColor());
+        cache.clipOffset = static_cast<int64_t>(clipFrom);
+        cache.visibleFrames = visible;
+        cache.width = iw;
+        cache.height = h;
+        cache.devicePixelRatio = dpr;
+        cache.pixelsPerSample = pps;
+        if (m_thumbnailCache.size() > 128)
+            m_thumbnailCache.clear();
     }
+    if (!cache.thumbnail.isNull())
+        painter.drawImage(imgX, y, cache.thumbnail);
+}
+
+QImage TrackViewWidget::renderAudioWindow(const std::shared_ptr<AudioClip>& clip,
+                                          size_t clipFrom, size_t clipTo,
+                                          int width, int height, double dpr, double pps,
+                                          const QColor& color) {
+    if (!clip || !clip->isValid() || clipTo <= clipFrom || width <= 0 || height <= 0)
+        return QImage();
+
+    const size_t visible = clipTo - clipFrom;
+
+    // Raw sample access (in-memory buffer, or a decoded window for streaming).
+    const float* rawData = nullptr;
+    size_t rawFrameCount = 0;
+    size_t rawOffset = 0;
+    std::vector<float> window;
+    if (pps >= vvvdaw::RawSampleRenderZoom) {
+        if (!clip->isStreaming()) {
+            rawData = clip->data();
+            rawFrameCount = clip->frameCount();
+            rawOffset = clipFrom;
+        } else {
+            size_t winStart = 0;
+            if (!decodeStreamWindow(clip, clipFrom, clipTo, winStart, window))
+                return QImage();
+            size_t ch = static_cast<size_t>(clip->channels());
+            if (ch == 0 || window.empty()) return QImage();
+            rawData = window.data();
+            rawFrameCount = window.size() / ch;
+            rawOffset = clipFrom - winStart;
+        }
+        if (!rawData || rawOffset >= rawFrameCount)
+            return QImage();
+
+        // Deep zoom: every sample drawn as a distinct tick at its exact x.
+        if (pps >= vvvdaw::SampleViewZoom)
+            return WaveformPainter::renderSamplesPerSample(
+                rawData, rawFrameCount, clip->channels(),
+                rawOffset, visible, pps, width, height, dpr, color);
+
+        // Moderate zoom: per-pixel min/max envelope from raw samples.
+        return WaveformPainter::renderSamples(
+            rawData, rawFrameCount, clip->channels(),
+            rawOffset, visible, width, height, dpr, color);
+    }
+
+    // Envelope from peaks: fine level while it stays cheap per pixel, coarse
+    // level for very zoomed-out views.
+    const double fineMaxZoom = 1.0 / (AudioClip::FINE_PEAK_STEP_FRAMES * 8.0);
+    if (pps >= fineMaxZoom && !clip->finePeaks().empty()) {
+        return WaveformPainter::renderFromPeaks(
+            clip->finePeaks().data(), clip->finePeaks().size(),
+            AudioClip::FINE_PEAK_STEP_FRAMES, clip->frameCount(),
+            clipFrom, visible, width, height, dpr, color);
+    }
+    if (clip->peaks().empty())
+        return QImage();
+    return WaveformPainter::renderFromPeaks(
+        clip->peaks().data(), clip->peaks().size(),
+        clip->peaksPerFrame(), clip->frameCount(),
+        clipFrom, visible, width, height, dpr, color);
+}
+
+bool TrackViewWidget::decodeStreamWindow(const std::shared_ptr<AudioClip>& clip,
+                                         size_t from, size_t to,
+                                         size_t& winStart, std::vector<float>& samples) {
+    if (!clip || !clip->isStreaming() || to <= from || to > clip->frameCount())
+        return false;
+
+    // Block-align the decoded window so small scrolls reuse the cache.
+    constexpr size_t kBlockFrames = 4096;
+    winStart = (from / kBlockFrames) * kBlockFrames;
+    size_t winEnd = ((to + kBlockFrames - 1) / kBlockFrames) * kBlockFrames;
+    if (winEnd > clip->frameCount()) winEnd = clip->frameCount();
+    if (winEnd <= winStart) return false;
+
+    auto& cache = m_decodeCache[clip];
+    const size_t ch = static_cast<size_t>(clip->channels());
+    if (cache.startFrame == winStart && cache.frameCount == winEnd - winStart
+        && cache.samples.size() == (winEnd - winStart) * ch) {
+        samples = cache.samples;
+        return true;
+    }
+
+    if (!clip->readFrames(winStart, winEnd - winStart, cache.samples))
+        return false;
+    cache.startFrame = winStart;
+    cache.frameCount = winEnd - winStart;
+    samples = cache.samples;
+    return true;
 }
 
 void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
@@ -853,6 +990,7 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
         m_selectedEventIndex = eventCount() - 1;
         m_thumbnailCache.clear();
         m_midiThumbCache.clear();
+        m_decodeCache.clear();
         update();
         emit eventsChanged();
     });

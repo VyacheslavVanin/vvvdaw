@@ -14,11 +14,20 @@ inline constexpr double MaxPan = 1.0;
 inline constexpr double DefaultPan = 0.0;
 
 // Scroll & zoom
-inline constexpr int ScrollStepSamples = 48;
+inline constexpr int ScrollStepSamples = 8;
 inline constexpr double DefaultZoom = 0.001;
 inline constexpr double MinZoom = 0.000001;
-inline constexpr double MaxZoom = 0.1;
+// Deepest zoom, in pixels per sample: enough to discern individual samples.
+// Tune this constant to control how close you can get to a single sample.
+inline constexpr double SampleViewPixelsPerSample = 4.0;
+inline constexpr double MaxZoom = SampleViewPixelsPerSample;
 inline constexpr double ZoomFactor = 1.15;
+
+// Waveform rendering thresholds (pixels per sample).
+// At/above RawSampleRenderZoom the waveform is drawn sample-by-sample from raw
+// audio instead of from the (coarse/fine) peak envelope.
+inline constexpr double SampleViewZoom = 1.0;
+inline constexpr double RawSampleRenderZoom = 1.0 / 16.0;
 
 // Thread buffer sizes
 inline constexpr int WriterBufferSize = 8192;

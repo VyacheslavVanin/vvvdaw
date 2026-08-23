@@ -430,14 +430,15 @@ void TestAudio::computeBusProcessOrderFanOut() {
 
 void TestAudio::recordingPeaksWindowMax() {
     RecordingPeaks peaks;
-    const size_t step = AudioClip::PEAK_STEP_FRAMES;
+    const size_t step = AudioClip::FINE_PEAK_STEP_FRAMES;
 
     // One full window at a constant amplitude yields a single peak.
     std::vector<float> s(step * 2, 0.5f);
     peaks.addSamples(s.data(), step, 2);
     auto snap = peaks.snapshot();
     QCOMPARE(snap.size(), size_t(1));
-    QVERIFY(std::abs(snap[0].maxAbs - 0.5f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].min - 0.5f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].max - 0.5f) < 1e-6f);
     QCOMPARE(peaks.recordedFrames(), int64_t(step));
 
     // A second window with a lower peak is appended.
@@ -445,13 +446,14 @@ void TestAudio::recordingPeaksWindowMax() {
     peaks.addSamples(s2.data(), step, 2);
     snap = peaks.snapshot();
     QCOMPARE(snap.size(), size_t(2));
-    QVERIFY(std::abs(snap[1].maxAbs - 0.25f) < 1e-6f);
+    QVERIFY(std::abs(snap[1].min - 0.25f) < 1e-6f);
+    QVERIFY(std::abs(snap[1].max - 0.25f) < 1e-6f);
     QCOMPARE(peaks.recordedFrames(), int64_t(step) * 2);
 }
 
 void TestAudio::recordingPeaksChunkBoundaries() {
     RecordingPeaks peaks;
-    const size_t step = AudioClip::PEAK_STEP_FRAMES;
+    const size_t step = AudioClip::FINE_PEAK_STEP_FRAMES;
 
     // Two full windows: the first at 0.8, the second at 0.3.
     std::vector<float> data(step * 2 * 2, 0.0f);
@@ -468,13 +470,14 @@ void TestAudio::recordingPeaksChunkBoundaries() {
 
     auto snap = peaks.snapshot();
     QCOMPARE(snap.size(), size_t(1));
-    QVERIFY(std::abs(snap[0].maxAbs - 0.8f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].min - 0.8f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].max - 0.8f) < 1e-6f);
     QCOMPARE(peaks.recordedFrames(), int64_t(step));
 }
 
 void TestAudio::recordingPeaksFirstChannelOnly() {
     RecordingPeaks peaks;
-    const size_t step = AudioClip::PEAK_STEP_FRAMES;
+    const size_t step = AudioClip::FINE_PEAK_STEP_FRAMES;
 
     // First channel carries the signal, second channel is silent: the peak
     // must reflect only the first channel (matching AudioClip peak behavior).
@@ -485,12 +488,13 @@ void TestAudio::recordingPeaksFirstChannelOnly() {
 
     auto snap = peaks.snapshot();
     QCOMPARE(snap.size(), size_t(1));
-    QVERIFY(std::abs(snap[0].maxAbs - 0.6f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].min - 0.6f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].max - 0.6f) < 1e-6f);
 }
 
 void TestAudio::recordingPeaksFlushPartial() {
     RecordingPeaks peaks;
-    const size_t step = AudioClip::PEAK_STEP_FRAMES;
+    const size_t step = AudioClip::FINE_PEAK_STEP_FRAMES;
 
     // Half a window: nothing in the snapshot until flushed.
     std::vector<float> s(step, 0.7f);
@@ -500,20 +504,21 @@ void TestAudio::recordingPeaksFlushPartial() {
     peaks.flush();
     auto snap = peaks.snapshot();
     QCOMPARE(snap.size(), size_t(1));
-    QVERIFY(std::abs(snap[0].maxAbs - 0.7f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].min - 0.7f) < 1e-6f);
+    QVERIFY(std::abs(snap[0].max - 0.7f) < 1e-6f);
 }
 
 void TestAudio::recordingPeaksSnapshotIsCopy() {
     RecordingPeaks peaks;
-    const size_t step = AudioClip::PEAK_STEP_FRAMES;
+    const size_t step = AudioClip::FINE_PEAK_STEP_FRAMES;
     std::vector<float> s(step * 2, 0.9f);
     peaks.addSamples(s.data(), step, 2);
 
     auto snap = peaks.snapshot();
     QCOMPARE(snap.size(), size_t(1));
-    snap[0].maxAbs = 0.0f; // mutating the copy must not affect the accumulator
+    snap[0].max = 0.0f; // mutating the copy must not affect the accumulator
     auto snap2 = peaks.snapshot();
-    QVERIFY(std::abs(snap2[0].maxAbs - 0.9f) < 1e-6f);
+    QVERIFY(std::abs(snap2[0].max - 0.9f) < 1e-6f);
 }
 
 namespace {
@@ -562,12 +567,14 @@ void TestAudio::recordingManagerCollectsLivePeaks() {
     }
     QVERIFY(drained);
 
-    // One peak per full PEAK_STEP window; a constant 0.5 mono signal gives
-    // 0.5 peaks across the whole capture.
-    const size_t expectedPeaks = frames / AudioClip::PEAK_STEP_FRAMES;
+    // One peak per full FINE_PEAK_STEP window; a constant 0.5 mono signal
+    // gives 0.5 peaks across the whole capture.
+    const size_t expectedPeaks = frames / AudioClip::FINE_PEAK_STEP_FRAMES;
     QCOMPARE(peaks.size(), expectedPeaks);
-    for (const auto& p : peaks)
-        QVERIFY(std::abs(p.maxAbs - 0.5f) < 1e-4f);
+    for (const auto& p : peaks) {
+        QVERIFY(std::abs(p.min - 0.5f) < 1e-4f);
+        QVERIFY(std::abs(p.max - 0.5f) < 1e-4f);
+    }
 
     guard.stopped = true;
     rm.stop(&project);

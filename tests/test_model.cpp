@@ -32,6 +32,9 @@ private slots:
     void midiClipNotes();
     void midiClipSerialization();
     void audioClipFromSamples();
+    void audioClipPeaksSignedMinMax();
+    void audioClipReadFrames();
+    void streamingClipReadFramesFromFile();
     void audioClipFileRoundTrip();
     void projectTimeConversions();
     void projectSnapSample();
@@ -374,11 +377,86 @@ void TestModel::audioClipFromSamples() {
     QCOMPARE(clip.channels(), 1);
     QCOMPARE(clip.sampleRate(), 48000);
     QCOMPARE(clip.peaks().size(), size_t(2)); // 1024 / 512 step
-    QCOMPARE(clip.peaks()[0].maxAbs, 0.5f);
+    QCOMPARE(clip.finePeaks().size(), size_t(64)); // 1024 / 16 step
+    QCOMPARE(clip.peaks()[0].min, 0.5f);
+    QCOMPARE(clip.peaks()[0].max, 0.5f);
 
     AudioClip empty;
     QVERIFY(!empty.isValid());
     QCOMPARE(empty.frameCount(), size_t(0));
+}
+
+void TestModel::audioClipPeaksSignedMinMax() {
+    // A window whose first half is -0.8 and second half +0.3 must produce a
+    // peak with min=-0.8 and max=+0.3 (signed, not absolute).
+    std::vector<float> samples(AudioClip::FINE_PEAK_STEP_FRAMES, 0.0f);
+    const size_t half = AudioClip::FINE_PEAK_STEP_FRAMES / 2;
+    for (size_t i = 0; i < half; ++i)
+        samples[i] = -0.8f;
+    for (size_t i = half; i < AudioClip::FINE_PEAK_STEP_FRAMES; ++i)
+        samples[i] = 0.3f;
+    AudioClip clip(std::move(samples), 48000, 1);
+
+    QCOMPARE(clip.finePeaks().size(), size_t(1));
+    QVERIFY(std::abs(clip.finePeaks()[0].min - (-0.8f)) < 1e-6f);
+    QVERIFY(std::abs(clip.finePeaks()[0].max - 0.3f) < 1e-6f);
+
+    // The coarse level folds 32 fine peaks; here one fine peak is folded.
+    QCOMPARE(clip.peaks().size(), size_t(1));
+    QVERIFY(std::abs(clip.peaks()[0].min - (-0.8f)) < 1e-6f);
+    QVERIFY(std::abs(clip.peaks()[0].max - 0.3f) < 1e-6f);
+}
+
+void TestModel::audioClipReadFrames() {
+    std::vector<float> samples(4096, 0.0f);
+    for (size_t i = 0; i < samples.size(); ++i)
+        samples[i] = static_cast<float>(i % 7) - 3.0f;
+    AudioClip clip(std::move(samples), 48000, 1);
+
+    std::vector<float> out;
+    QVERIFY(clip.readFrames(100, 512, out));
+    QCOMPARE(out.size(), size_t(512));
+    for (size_t i = 0; i < out.size(); ++i)
+        QVERIFY(std::abs(out[i] - (static_cast<float>((100 + i) % 7) - 3.0f)) < 1e-6f);
+
+    // Reading past the end is clamped; beyond the clip returns false.
+    QVERIFY(clip.readFrames(3900, 4096, out));
+    QCOMPARE(out.size(), size_t(4096 - 3900));
+    QVERIFY(!clip.readFrames(4096, 1, out));
+}
+
+void TestModel::streamingClipReadFramesFromFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QString path = dir.path() + "/big.wav";
+
+    // A mono signal where sample i has value f(i), long enough to stream.
+    const size_t frames = 48000 * 2;
+    std::vector<float> samples(frames);
+    for (size_t i = 0; i < frames; ++i)
+        samples[i] = ((i % 11) - 5) * 0.1f;
+    {
+        AudioClip writer(std::move(samples), 48000, 1);
+        QVERIFY(writer.saveToFile(path));
+    }
+
+    const size_t savedThreshold = AudioClip::streamingThresholdFrames();
+    AudioClip::setStreamingThresholdFrames(frames / 2);
+    AudioClip clip(path);
+    AudioClip::setStreamingThresholdFrames(savedThreshold);
+
+    QVERIFY(clip.isValid());
+    QVERIFY(clip.isStreaming());
+    QCOMPARE(clip.frameCount(), frames);
+    QVERIFY(clip.finePeaks().size() > clip.peaks().size());
+
+    std::vector<float> out;
+    QVERIFY(clip.readFrames(48000, 512, out));
+    QCOMPARE(out.size(), size_t(512));
+    for (size_t i = 0; i < out.size(); ++i) {
+        float expected = ((static_cast<size_t>(48000 + i) % 11) - 5) * 0.1f;
+        QVERIFY(std::abs(out[i] - expected) < 1e-6f);
+    }
 }
 
 void TestModel::audioClipFileRoundTrip() {
