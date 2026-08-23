@@ -270,8 +270,21 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     if (!m_track) return;
 
     int trackHeight = height();
+    drawGrid(painter, trackHeight);
+    drawEvents(painter, trackHeight);
 
-    // Grid lines
+    if (!isMidiMode())
+        drawCrossfades(painter);
+
+    drawDragPreview(painter, trackHeight);
+    drawRecordingPreview(painter, trackHeight);
+    drawMuteOverlay(painter);
+    drawPlayhead(painter, trackHeight);
+    drawMouseCursor(painter, trackHeight);
+    drawDragTooltip(painter);
+}
+
+void TrackViewWidget::drawGrid(QPainter& painter, int trackHeight) {
     painter.setPen(QPen(QColor("#3a3a3a"), 1));
     double gridInterval = m_snapUnit;
     if (gridInterval * m_pixelsPerSample < 40) gridInterval *= 4;
@@ -282,7 +295,9 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         int x = static_cast<int>((s - m_scrollOffset) * m_pixelsPerSample);
         painter.drawLine(x, 0, x, trackHeight);
     }
+}
 
+void TrackViewWidget::drawEvents(QPainter& painter, int trackHeight) {
     int n = eventCount();
     for (int i = 0; i < n; ++i) {
         if (!eventHasTakes(i) && !isMidiMode()) {
@@ -360,11 +375,9 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                 QString("T%1/%2").arg(eventActiveTake(i) + 1).arg(eventTakeCount(i)));
         }
     }
+}
 
-    if (!isMidiMode())
-        drawCrossfades(painter);
-
-    // Drag preview on target track
+void TrackViewWidget::drawDragPreview(QPainter& painter, int trackHeight) {
     if (m_dragPreview.midiEvent && m_dragPreview.midiEvent->clip()) {
         int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
         int w = static_cast<int>(m_dragPreview.midiEvent->durationSample() * m_pixelsPerSample);
@@ -419,7 +432,9 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.drawRect(eventRect);
         }
     }
+}
 
+void TrackViewWidget::drawRecordingPreview(QPainter& painter, int trackHeight) {
     // Live audio recording preview: a rectangle growing with the playhead so
     // it is visible that recording is in progress before the event is written.
     if (m_recordingActive && m_track && m_track->isRecordArmed()
@@ -487,13 +502,15 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             }
         }
     }
+}
 
-    // Mute overlay
+void TrackViewWidget::drawMuteOverlay(QPainter& painter) {
     if (m_track->isMuted()) {
         painter.fillRect(rect(), QColor(0, 0, 0, 80));
     }
+}
 
-    // Playhead line
+void TrackViewWidget::drawPlayhead(QPainter& painter, int trackHeight) {
     if (m_playheadPos >= 0) {
         int phx = static_cast<int>((m_playheadPos - m_scrollOffset) * m_pixelsPerSample);
         if (phx >= 0 && phx <= width()) {
@@ -501,13 +518,17 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.drawLine(phx, 0, phx, trackHeight);
         }
     }
+}
 
+void TrackViewWidget::drawMouseCursor(QPainter& painter, int trackHeight) {
     // Thin vertical cursor line at the mouse position
     if (m_mouseX >= 0 && m_mouseX <= width()) {
         painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
         painter.drawLine(m_mouseX, 0, m_mouseX, trackHeight);
     }
+}
 
+void TrackViewWidget::drawDragTooltip(QPainter& painter) {
     // Dragged event tooltip
     if (m_dragging && m_dragEventIndex >= 0) {
         int64_t start = eventStart(m_dragEventIndex);

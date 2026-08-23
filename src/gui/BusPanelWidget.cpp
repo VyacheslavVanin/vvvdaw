@@ -2,6 +2,7 @@
 #include "BusLevelMeter.h"
 #include "BusColorBar.h"
 #include "PanSlider.h"
+#include "GuiStyle.h"
 #include "PluginListWidget.h"
 #include "BusSendsWidget.h"
 #include "audio/AudioEngine.h"
@@ -32,18 +33,6 @@
 namespace {
 
 const char* const kBusDragMime = "application/x-vvvdaw-bus-drag";
-
-// Map a linear volume to the dB-scaled fader position (value 0..100 <-> -60..0 dB).
-int volumeToSlider(float linearVolume) {
-    float db = linearToDecibels(linearVolume);
-    return static_cast<int>(std::lround((db + 60.0f) * 100.0f / 60.0f));
-}
-
-// Map a dB-scaled fader position (value 0..100 <-> -60..0 dB) to linear volume.
-float sliderToVolume(int value) {
-    float db = -60.0f + 60.0f * value / 100.0f;
-    return decibelsToLinear(db);
-}
 
 } // namespace
 
@@ -162,10 +151,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     const auto& bus = buses[busIndex];
     BusRow row;
 
-    auto btnStyle = [](const QString& normal, const QString& checked) {
-        return normal + "; padding: 0px; }"
-             + checked + "; padding: 0px; }";
-    };
+    auto btnStyle = guistyle::toggleButtonStyle;
 
     QColor stripColor = stripBaseColor(busIndex);
 
@@ -291,7 +277,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     row.volumeSlider->setObjectName("volumeSlider");
     row.volumeSlider->setRange(0, 100);
     // The slider shares the meter's dB scale: value 0..100 <-> -60..0 dB.
-    row.volumeSlider->setValue(volumeToSlider(bus.volume()));
+    row.volumeSlider->setValue(volumeToSliderPos(bus.volume()));
     row.volumeSlider->setFixedWidth(30);
     row.volumeSlider->setTickPosition(QSlider::TicksLeft);
     row.volumeSlider->setTickInterval(20); // 20 units = 12 dB
@@ -514,7 +500,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     connect(row.volumeSlider, &QSlider::valueChanged, this,
             [this, row, busIndex](int val) {
         float oldVal = m_project.buses()[busIndex].volume();
-        float newVal = sliderToVolume(val);
+        float newVal = sliderPosToVolume(val);
         float db = -60.0f + 60.0f * val / 100.0f;
         row.volumeSlider->setToolTip(QString("Volume: %1 dB").arg(db, 0, 'f', 1));
         emit busVolumeWillChange(busIndex, oldVal, newVal);
@@ -819,36 +805,11 @@ void BusPanelWidget::moveBusesToFolder(const std::vector<int>& targets, int fold
 }
 
 bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
-    if (event->type() == QEvent::MouseButtonDblClick) {
-        for (auto& row : m_busRows) {
-            if (row.nameEdit == obj) {
-                row.nameEdit->setReadOnly(false);
-                row.nameEdit->selectAll();
-                row.nameEdit->setFocus();
-                return true;
-            }
-        }
-    }
+    if (event->type() == QEvent::MouseButtonDblClick)
+        return handleNameDoubleClick(obj);
 
-    if (event->type() == QEvent::MouseButtonPress) {
-        auto* me = static_cast<QMouseEvent*>(event);
-        if (me->button() == Qt::LeftButton) {
-            int idx = busIndexForWidget(qobject_cast<QWidget*>(obj));
-            if (idx >= 0) {
-                handleStripClick(idx, me->modifiers());
-                m_dragSource = idx;
-                m_dragStartPos = me->globalPosition().toPoint();
-                // A QLineEdit (bus name) accepts the press itself and takes
-                // focus, so let it through (it does not propagate upward). For
-                // plain widgets accept to stop the upward propagation that
-                // would otherwise toggle the selection twice.
-                if (qobject_cast<QLineEdit*>(obj))
-                    return false;
-                return true;
-            }
-        }
-        return false;
-    }
+    if (event->type() == QEvent::MouseButtonPress)
+        return handleMousePress(obj, static_cast<QMouseEvent*>(event));
 
     if (event->type() == QEvent::MouseButtonRelease) {
         if (static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
@@ -856,134 +817,185 @@ bool BusPanelWidget::eventFilter(QObject* obj, QEvent* event) {
         return false;
     }
 
-    if (event->type() == QEvent::MouseMove) {
-        auto* me = static_cast<QMouseEvent*>(event);
-        if (m_dragSource >= 0 && (me->buttons() & Qt::LeftButton) &&
-            (me->globalPosition().toPoint() - m_dragStartPos).manhattanLength() >
-                QApplication::startDragDistance()) {
-            int src = m_dragSource;
-            m_dragSource = -1;
-            startBusDrag(src);
-            return true;
-        }
-        return false;
-    }
+    if (event->type() == QEvent::MouseMove)
+        return handleMouseMove(obj, static_cast<QMouseEvent*>(event));
 
-    if (event->type() == QEvent::ContextMenu) {
-        auto* ce = static_cast<QContextMenuEvent*>(event);
-        int idx = busIndexForWidget(qobject_cast<QWidget*>(obj));
-        if (idx >= 0) {
-            const auto& buses = m_project.buses();
-            QMenu menu(m_busRows[idx].widget);
+    if (event->type() == QEvent::ContextMenu)
+        return handleContextMenu(obj, static_cast<QContextMenuEvent*>(event));
 
-            std::vector<int> targets = m_selected;
-            if (targets.empty() || !isSelected(idx))
-                targets = { idx };
-
-            // "Put to folder…" (folders are buses; membership = main output).
-            if (std::find(targets.begin(), targets.end(), 0) == targets.end()) {
-                QMenu* folderMenu = menu.addMenu("Put to folder\u2026");
-                for (int f = 1; f < static_cast<int>(buses.size()); ++f) {
-                    if (std::find(targets.begin(), targets.end(), f) != targets.end())
-                        continue;
-                    bool ok = true;
-                    for (int t : targets) {
-                        if (t == f || wouldCreateBusCycle(buses, t, f)) { ok = false; break; }
-                    }
-                    if (!ok) continue;
-                    QString label = buses[f].name();
-                    if (m_project.isBusFolder(f))
-                        label = "\u25B8 " + label;
-                    QAction* a = folderMenu->addAction(label);
-                    connect(a, &QAction::triggered, this, [this, targets, f] {
-                        moveBusesToFolder(targets, f);
-                    });
-                }
-                QAction* newFolder = folderMenu->addAction("New folder\u2026");
-                connect(newFolder, &QAction::triggered, this, [this, targets] {
-                    bool ok = false;
-                    QString name = QInputDialog::getText(this, "New folder",
-                                                         "Folder name:", QLineEdit::Normal,
-                                                         QString("Folder"), &ok);
-                    if (!ok || name.trimmed().isEmpty()) return;
-                    emit createBusFolderRequested(name.trimmed(), targets);
-                });
-            }
-
-            if (idx > 0 && buses[idx].removable()) {
-                menu.addSeparator();
-                QAction* deleteAction = menu.addAction("Delete Bus");
-                connect(deleteAction, &QAction::triggered, this, [this, idx] {
-                    emit removeBusRequested(idx);
-                });
-            }
-            menu.exec(ce->globalPos());
-            return true;
-        }
-        if (obj == m_container) {
-            QMenu menu(m_container);
-            QAction* addAction = menu.addAction("Add Bus");
-            connect(addAction, &QAction::triggered, this, [this] {
-                emit addBusRequested();
-            });
-            menu.exec(ce->globalPos());
-            return true;
-        }
-    }
-
-    if (obj == m_container && event->type() == QEvent::DragEnter) {
-        auto* de = static_cast<QDragEnterEvent*>(event);
-        if (de->mimeData()->hasFormat(kBusDragMime)) {
+    if (obj == m_container) {
+        if (event->type() == QEvent::DragEnter) {
+            if (handleDragEnter(static_cast<QDragEnterEvent*>(event)))
+                return true;
+        } else if (event->type() == QEvent::DragMove) {
+            if (handleDragMove(static_cast<QDragMoveEvent*>(event)))
+                return true;
+        } else if (event->type() == QEvent::DragLeave) {
             m_insertionLine->hide();
             m_folderHighlight->hide();
-            de->acceptProposedAction();
-            return true;
-        }
-    }
-    if (obj == m_container && event->type() == QEvent::DragMove) {
-        auto* dm = static_cast<QDragMoveEvent*>(event);
-        if (dm->mimeData()->hasFormat(kBusDragMime)) {
-            dm->acceptProposedAction();
-            DropSlot slot = dropSlotAt(dm->position().toPoint());
-            if (slot.highlightFolder >= 0 &&
-                slot.highlightFolder < static_cast<int>(m_busRows.size()) &&
-                m_busRows[slot.highlightFolder].widget) {
-                m_insertionLine->hide();
-                m_folderHighlight->raise();
-                m_folderHighlight->setGeometry(
-                    m_busRows[slot.highlightFolder].widget->geometry());
-                m_folderHighlight->show();
-            } else {
-                m_folderHighlight->hide();
-                m_insertionLine->raise();
-                m_insertionLine->setGeometry(slot.insertionX - 1, 0, 2, m_container->height());
-                m_insertionLine->show();
-            }
-            return true;
-        }
-    }
-    if (obj == m_container && event->type() == QEvent::DragLeave) {
-        m_insertionLine->hide();
-        m_folderHighlight->hide();
-        return false;
-    }
-    if (obj == m_container && event->type() == QEvent::Drop) {
-        auto* de = static_cast<QDropEvent*>(event);
-        if (de->mimeData()->hasFormat(kBusDragMime)) {
-            m_insertionLine->hide();
-            m_folderHighlight->hide();
-            std::vector<int> dragged;
-            for (const auto& part : de->mimeData()->data(kBusDragMime).split(';')) {
-                bool ok = false;
-                int v = part.toInt(&ok);
-                if (ok && v >= 0)
-                    dragged.push_back(v);
-            }
-            handleBusDrop(de->position().toPoint(), dragged);
-            de->acceptProposedAction();
-            return true;
+            return false;
+        } else if (event->type() == QEvent::Drop) {
+            if (handleDrop(static_cast<QDropEvent*>(event)))
+                return true;
         }
     }
 
     return QScrollArea::eventFilter(obj, event);
+}
+
+bool BusPanelWidget::handleNameDoubleClick(QObject* obj) {
+    for (auto& row : m_busRows) {
+        if (row.nameEdit == obj) {
+            row.nameEdit->setReadOnly(false);
+            row.nameEdit->selectAll();
+            row.nameEdit->setFocus();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BusPanelWidget::handleMousePress(QObject* obj, QMouseEvent* me) {
+    if (me->button() == Qt::LeftButton) {
+        int idx = busIndexForWidget(qobject_cast<QWidget*>(obj));
+        if (idx >= 0) {
+            handleStripClick(idx, me->modifiers());
+            m_dragSource = idx;
+            m_dragStartPos = me->globalPosition().toPoint();
+            // A QLineEdit (bus name) accepts the press itself and takes
+            // focus, so let it through (it does not propagate upward). For
+            // plain widgets accept to stop the upward propagation that
+            // would otherwise toggle the selection twice.
+            if (qobject_cast<QLineEdit*>(obj))
+                return false;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BusPanelWidget::handleMouseMove(QObject* obj, QMouseEvent* me) {
+    Q_UNUSED(obj);
+    if (m_dragSource >= 0 && (me->buttons() & Qt::LeftButton) &&
+        (me->globalPosition().toPoint() - m_dragStartPos).manhattanLength() >
+            QApplication::startDragDistance()) {
+        int src = m_dragSource;
+        m_dragSource = -1;
+        startBusDrag(src);
+        return true;
+    }
+    return false;
+}
+
+bool BusPanelWidget::handleContextMenu(QObject* obj, QContextMenuEvent* ce) {
+    int idx = busIndexForWidget(qobject_cast<QWidget*>(obj));
+    if (idx >= 0) {
+        const auto& buses = m_project.buses();
+        QMenu menu(m_busRows[idx].widget);
+
+        std::vector<int> targets = m_selected;
+        if (targets.empty() || !isSelected(idx))
+            targets = { idx };
+
+        // "Put to folder…" (folders are buses; membership = main output).
+        if (std::find(targets.begin(), targets.end(), 0) == targets.end()) {
+            QMenu* folderMenu = menu.addMenu("Put to folder\u2026");
+            for (int f = 1; f < static_cast<int>(buses.size()); ++f) {
+                if (std::find(targets.begin(), targets.end(), f) != targets.end())
+                    continue;
+                bool ok = true;
+                for (int t : targets) {
+                    if (t == f || wouldCreateBusCycle(buses, t, f)) { ok = false; break; }
+                }
+                if (!ok) continue;
+                QString label = buses[f].name();
+                if (m_project.isBusFolder(f))
+                    label = "\u25B8 " + label;
+                QAction* a = folderMenu->addAction(label);
+                connect(a, &QAction::triggered, this, [this, targets, f] {
+                    moveBusesToFolder(targets, f);
+                });
+            }
+            QAction* newFolder = folderMenu->addAction("New folder\u2026");
+            connect(newFolder, &QAction::triggered, this, [this, targets] {
+                bool ok = false;
+                QString name = QInputDialog::getText(this, "New folder",
+                                                     "Folder name:", QLineEdit::Normal,
+                                                     QString("Folder"), &ok);
+                if (!ok || name.trimmed().isEmpty()) return;
+                emit createBusFolderRequested(name.trimmed(), targets);
+            });
+        }
+
+        if (idx > 0 && buses[idx].removable()) {
+            menu.addSeparator();
+            QAction* deleteAction = menu.addAction("Delete Bus");
+            connect(deleteAction, &QAction::triggered, this, [this, idx] {
+                emit removeBusRequested(idx);
+            });
+        }
+        menu.exec(ce->globalPos());
+        return true;
+    }
+    if (obj == m_container) {
+        QMenu menu(m_container);
+        QAction* addAction = menu.addAction("Add Bus");
+        connect(addAction, &QAction::triggered, this, [this] {
+            emit addBusRequested();
+        });
+        menu.exec(ce->globalPos());
+        return true;
+    }
+    return false;
+}
+
+bool BusPanelWidget::handleDragEnter(QDragEnterEvent* de) {
+    if (de->mimeData()->hasFormat(kBusDragMime)) {
+        m_insertionLine->hide();
+        m_folderHighlight->hide();
+        de->acceptProposedAction();
+        return true;
+    }
+    return false;
+}
+
+bool BusPanelWidget::handleDragMove(QDragMoveEvent* dm) {
+    if (dm->mimeData()->hasFormat(kBusDragMime)) {
+        dm->acceptProposedAction();
+        DropSlot slot = dropSlotAt(dm->position().toPoint());
+        if (slot.highlightFolder >= 0 &&
+            slot.highlightFolder < static_cast<int>(m_busRows.size()) &&
+            m_busRows[slot.highlightFolder].widget) {
+            m_insertionLine->hide();
+            m_folderHighlight->raise();
+            m_folderHighlight->setGeometry(
+                m_busRows[slot.highlightFolder].widget->geometry());
+            m_folderHighlight->show();
+        } else {
+            m_folderHighlight->hide();
+            m_insertionLine->raise();
+            m_insertionLine->setGeometry(slot.insertionX - 1, 0, 2, m_container->height());
+            m_insertionLine->show();
+        }
+        return true;
+    }
+    return false;
+}
+
+bool BusPanelWidget::handleDrop(QDropEvent* de) {
+    if (de->mimeData()->hasFormat(kBusDragMime)) {
+        m_insertionLine->hide();
+        m_folderHighlight->hide();
+        std::vector<int> dragged;
+        for (const auto& part : de->mimeData()->data(kBusDragMime).split(';')) {
+            bool ok = false;
+            int v = part.toInt(&ok);
+            if (ok && v >= 0)
+                dragged.push_back(v);
+        }
+        handleBusDrop(de->position().toPoint(), dragged);
+        de->acceptProposedAction();
+        return true;
+    }
+    return false;
 }

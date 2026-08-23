@@ -22,6 +22,11 @@ class BusLevelMeter;
 class BusSendsWidget;
 class BusColorBar;
 class QFrame;
+class QMouseEvent;
+class QContextMenuEvent;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
 
 class BusPanelWidget : public QScrollArea {
     Q_OBJECT
@@ -143,6 +148,16 @@ private:
     // Re-route the given buses into `folder` (a bus index) without changing the
     // display order; used by the "Put to folder" context menu.
     void moveBusesToFolder(const std::vector<int>& targets, int folder);
+
+    // eventFilter() sub-handlers, split out per event type.
+    bool handleNameDoubleClick(QObject* obj);
+    bool handleMousePress(QObject* obj, QMouseEvent* event);
+    bool handleMouseMove(QObject* obj, QMouseEvent* event);
+    bool handleContextMenu(QObject* obj, QContextMenuEvent* event);
+    // Drag handlers return true when the dragged payload is a bus drag.
+    bool handleDragEnter(QDragEnterEvent* event);
+    bool handleDragMove(QDragMoveEvent* event);
+    bool handleDrop(QDropEvent* event);
 
     Project& m_project;
     PluginManager* m_pluginManager = nullptr;

@@ -66,6 +66,7 @@ public:
     void activateAllPlugins();
     void deactivateAllPlugins();
     void activatePluginChain(PluginChain& chain);
+    void deactivatePluginChain(PluginChain& chain);
 
     // Post-fader output metering for bus `busIndex` (linear amplitude peak and
     // a latched clip flag). Safe to call from the GUI thread while the audio
@@ -181,6 +182,10 @@ private:
                     uint8_t pitch, uint8_t velocity, int sampleOffset = 0);
     void sendNoteOff(int destIndex, bool toInstrument, uint8_t channel,
                      uint8_t pitch, int sampleOffset = 0);
+    // Shared backend for sendNoteOn/sendNoteOff: delivers a MIDI message to the
+    // instrument buffer or the external device.
+    void queueMidiEvent(int destIndex, bool toInstrument, uint8_t status,
+                        uint8_t pitch, uint8_t velocity, int sampleOffset);
 
     void generateClickEnvelope();
     // Advances the metronome click envelope for one sample position and adds

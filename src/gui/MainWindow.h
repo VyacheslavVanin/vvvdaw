@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#include <functional>
 
 #include "core/Constants.h"
 #include "core/UndoStack.h"
@@ -40,6 +41,11 @@ public:
 
 private:
     friend class MainWindowTest;
+    friend class TrackViewTest;
+    friend class WaveformTest;
+    friend class BusPanelTest;
+    friend class PluginListTest;
+    friend class PianoRollTest;
 
     void setupUi();
     void setupMenus();
@@ -92,6 +98,24 @@ private:
                        const std::vector<QString>& instrumentNames);
     void syncAfterRebuild();
     void syncSnapUnit();
+
+    // Small helpers shared by the setup/rebuild methods (deduplicated).
+    QWidget* makePanelGrip(QWidget* parent);
+    // Handle a drag on a panel grip; returns true when the event was consumed.
+    bool handleGripDrag(QWidget* panel, int& heightSetting,
+                        int minHeight, const QEvent* event);
+    void addPluginToChain(PluginChain& chain, const QString& type, const QString& path);
+    void addMidiEvent(int trackIndex, int64_t startSample);
+    // Cross-track drag preview / completion handlers wired by buildTrackRow.
+    void updateDragPreviews(int srcIdx, int64_t eventId, int64_t currentStartSample,
+                            QPoint globalPos);
+    void finishEventDrag(int srcIdx, int64_t eventId, int64_t oldStart, int64_t newStart,
+                         QPoint globalPos, bool wasDuplicate);
+    void collectDeviceLists(std::vector<DeviceInfo>& devices,
+                            std::vector<std::pair<int, QString>>& midiOutList,
+                            std::vector<QString>& instrumentNames);
+    // Shared post-mutation refresh used by executeCommand / undo / redo.
+    void refreshAfterProjectMutation();
 
     bool eventFilter(QObject* obj, QEvent* event) override;
 

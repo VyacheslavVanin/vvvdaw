@@ -1,5 +1,6 @@
 #include "TrackPanelWidget.h"
 #include "PanSlider.h"
+#include "GuiStyle.h"
 #include "plugin/PluginInstance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
@@ -65,10 +66,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         return btn;
     };
 
-    auto btnStyle = [](const QString& normal, const QString& checked) {
-        return normal + "; padding: 0px; }"
-             + checked + "; padding: 0px; }";
-    };
+    auto btnStyle = guistyle::toggleButtonStyle;
 
     m_armButton = makeBtn(QString::fromUtf8("\xe2\x97\x8f"),
         btnStyle(

@@ -149,6 +149,18 @@ inline float decibelsToLinear(float db) {
     return std::pow(10.0f, db / 20.0f);
 }
 
+// Map a linear gain to the dB-scaled fader position (0..100 <-> -60..0 dB),
+// and back. Used by the bus volume and send-level sliders.
+inline int volumeToSliderPos(float linear) {
+    float db = linearToDecibels(linear);
+    return static_cast<int>(std::lround((db + 60.0f) * 100.0f / 60.0f));
+}
+
+inline float sliderPosToVolume(int value) {
+    float db = -60.0f + 60.0f * value / 100.0f;
+    return decibelsToLinear(db);
+}
+
 // Peak of an interleaved (stereo, L/R per frame) bus buffer.
 inline float busBufferPeak(const float* interleaved, unsigned long frames) {
     float peak = 0.0f;

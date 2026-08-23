@@ -15,17 +15,6 @@
 #include <QContextMenuEvent>
 #include <cmath>
 
-// Map a linear send level to the dB-scaled slider position (0..100 <-> -60..0 dB).
-static int levelToSlider(float level) {
-    float db = linearToDecibels(level);
-    return static_cast<int>(std::lround((db + 60.0f) * 100.0f / 60.0f));
-}
-
-static float sliderToLevel(int value) {
-    float db = -60.0f + 60.0f * value / 100.0f;
-    return decibelsToLinear(db);
-}
-
 BusSendsWidget::BusSendsWidget(QWidget* parent)
     : QWidget(parent) {
     m_mainLayout = new QVBoxLayout(this);
@@ -165,7 +154,7 @@ void BusSendsWidget::buildRow(AudioBus::Send& send, int index) {
     row.level = new QSlider(Qt::Horizontal, row.widget);
     row.level->setObjectName("sendLevelSlider");
     row.level->setRange(0, 100);
-    row.level->setValue(levelToSlider(send.level));
+    row.level->setValue(volumeToSliderPos(send.level));
     row.level->setFixedWidth(64);
     row.level->setStyleSheet(
         "QSlider::groove:horizontal { background: #444; height: 2px; border-radius: 1px; }"
@@ -218,7 +207,7 @@ void BusSendsWidget::buildRow(AudioBus::Send& send, int index) {
         auto* bus = currentBus();
         if (!bus || index < 0 || index >= static_cast<int>(bus->sends().size())) return;
         float oldLevel = bus->sends()[static_cast<size_t>(index)].level;
-        float newLevel = sliderToLevel(val);
+        float newLevel = sliderPosToVolume(val);
         if (std::fabs(oldLevel - newLevel) < 1e-5f) return;
         emit sendLevelWillChange(m_busIndex, index, oldLevel, newLevel);
         bus->sends()[static_cast<size_t>(index)].setLevel(newLevel);

@@ -128,6 +128,16 @@ private:
     // fades in.
     void drawCrossfades(QPainter& painter);
 
+    // paintEvent() sub-draws, split out so the paint method stays readable.
+    void drawGrid(QPainter& painter, int trackHeight);
+    void drawEvents(QPainter& painter, int trackHeight);
+    void drawDragPreview(QPainter& painter, int trackHeight);
+    void drawRecordingPreview(QPainter& painter, int trackHeight);
+    void drawMuteOverlay(QPainter& painter);
+    void drawPlayhead(QPainter& painter, int trackHeight);
+    void drawMouseCursor(QPainter& painter, int trackHeight);
+    void drawDragTooltip(QPainter& painter);
+
     bool isMidiMode() const;
     int eventCount() const;
     int64_t eventStart(int index) const;

@@ -1,5 +1,6 @@
 #include "InstrumentPanelWidget.h"
 #include "PanSlider.h"
+#include "GuiStyle.h"
 #include "PluginListWidget.h"
 #include "ChannelRoutingDialog.h"
 #include "model/Project.h"
@@ -76,10 +77,7 @@ void InstrumentPanelWidget::rebuild() {
     const auto& instruments = m_project.instruments();
     const auto& buses = m_project.buses();
 
-    auto btnStyle = [](const QString& normal, const QString& checked) {
-        return normal + "; padding: 0px; }"
-             + checked + "; padding: 0px; }";
-    };
+    auto btnStyle = guistyle::toggleButtonStyle;
 
     for (int i = 0; i < static_cast<int>(instruments.size()); ++i) {
         const auto& instrument = instruments[i];

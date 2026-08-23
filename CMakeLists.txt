@@ -99,6 +99,11 @@ target_link_libraries(vvvdaw_commands PUBLIC
 
 add_library(vvvdaw_audio STATIC
     src/audio/AudioEngine.cpp
+    src/audio/AudioEngineBus.cpp
+    src/audio/AudioEngineEvent.cpp
+    src/audio/AudioEngineInstrument.cpp
+    src/audio/AudioEngineMetronome.cpp
+    src/audio/AudioEngineMidi.cpp
     src/audio/MidiRecorder.cpp
     src/audio/RecordingManager.cpp
     src/audio/StreamingManager.cpp
@@ -116,6 +121,12 @@ target_link_libraries(vvvdaw_audio PUBLIC
 
 add_library(vvvdaw_gui STATIC
     src/gui/MainWindow.cpp
+    src/gui/MainWindowMenus.cpp
+    src/gui/MainWindowPanels.cpp
+    src/gui/MainWindowRuler.cpp
+    src/gui/MainWindowTrackRows.cpp
+    src/gui/MainWindowTransport.cpp
+    src/gui/MainWindowWindows.cpp
     src/gui/TransportPanel.cpp
     src/gui/TrackPanelWidget.cpp
     src/gui/PanSlider.cpp
