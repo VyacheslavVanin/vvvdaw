@@ -454,6 +454,12 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
+    // Thin vertical cursor line at the mouse position
+    if (m_mouseX >= 0 && m_mouseX <= width()) {
+        painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
+        painter.drawLine(m_mouseX, 0, m_mouseX, trackHeight);
+    }
+
     // Dragged event tooltip
     if (m_dragging && m_dragEventIndex >= 0) {
         int64_t start = eventStart(m_dragEventIndex);
@@ -612,6 +618,11 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
 void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
     int mouseX = static_cast<int>(event->position().x());
 
+    if (mouseX != m_mouseX) {
+        m_mouseX = mouseX;
+        update();
+    }
+
     if (m_panning) {
         int dx = mouseX - m_panStartX;
         setScrollOffset(m_panStartOffset - static_cast<int64_t>(dx / m_pixelsPerSample));
@@ -764,6 +775,14 @@ void TrackViewWidget::mouseDoubleClickEvent(QMouseEvent* event) {
         }
     }
     QWidget::mouseDoubleClickEvent(event);
+}
+
+void TrackViewWidget::leaveEvent(QEvent* event) {
+    if (m_mouseX != -1) {
+        m_mouseX = -1;
+        update();
+    }
+    QWidget::leaveEvent(event);
 }
 
 void TrackViewWidget::keyPressEvent(QKeyEvent* event) {
@@ -995,6 +1014,23 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
         emit eventsChanged();
     });
 
+    // Split the audio event exactly at the mouse position (no grid snap).
+    // The request is recorded here and emitted after menu.exec() returns:
+    // rebuilding tracks while the popup (a child of this widget) is still
+    // executing would destroy this widget from under the menu.
+    if (!isMidiMode()) {
+        int64_t cutSample = sampleAtX(static_cast<int>(event->pos().x()));
+        int64_t evStart = eventStart(idx);
+        if (cutSample > evStart && cutSample < evStart + eventDuration(idx)) {
+            QAction* cutAction = menu.addAction("Cut");
+            connect(cutAction, &QAction::triggered, this, [this, idx, cutSample] {
+                if (!m_track || idx < 0 || idx >= eventCount()) return;
+                m_pendingCutEventId = eventIdAt(idx);
+                m_pendingCutSample = cutSample;
+            });
+        }
+    }
+
     QAction* deleteAction = menu.addAction("Delete");
     connect(deleteAction, &QAction::triggered, this, [this, idx] {
         if (!m_track) return;
@@ -1028,4 +1064,11 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     menu.exec(event->globalPos());
+
+    if (m_pendingCutEventId >= 0) {
+        int64_t eventId = m_pendingCutEventId;
+        int64_t cutSample = m_pendingCutSample;
+        m_pendingCutEventId = -1;
+        emit cutEventRequested(eventId, cutSample);
+    }
 }

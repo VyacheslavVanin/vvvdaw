@@ -1451,6 +1451,12 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
+        connect(row.view, &TrackViewWidget::cutEventRequested, this,
+                [this, idx = trackIndex](int64_t eventId, int64_t cutSample) {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
+            executeCommand(std::make_unique<CutEventCommand>(m_project, idx, eventId, cutSample));
+        });
+
         connect(row.view, &TrackViewWidget::eventEdgeTrimStarted, this, [this] {
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });

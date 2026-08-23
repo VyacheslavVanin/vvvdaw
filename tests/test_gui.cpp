@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QMenuBar>
+#include <QMenu>
 #include <QAction>
 #include <QLabel>
 #include <QListWidget>
@@ -203,6 +204,8 @@ private slots:
     void previewTargetFollowsFocusedPianoRoll();
     void middleDragPansTrackView();
     void ctrlWheelZoomAnchorsCursorFrame();
+    void trackViewMouseCursorTracksAndClears();
+    void trackViewContextMenuCutSplitsEvent();
     void pianoRollMiddleDragPans();
     void pianoRollCtrlWheelZoomAnchorsCursor();
 private:
@@ -2680,6 +2683,85 @@ void MainWindowTest::ctrlWheelZoomAnchorsCursorFrame() {
     sendZoomWheel(pos, -120);
     sendZoomWheel(pos, -120);
     QCOMPARE(view->scrollOffset() + static_cast<int64_t>(pos.x() / view->zoom()), before);
+}
+
+void MainWindowTest::trackViewMouseCursorTracksAndClears() {
+    Project project;
+    project.addTrack("A1");
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+
+    QCOMPARE(view->mouseCursorX(), -1);
+
+    QTest::mouseMove(view, QPoint(150, 40));
+    QCOMPARE(view->mouseCursorX(), 150);
+
+    QTest::mouseMove(view, QPoint(37, 40));
+    QCOMPARE(view->mouseCursorX(), 37);
+
+    // Leaving the widget clears the thin cursor line.
+    QEvent leave(QEvent::Leave);
+    QApplication::sendEvent(view, &leave);
+    QCOMPARE(view->mouseCursorX(), -1);
+}
+
+void MainWindowTest::trackViewContextMenuCutSplitsEvent() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001);       // 1 px = 1000 samples
+    view->setScrollOffset(0);
+
+    // Event spans samples [0, 48000) => pixels [0, 48). Right-click in the
+    // middle at pixel 24 => sample 24000 (no grid snap).
+    const QPoint menuPos(24, 40);
+    const int64_t cutSample = 24000;
+
+    bool cutFound = false;
+    QTimer::singleShot(0, [&] {
+        if (auto* menu = view->findChild<QMenu*>()) {
+            for (QAction* a : menu->actions()) {
+                if (a->text() == "Cut") {
+                    a->trigger();
+                    cutFound = true;
+                    break;
+                }
+            }
+            // A programmatic trigger() does not dismiss the popup; close it so
+            // menu.exec() returns and the pending cut is emitted.
+            menu->close();
+        }
+    });
+
+    QContextMenuEvent ctx(QContextMenuEvent::Mouse, menuPos,
+                          view->mapToGlobal(menuPos));
+    QApplication::sendEvent(view, &ctx);
+    QCoreApplication::processEvents();
+
+    QVERIFY(cutFound);
+    QCOMPARE(project.tracks()[0].events().size(), size_t(2));
+    QCOMPARE(project.tracks()[0].events()[0].endSample(),
+             project.tracks()[0].events()[1].startSample());
+    QCOMPARE(project.tracks()[0].events()[1].startSample(), cutSample);
 }
 
 void MainWindowTest::pianoRollMiddleDragPans() {

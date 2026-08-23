@@ -4,6 +4,7 @@
 #include "model/Project.h"
 #include "model/Track.h"
 #include "model/AudioEvent.h"
+#include "model/AudioClip.h"
 #include "model/MidiEvent.h"
 #include "model/MidiClip.h"
 #include "model/AudioBus.h"
@@ -44,6 +45,9 @@ private slots:
     void removeEventCommand();
     void moveEventCommand();
     void trimEventCommand();
+    void cutEventCommand();
+    void cutEventCommandPreservesRate();
+    void cutEventCommandBoundaryDoesNothing();
     void addMidiEventCommand();
     void addNoteCommand();
     void moveNoteCommand();
@@ -691,6 +695,97 @@ void TestCommands::trimEventCommand() {
     stack.undo();
     QCOMPARE(p.tracks()[0].events()[0].offsetSample(), int64_t(0));
     QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(100));
+}
+
+void TestCommands::cutEventCommand() {
+    Project p;
+    p.addTrack("T");
+    auto clip = std::make_shared<AudioClip>(std::vector<float>(48000, 0.5f), 48000, 1);
+    AudioEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(1000);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(10000);
+    ev.setSourceFrames(10000);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 4000));
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+
+    const AudioEvent& left = p.tracks()[0].events()[0];
+    const AudioEvent& right = p.tracks()[0].events()[1];
+    QCOMPARE(left.id(), id);                       // original becomes the left part
+    QCOMPARE(left.startSample(), int64_t(1000));
+    QCOMPARE(left.durationSample(), int64_t(3000)); // cutRel = 4000 - 1000
+    QCOMPARE(left.offsetSample(), int64_t(0));
+    QCOMPARE(left.sourceFrames(), int64_t(3000));
+    QCOMPARE(right.startSample(), int64_t(4000));   // parts fit flush
+    QCOMPARE(right.durationSample(), int64_t(7000));
+    QCOMPARE(right.offsetSample(), int64_t(3000));
+    QCOMPARE(right.sourceFrames(), int64_t(7000));
+    QCOMPARE(left.endSample(), right.startSample());
+    QVERIFY(left.clip() == right.clip());           // both share the source
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(1));
+    const AudioEvent& restored = p.tracks()[0].events()[0];
+    QCOMPARE(restored.id(), id);
+    QCOMPARE(restored.startSample(), int64_t(1000));
+    QCOMPARE(restored.offsetSample(), int64_t(0));
+    QCOMPARE(restored.durationSample(), int64_t(10000));
+    QCOMPARE(restored.sourceFrames(), int64_t(10000));
+    QVERIFY(restored.clip() == clip);
+
+    stack.redo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+    QCOMPARE(p.tracks()[0].events()[0].endSample(),
+             p.tracks()[0].events()[1].startSample());
+}
+
+void TestCommands::cutEventCommandPreservesRate() {
+    Project p;
+    p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(100);
+    ev.setDurationSample(1000);
+    ev.setSourceFrames(2000); // rate = 2 (time-stretched)
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 400));
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+
+    const AudioEvent& left = p.tracks()[0].events()[0];
+    const AudioEvent& right = p.tracks()[0].events()[1];
+    QCOMPARE(left.durationSample(), int64_t(400));
+    QCOMPARE(left.sourceFrames(), int64_t(800));   // cutRel * rate
+    QCOMPARE(left.offsetSample(), int64_t(100));
+    QCOMPARE(right.startSample(), int64_t(400));
+    QCOMPARE(right.durationSample(), int64_t(600));
+    QCOMPARE(right.offsetSample(), int64_t(900));   // 100 + 800
+    QCOMPARE(right.sourceFrames(), int64_t(1200));  // 2000 - 800
+    QCOMPARE(left.endSample(), right.startSample());
+}
+
+void TestCommands::cutEventCommandBoundaryDoesNothing() {
+    Project p;
+    p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(1000);
+    ev.setDurationSample(1000);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 1000)); // == start
+    QCOMPARE(p.tracks()[0].events().size(), size_t(1));
+    stack.undo(); // no-op, must not corrupt the event
+    QCOMPARE(p.tracks()[0].events().size(), size_t(1));
+    QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(1000));
 }
 
 static QJsonObject makeMidiEventJson() {

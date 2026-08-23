@@ -1,7 +1,10 @@
 #pragma once
 #include "core/UndoCommand.h"
+#include "model/AudioClip.h"
 #include <QJsonObject>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 class Project;
 
@@ -74,4 +77,33 @@ private:
     int64_t m_eventId;
     int m_oldTake;
     int m_newTake;
+};
+
+// Split an audio event in two at `cutSample` (exact, no grid snap). Both parts
+// reference the same source clip; placed flush together they reproduce the
+// original event. The original event becomes the left part.
+class CutEventCommand : public UndoCommand {
+public:
+    CutEventCommand(Project& project, int trackIndex, int64_t eventId, int64_t cutSample);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 45; }
+private:
+    Project& m_project;
+    int m_trackIndex;
+    int64_t m_eventId;
+    int64_t m_cutSample;
+
+    // Original event state, saved so undo restores it faithfully (including
+    // in-memory clips that cannot round-trip through JSON).
+    int64_t m_savedStart = 0;
+    int64_t m_savedOffset = 0;
+    int64_t m_savedDuration = 0;
+    int64_t m_savedSourceFrames = 0;
+    std::shared_ptr<AudioClip> m_savedClip;
+    std::vector<std::shared_ptr<AudioClip>> m_savedTakes;
+    int m_savedActiveTakeIndex = -1;
+
+    int64_t m_rightEventId = -1;
+    bool m_didCut = false;
 };

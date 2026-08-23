@@ -53,6 +53,10 @@ public:
     void setSnapUnit(double samples) { m_snapUnit = samples; }
     void setSamplesPerTick(double samplesPerTick) { m_samplesPerTick = samplesPerTick; }
 
+    // Horizontal mouse position (pixels) used to draw the thin cursor line,
+    // or -1 while the mouse is outside the widget.
+    int mouseCursorX() const { return m_mouseX; }
+
 signals:
     void scrollOffsetChanged(int64_t offset);
     void eventMoved(int64_t eventId, int64_t newStartSample);
@@ -65,6 +69,7 @@ signals:
     void takeSwitchStarted();
     void eventDoubleClicked(int64_t eventId);
     void addMidiEventRequested(int64_t startSample);
+    void cutEventRequested(int64_t eventId, int64_t cutSample);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -75,6 +80,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
 private:
     enum class EdgeDrag { None, Left, Right };
@@ -176,6 +182,9 @@ private:
     // Hover
     int m_hoverEventIndex = -1;
 
+    // Mouse cursor line (thin vertical line at the current mouse X).
+    int m_mouseX = -1;
+
     // Selection
     int m_selectedEventIndex = -1;
 
@@ -208,4 +217,8 @@ private:
     bool m_panning = false;
     int m_panStartX = 0;
     int64_t m_panStartOffset = 0;
+
+    // Cut requested from the context menu; emitted after the popup closes.
+    int64_t m_pendingCutEventId = -1;
+    int64_t m_pendingCutSample = 0;
 };
