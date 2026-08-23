@@ -206,6 +206,7 @@ private slots:
     void ctrlWheelZoomAnchorsCursorFrame();
     void trackViewMouseCursorTracksAndClears();
     void trackViewContextMenuCutSplitsEvent();
+    void trackViewContextMenuCutAndSnapAlignsToGrid();
     void pianoRollMiddleDragPans();
     void pianoRollCtrlWheelZoomAnchorsCursor();
 private:
@@ -2762,6 +2763,59 @@ void MainWindowTest::trackViewContextMenuCutSplitsEvent() {
     QCOMPARE(project.tracks()[0].events()[0].endSample(),
              project.tracks()[0].events()[1].startSample());
     QCOMPARE(project.tracks()[0].events()[1].startSample(), cutSample);
+}
+
+void MainWindowTest::trackViewContextMenuCutAndSnapAlignsToGrid() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001);       // 1 px = 1000 samples
+    view->setScrollOffset(0);
+
+    // Snap unit = samplesPerBar / resolution = 96000 / 4 = 24000. The cut at
+    // sample 26000 (pixel 26) lands after the grid line, so the split is pulled
+    // left to 24000 and the right piece starts flush on the grid line.
+    const QPoint menuPos(26, 40);
+
+    bool snapCutFound = false;
+    QTimer::singleShot(0, [&] {
+        if (auto* menu = view->findChild<QMenu*>()) {
+            for (QAction* a : menu->actions()) {
+                if (a->text() == "Cut and Snap") {
+                    a->trigger();
+                    snapCutFound = true;
+                    break;
+                }
+            }
+            menu->close();
+        }
+    });
+
+    QContextMenuEvent ctx(QContextMenuEvent::Mouse, menuPos,
+                          view->mapToGlobal(menuPos));
+    QApplication::sendEvent(view, &ctx);
+    QCoreApplication::processEvents();
+
+    QVERIFY(snapCutFound);
+    QCOMPARE(project.tracks()[0].events().size(), size_t(2));
+    const AudioEvent& left = project.tracks()[0].events()[0];
+    const AudioEvent& right = project.tracks()[0].events()[1];
+    QCOMPARE(left.endSample(), int64_t(24000));
+    QCOMPARE(right.startSample(), int64_t(24000)); // snapped to the grid line
+    QCOMPARE(left.endSample(), right.startSample());
 }
 
 void MainWindowTest::pianoRollMiddleDragPans() {

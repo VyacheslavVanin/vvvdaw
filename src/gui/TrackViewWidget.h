@@ -69,7 +69,7 @@ signals:
     void takeSwitchStarted();
     void eventDoubleClicked(int64_t eventId);
     void addMidiEventRequested(int64_t startSample);
-    void cutEventRequested(int64_t eventId, int64_t cutSample);
+    void cutEventRequested(int64_t eventId, int64_t cutSample, bool snapToGrid);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -221,4 +221,5 @@ private:
     // Cut requested from the context menu; emitted after the popup closes.
     int64_t m_pendingCutEventId = -1;
     int64_t m_pendingCutSample = 0;
+    bool m_pendingCutSnap = false;
 };

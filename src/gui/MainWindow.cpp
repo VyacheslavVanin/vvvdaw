@@ -1452,9 +1452,11 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
         });
 
         connect(row.view, &TrackViewWidget::cutEventRequested, this,
-                [this, idx = trackIndex](int64_t eventId, int64_t cutSample) {
+                [this, idx = trackIndex](int64_t eventId, int64_t cutSample, bool snapToGrid) {
             if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
-            executeCommand(std::make_unique<CutEventCommand>(m_project, idx, eventId, cutSample));
+            double snapUnit = m_project.samplesPerBar() / m_snapResolution;
+            executeCommand(std::make_unique<CutEventCommand>(
+                m_project, idx, eventId, cutSample, snapToGrid, snapUnit));
         });
 
         connect(row.view, &TrackViewWidget::eventEdgeTrimStarted, this, [this] {

@@ -1014,19 +1014,27 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
         emit eventsChanged();
     });
 
-    // Split the audio event exactly at the mouse position (no grid snap).
-    // The request is recorded here and emitted after menu.exec() returns:
-    // rebuilding tracks while the popup (a child of this widget) is still
-    // executing would destroy this widget from under the menu.
+    // Split the audio event at the mouse position. The request is recorded here
+    // and emitted after menu.exec() returns: rebuilding tracks while the popup
+    // (a child of this widget) is still executing would destroy this widget
+    // from under the menu.
     if (!isMidiMode()) {
         int64_t cutSample = sampleAtX(static_cast<int>(event->pos().x()));
         int64_t evStart = eventStart(idx);
         if (cutSample > evStart && cutSample < evStart + eventDuration(idx)) {
-            QAction* cutAction = menu.addAction("Cut");
-            connect(cutAction, &QAction::triggered, this, [this, idx, cutSample] {
+            auto requestCut = [this, idx, cutSample](bool snapToGrid) {
                 if (!m_track || idx < 0 || idx >= eventCount()) return;
                 m_pendingCutEventId = eventIdAt(idx);
                 m_pendingCutSample = cutSample;
+                m_pendingCutSnap = snapToGrid;
+            };
+            QAction* cutAction = menu.addAction("Cut");
+            connect(cutAction, &QAction::triggered, this, [requestCut] {
+                requestCut(false);
+            });
+            QAction* snapCutAction = menu.addAction("Cut and Snap");
+            connect(snapCutAction, &QAction::triggered, this, [requestCut] {
+                requestCut(true);
             });
         }
     }
@@ -1068,7 +1076,9 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     if (m_pendingCutEventId >= 0) {
         int64_t eventId = m_pendingCutEventId;
         int64_t cutSample = m_pendingCutSample;
+        bool snapToGrid = m_pendingCutSnap;
         m_pendingCutEventId = -1;
-        emit cutEventRequested(eventId, cutSample);
+        m_pendingCutSnap = false;
+        emit cutEventRequested(eventId, cutSample, snapToGrid);
     }
 }

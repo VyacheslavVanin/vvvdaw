@@ -3,6 +3,7 @@
 #include "model/Track.h"
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
+#include "core/TimeUtils.h"
 #include <algorithm>
 #include <cmath>
 
@@ -132,9 +133,9 @@ void SwitchTakeCommand::undo() {
 // --- CutEventCommand ---
 
 CutEventCommand::CutEventCommand(Project& project, int trackIndex, int64_t eventId,
-                                 int64_t cutSample)
+                                 int64_t cutSample, bool snapToGrid, double snapUnit)
     : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
-      m_cutSample(cutSample) {
+      m_cutSample(cutSample), m_snapToGrid(snapToGrid), m_snapUnit(snapUnit) {
     if (Track* track = m_project.trackAt(trackIndex)) {
         if (AudioEvent* ev = track->findEvent(eventId)) {
             m_savedStart = ev->startSample();
@@ -170,13 +171,40 @@ void CutEventCommand::execute() {
         / static_cast<double>(duration)));
     cutSrc = std::clamp<int64_t>(cutSrc, 1, srcFrames - 1);
 
-    // Left part: the original event, truncated to the cut.
-    AudioEvent right = *ev;
-    ev->setDurationSample(cutRel);
-    ev->setSourceFrames(cutSrc);
+    // Alignment of the split point to the nearest snap line. When the cut
+    // lands after the line, the left piece is trimmed to it and the right
+    // piece slides left to meet it; when it lands before the line, only the
+    // right piece slides forward (leaving a gap). The right piece always keeps
+    // its own source window (offset/sourceFrames) as in a plain cut.
+    int64_t leftEndRel = cutRel;
+    int64_t rightStart = m_cutSample;
+    if (m_snapToGrid && m_snapUnit > 0.0) {
+        const int64_t snapPos = TimeUtils::snapSample(m_cutSample, m_snapUnit);
+        // Only snap when the line lies after the event start; otherwise the
+        // left piece cannot be trimmed (or would collapse) and a plain cut is
+        // the best approximation.
+        if (snapPos > start) {
+            if (snapPos <= m_cutSample && snapPos - start >= 1)
+                leftEndRel = snapPos - start;
+            rightStart = snapPos;
+        }
+    }
+    if (leftEndRel < 1 || leftEndRel >= duration) {
+        leftEndRel = cutRel;
+        rightStart = m_cutSample;
+    }
+    int64_t leftSrcEnd = static_cast<int64_t>(std::llround(
+        static_cast<double>(leftEndRel) * static_cast<double>(srcFrames)
+        / static_cast<double>(duration)));
+    leftSrcEnd = std::clamp<int64_t>(leftSrcEnd, 1, srcFrames - 1);
 
-    // Right part: a copy of the original shifted to start at the cut.
-    right.setStartSample(start + cutRel);
+    // Left part: the original event, truncated to the (snapped) cut.
+    AudioEvent right = *ev;
+    ev->setDurationSample(leftEndRel);
+    ev->setSourceFrames(leftSrcEnd);
+
+    // Right part: a copy of the original shifted to start at the (snapped) cut.
+    right.setStartSample(rightStart);
     right.setOffsetSample(ev->offsetSample() + cutSrc);
     right.setDurationSample(duration - cutRel);
     right.setSourceFrames(srcFrames - cutSrc);

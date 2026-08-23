@@ -48,6 +48,9 @@ private slots:
     void cutEventCommand();
     void cutEventCommandPreservesRate();
     void cutEventCommandBoundaryDoesNothing();
+    void cutEventCommandSnapsBeforeGrid();
+    void cutEventCommandSnapsAfterGrid();
+    void cutEventCommandSnapOnGrid();
     void addMidiEventCommand();
     void addNoteCommand();
     void moveNoteCommand();
@@ -786,6 +789,107 @@ void TestCommands::cutEventCommandBoundaryDoesNothing() {
     stack.undo(); // no-op, must not corrupt the event
     QCOMPARE(p.tracks()[0].events().size(), size_t(1));
     QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(1000));
+}
+
+void TestCommands::cutEventCommandSnapsBeforeGrid() {
+    // Cut before the nearest grid line (cut = 2600, snap = 3000): only the
+    // right piece slides forward to the line, leaving a gap.
+    Project p;
+    p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(3000);
+    ev.setSourceFrames(3000);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 2600, true, 1000.0));
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+
+    const AudioEvent& left = p.tracks()[0].events()[0];
+    const AudioEvent& right = p.tracks()[0].events()[1];
+    QCOMPARE(left.startSample(), int64_t(0));
+    QCOMPARE(left.durationSample(), int64_t(2600)); // unchanged
+    QCOMPARE(left.sourceFrames(), int64_t(2600));
+    QCOMPARE(right.startSample(), int64_t(3000));   // snapped to the grid line
+    QCOMPARE(right.durationSample(), int64_t(400));
+    QCOMPARE(right.offsetSample(), int64_t(2600));
+    QCOMPARE(right.sourceFrames(), int64_t(400));
+    QVERIFY(left.endSample() < right.startSample()); // silence gap [2600, 3000)
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(1));
+    QCOMPARE(p.tracks()[0].events()[0].startSample(), int64_t(0));
+    QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(3000));
+    stack.redo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+    QCOMPARE(p.tracks()[0].events()[1].startSample(), int64_t(3000));
+}
+
+void TestCommands::cutEventCommandSnapsAfterGrid() {
+    // Cut after the nearest grid line (cut = 2400, snap = 2000): the left
+    // piece is trimmed to the line and the right piece slides left to meet it;
+    // audio between the line and the cut is dropped.
+    Project p;
+    p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(3000);
+    ev.setSourceFrames(3000);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 2400, true, 1000.0));
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+
+    const AudioEvent& left = p.tracks()[0].events()[0];
+    const AudioEvent& right = p.tracks()[0].events()[1];
+    QCOMPARE(left.durationSample(), int64_t(2000)); // trimmed to the grid line
+    QCOMPARE(left.sourceFrames(), int64_t(2000));
+    QCOMPARE(right.startSample(), int64_t(2000));   // flush with the left piece
+    QCOMPARE(left.endSample(), right.startSample());
+    QCOMPARE(right.durationSample(), int64_t(600));
+    QCOMPARE(right.offsetSample(), int64_t(2400));  // keeps its own source window
+    QCOMPARE(right.sourceFrames(), int64_t(600));
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(1));
+    QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(3000));
+    stack.redo();
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+    QCOMPARE(p.tracks()[0].events()[0].durationSample(), int64_t(2000));
+    QCOMPARE(p.tracks()[0].events()[1].startSample(), int64_t(2000));
+}
+
+void TestCommands::cutEventCommandSnapOnGrid() {
+    // Cut exactly on a grid line: identical to a plain cut.
+    Project p;
+    p.addTrack("T");
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(3000);
+    ev.setSourceFrames(3000);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 2000, true, 1000.0));
+    QCOMPARE(p.tracks()[0].events().size(), size_t(2));
+
+    const AudioEvent& left = p.tracks()[0].events()[0];
+    const AudioEvent& right = p.tracks()[0].events()[1];
+    QCOMPARE(left.durationSample(), int64_t(2000));
+    QCOMPARE(left.sourceFrames(), int64_t(2000));
+    QCOMPARE(right.startSample(), int64_t(2000));
+    QCOMPARE(right.offsetSample(), int64_t(2000));
+    QCOMPARE(right.durationSample(), int64_t(1000));
+    QCOMPARE(right.sourceFrames(), int64_t(1000));
+    QCOMPARE(left.endSample(), right.startSample());
 }
 
 static QJsonObject makeMidiEventJson() {

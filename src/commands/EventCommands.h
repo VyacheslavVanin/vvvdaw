@@ -82,9 +82,16 @@ private:
 // Split an audio event in two at `cutSample` (exact, no grid snap). Both parts
 // reference the same source clip; placed flush together they reproduce the
 // original event. The original event becomes the left part.
+//
+// With `snapToGrid` the two pieces are aligned to the nearest snap position
+// (`snapSample(cutSample, snapUnit)`): when the cut lands after a grid line the
+// left piece is trimmed to the line and the right piece slides left to meet it
+// (audio between the line and the cut is dropped); when it lands before a grid
+// line only the right piece slides forward to the line (leaving a gap).
 class CutEventCommand : public UndoCommand {
 public:
-    CutEventCommand(Project& project, int trackIndex, int64_t eventId, int64_t cutSample);
+    CutEventCommand(Project& project, int trackIndex, int64_t eventId, int64_t cutSample,
+                    bool snapToGrid = false, double snapUnit = 0.0);
     void execute() override;
     void undo() override;
     int id() const override { return 45; }
@@ -93,6 +100,8 @@ private:
     int m_trackIndex;
     int64_t m_eventId;
     int64_t m_cutSample;
+    bool m_snapToGrid;
+    double m_snapUnit;
 
     // Original event state, saved so undo restores it faithfully (including
     // in-memory clips that cannot round-trip through JSON).
