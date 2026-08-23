@@ -182,14 +182,13 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                     }
                 }
 
-                if (!alreadyActive) {
+                if (!alreadyActive && noteStart >= pos) {
                     // A note whose onset lies before the current playback
                     // position and which is not already sounding was missed
                     // (seek / stop / loop wrap). Do not catch it up: it should
                     // not play, and no note-off is needed since the synth never
-                    // received its note-on.
-                    if (noteStart < pos)
-                        continue;
+                    // received its note-on. The guard above skips exactly that
+                    // case, so the onset always lands in this block.
                     int off = static_cast<int>(noteStart - pos);
                     if (off < static_cast<int>(frameCount)) {
                         sendNoteOn(toInstrument ? instIdx : deviceId, toInstrument,

@@ -250,13 +250,13 @@ TransportState AudioEngine::transportState() const {
 
 void AudioEngine::setPlayPosition(int64_t pos) {
     m_playPosition.store(pos, std::memory_order_release);
-    if (m_transportState.load(std::memory_order_acquire) == TransportState::Playing) {
-        clearStretchSlots();
-        m_streamingManager.closeAll();
-        auto* proj = m_project.load(std::memory_order_acquire);
-        if (proj)
-            m_streamingManager.createStreams(proj, pos);
-    }
+    if (m_transportState.load(std::memory_order_acquire) != TransportState::Playing)
+        return;
+    clearStretchSlots();
+    m_streamingManager.closeAll();
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (proj)
+        m_streamingManager.createStreams(proj, pos);
 }
 
 
@@ -303,41 +303,36 @@ void AudioEngine::processAudio(const float* input, float* output,
         return;
     }
 
-    if (state == TransportState::Playing || state == TransportState::Recording ||
-        state == TransportState::Paused) {
+    if (state == TransportState::Playing || state == TransportState::Recording) {
         int64_t pos = m_playPosition.load(std::memory_order_acquire);
 
-        bool isActive = (state == TransportState::Playing || state == TransportState::Recording);
-
-        if (isActive) {
-            if (state == TransportState::Recording &&
-                m_recordingManager.isRegionActive() &&
-                input && inCh > 0) {
-                m_recordingManager.processCapture(input, frameCount, inCh);
-            }
-
-            auto* proj = m_project.load(std::memory_order_acquire);
-            if (!proj) {
-                m_playPosition.store(pos + frameCount, std::memory_order_release);
-                return;
-            }
-            std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
-            if (!projectLock) {
-                m_playPosition.store(pos + frameCount, std::memory_order_release);
-                m_recordingManager.notifyWriter();
-                return;
-            }
-
-            pollMidiInput(proj, pos, frameCount, state);
-            processBusMixing(proj, output, frameCount, pos, outCh, input, inCh);
-
-            if (state == TransportState::Recording)
-                m_recordingManager.notifyWriter();
-
-            int64_t newPos = advancePlayhead(proj, pos, frameCount, state);
-
-            m_playPosition.store(newPos, std::memory_order_release);
+        if (state == TransportState::Recording &&
+            m_recordingManager.isRegionActive() &&
+            input && inCh > 0) {
+            m_recordingManager.processCapture(input, frameCount, inCh);
         }
+
+        auto* proj = m_project.load(std::memory_order_acquire);
+        if (!proj) {
+            m_playPosition.store(pos + frameCount, std::memory_order_release);
+            return;
+        }
+        std::shared_lock projectLock(proj->mutex(), std::try_to_lock);
+        if (!projectLock) {
+            m_playPosition.store(pos + frameCount, std::memory_order_release);
+            m_recordingManager.notifyWriter();
+            return;
+        }
+
+        pollMidiInput(proj, pos, frameCount, state);
+        processBusMixing(proj, output, frameCount, pos, outCh, input, inCh);
+
+        if (state == TransportState::Recording)
+            m_recordingManager.notifyWriter();
+
+        m_playPosition.store(advancePlayhead(proj, pos, frameCount, state),
+                             std::memory_order_release);
+        return;
     }
 
     if ((state == TransportState::Stopped || state == TransportState::Paused)

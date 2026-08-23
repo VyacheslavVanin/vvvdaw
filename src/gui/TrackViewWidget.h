@@ -131,8 +131,12 @@ private:
     // paintEvent() sub-draws, split out so the paint method stays readable.
     void drawGrid(QPainter& painter, int trackHeight);
     void drawEvents(QPainter& painter, int trackHeight);
+    // Draw one event row (the body of drawEvents' loop).
+    void drawEventRow(QPainter& painter, int index, int trackHeight);
     void drawDragPreview(QPainter& painter, int trackHeight);
     void drawRecordingPreview(QPainter& painter, int trackHeight);
+    // Live waveform of the captured audio inside the recording preview rect.
+    void renderRecordingWaveform(QPainter& painter, int trackHeight);
     void drawMuteOverlay(QPainter& painter);
     void drawPlayhead(QPainter& painter, int trackHeight);
     void drawMouseCursor(QPainter& painter, int trackHeight);

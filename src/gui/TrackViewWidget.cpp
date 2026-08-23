@@ -299,81 +299,84 @@ void TrackViewWidget::drawGrid(QPainter& painter, int trackHeight) {
 
 void TrackViewWidget::drawEvents(QPainter& painter, int trackHeight) {
     int n = eventCount();
-    for (int i = 0; i < n; ++i) {
-        if (!eventHasTakes(i) && !isMidiMode()) {
-            auto& ev = m_track->events()[i];
-            if (!ev.clip() || !ev.clip()->isValid()) continue;
-        }
+    for (int i = 0; i < n; ++i)
+        drawEventRow(painter, i, trackHeight);
+}
 
-        // Pixel math in int64: at deep zoom a long clip can exceed int range.
-        int64_t x64 = static_cast<int64_t>(
-            (eventStart(i) - m_scrollOffset) * m_pixelsPerSample);
-        int64_t w64 = static_cast<int64_t>(eventDuration(i) * m_pixelsPerSample);
-        if (x64 + w64 < 0 || x64 > width()) continue;
-        int x = static_cast<int>(std::clamp<int64_t>(x64, -2000000000LL, 2000000000LL));
-        // The waveform itself is clipped to the visible window; the event rect
-        // only needs to cover the viewport.
-        int w = static_cast<int>(std::min<int64_t>(w64, 2LL * width() + 2000));
+void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight) {
+    if (!eventHasTakes(index) && !isMidiMode()) {
+        auto& ev = m_track->events()[index];
+        if (!ev.clip() || !ev.clip()->isValid()) return;
+    }
 
-        QRect eventRect(x, 2, w, trackHeight - 4);
+    // Pixel math in int64: at deep zoom a long clip can exceed int range.
+    int64_t x64 = static_cast<int64_t>(
+        (eventStart(index) - m_scrollOffset) * m_pixelsPerSample);
+    int64_t w64 = static_cast<int64_t>(eventDuration(index) * m_pixelsPerSample);
+    if (x64 + w64 < 0 || x64 > width()) return;
+    int x = static_cast<int>(std::clamp<int64_t>(x64, -2000000000LL, 2000000000LL));
+    // The waveform itself is clipped to the visible window; the event rect
+    // only needs to cover the viewport.
+    int w = static_cast<int>(std::min<int64_t>(w64, 2LL * width() + 2000));
 
-        bool isHovered = (i == m_hoverEventIndex);
-        bool isDragged = (i == m_dragEventIndex && m_dragging);
-        bool isSelected = eventIsSelected(i);
-        if (isDragged && !m_dragSourceVisible) continue;
+    QRect eventRect(x, 2, w, trackHeight - 4);
 
-        QColor bgColor = isSelected ? QColor("#334466")
-                       : (isHovered ? QColor("#224466") : QColor("#1a3344"));
-        QColor borderColor = isDragged ? QColor("#ffcc00")
-                           : (isSelected ? QColor("#ffaa00")
-                           : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff")));
+    bool isHovered = (index == m_hoverEventIndex);
+    bool isDragged = (index == m_dragEventIndex && m_dragging);
+    bool isSelected = eventIsSelected(index);
+    if (isDragged && !m_dragSourceVisible) return;
 
-        painter.setPen(QPen(borderColor, (isDragged || isSelected) ? 2 : 1));
-        painter.setBrush(bgColor);
-        painter.drawRect(eventRect);
+    QColor bgColor = isSelected ? QColor("#334466")
+                   : (isHovered ? QColor("#224466") : QColor("#1a3344"));
+    QColor borderColor = isDragged ? QColor("#ffcc00")
+                       : (isSelected ? QColor("#ffaa00")
+                       : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff")));
 
-        if (isMidiMode()) {
-            auto clip = midiClipAt(i);
-            if (clip) {
-                int th = eventRect.height() - 2;
-                renderMidiPreview(painter, clip, eventOffset(i), eventDuration(i),
-                                  eventRect.x() + 1, eventRect.y() + 1, w, th);
-            }
-        } else {
+    painter.setPen(QPen(borderColor, (isDragged || isSelected) ? 2 : 1));
+    painter.setBrush(bgColor);
+    painter.drawRect(eventRect);
+
+    if (isMidiMode()) {
+        auto clip = midiClipAt(index);
+        if (clip) {
             int th = eventRect.height() - 2;
-            auto& ev = m_track->events()[i];
-            renderThumbnail(painter, ev.clip(),
-                            ev.startSample(), ev.durationSample(),
-                            static_cast<size_t>(ev.offsetSample()),
-                            static_cast<size_t>(ev.sourceFrames()),
-                            eventRect.y() + 1, th);
+            renderMidiPreview(painter, clip, eventOffset(index), eventDuration(index),
+                              eventRect.x() + 1, eventRect.y() + 1, w, th);
         }
+    } else {
+        int th = eventRect.height() - 2;
+        auto& ev = m_track->events()[index];
+        renderThumbnail(painter, ev.clip(),
+                        ev.startSample(), ev.durationSample(),
+                        static_cast<size_t>(ev.offsetSample()),
+                        static_cast<size_t>(ev.sourceFrames()),
+                        eventRect.y() + 1, th);
+    }
 
-        // Edge handles
-        {
-            QColor handleColor = borderColor.lighter(130);
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(handleColor);
-            int handleH = trackHeight / 3;
-            int handleY = (trackHeight - handleH) / 2;
-            painter.drawRect(eventRect.x(), handleY, EdgeHandleWidth, handleH);
-            painter.drawRect(eventRect.x() + w - EdgeHandleWidth, handleY, EdgeHandleWidth, handleH);
-        }
+    // Edge handles
+    {
+        QColor handleColor = borderColor.lighter(130);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(handleColor);
+        int handleH = trackHeight / 3;
+        int handleY = (trackHeight - handleH) / 2;
+        painter.drawRect(eventRect.x(), handleY, EdgeHandleWidth, handleH);
+        painter.drawRect(eventRect.x() + w - EdgeHandleWidth, handleY, EdgeHandleWidth, handleH);
+    }
 
-        // Border
-        painter.setPen(QPen(borderColor, 1));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawRect(eventRect);
+    // Border
+    painter.setPen(QPen(borderColor, 1));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(eventRect);
 
-        // Take indicator
-        if (eventTakeCount(i) > 1) {
-            painter.setPen(QColor("#aaddff"));
-            QFont takeFont = painter.font();
-            takeFont.setPixelSize(9);
-            painter.setFont(takeFont);
-            painter.drawText(eventRect.x() + 3, eventRect.y() + 12,
-                QString("T%1/%2").arg(eventActiveTake(i) + 1).arg(eventTakeCount(i)));
-        }
+    // Take indicator
+    if (eventTakeCount(index) > 1) {
+        painter.setPen(QColor("#aaddff"));
+        QFont takeFont = painter.font();
+        takeFont.setPixelSize(9);
+        painter.setFont(takeFont);
+        painter.drawText(eventRect.x() + 3, eventRect.y() + 12,
+            QString("T%1/%2").arg(eventActiveTake(index) + 1).arg(eventTakeCount(index)));
     }
 }
 
@@ -437,108 +440,117 @@ void TrackViewWidget::drawDragPreview(QPainter& painter, int trackHeight) {
 void TrackViewWidget::drawRecordingPreview(QPainter& painter, int trackHeight) {
     // Live audio recording preview: a rectangle growing with the playhead so
     // it is visible that recording is in progress before the event is written.
-    if (m_recordingActive && m_track && m_track->isRecordArmed()
-        && m_track->type() == Track::Type::Audio) {
-        int64_t end = m_playheadPos;
-        if (m_recordEndSample >= 0 && end > m_recordEndSample)
-            end = m_recordEndSample;
-        if (end > m_recordStartSample) {
-            int rx = static_cast<int>((m_recordStartSample - m_scrollOffset) * m_pixelsPerSample);
-            int rw = static_cast<int>((end - m_recordStartSample) * m_pixelsPerSample);
-            if (rx + rw >= 0 && rx <= width()) {
-                QRect recRect(rx, 2, rw, trackHeight - 4);
-                painter.setPen(Qt::NoPen);
-                painter.setBrush(QColor(0, 180, 100, 55));
-                painter.drawRect(recRect);
+    if (!(m_recordingActive && m_track && m_track->isRecordArmed()
+          && m_track->type() == Track::Type::Audio))
+        return;
 
-                // Live waveform of the audio captured so far, drawn at true sample
-                // positions: each refresh appends a new chunk to the right and
-                // the not-yet-recorded part of the rectangle stays empty. Only
-                // the viewport-visible window is rendered, re-rendered when new
-                // peaks arrive or the view scrolls/zooms.
-                if (!m_recordingPeaks.empty() && m_recordingFramesPerPeak > 0
-                    && m_recordingRecordedFrames > 0) {
-                    const int64_t recStart = m_recordStartSample;
-                    const int64_t recFrames = m_recordingRecordedFrames;
-                    const int64_t viewLeft = m_scrollOffset;
-                    const int64_t viewRight = sampleAtX(width());
-                    const int64_t wl = std::max<int64_t>(0, viewLeft - recStart);
-                    const int64_t wr = std::min<int64_t>(recFrames, viewRight - recStart);
-                    if (wr > wl) {
-                        const int ih = std::max(1, trackHeight - 6);
-                        const int iw = std::max(1, static_cast<int>(
-                            std::llround(static_cast<double>(wr - wl) * m_pixelsPerSample)));
-                        const int imgX = static_cast<int>(std::llround(
-                            static_cast<double>(recStart + wl - m_scrollOffset) * m_pixelsPerSample));
-                        const double dpr = devicePixelRatio();
-                        auto& cache = m_recordingWaveCache;
-                        if (cache.image.isNull()
-                            || cache.peakCount != static_cast<int64_t>(m_recordingPeaks.size())
-                            || cache.offsetFrame != wl
-                            || cache.visibleFrames != (wr - wl)
-                            || cache.width != iw || cache.height != ih
-                            || cache.devicePixelRatio != dpr) {
-                            cache.image = WaveformPainter::renderFromPeaks(
-                                m_recordingPeaks.data(), m_recordingPeaks.size(),
-                                static_cast<size_t>(m_recordingFramesPerPeak),
-                                static_cast<size_t>(recFrames),
-                                static_cast<size_t>(wl), static_cast<size_t>(wr - wl),
-                                iw, ih, dpr, WaveformPainter::recordingColor());
-                            cache.peakCount = static_cast<int64_t>(m_recordingPeaks.size());
-                            cache.offsetFrame = wl;
-                            cache.visibleFrames = wr - wl;
-                            cache.width = iw;
-                            cache.height = ih;
-                            cache.devicePixelRatio = dpr;
-                        }
-                        if (!cache.image.isNull())
-                            painter.drawImage(imgX, 3, cache.image);
-                    }
-                }
+    int64_t end = m_playheadPos;
+    if (m_recordEndSample >= 0 && end > m_recordEndSample)
+        end = m_recordEndSample;
+    if (end <= m_recordStartSample)
+        return;
 
-                painter.setPen(QPen(QColor("#00d06a"), 1));
-                painter.setBrush(Qt::NoBrush);
-                painter.drawRect(recRect);
-            }
-        }
+    int rx = static_cast<int>((m_recordStartSample - m_scrollOffset) * m_pixelsPerSample);
+    int rw = static_cast<int>((end - m_recordStartSample) * m_pixelsPerSample);
+    if (rx + rw < 0 || rx > width())
+        return;
+
+    QRect recRect(rx, 2, rw, trackHeight - 4);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 180, 100, 55));
+    painter.drawRect(recRect);
+
+    renderRecordingWaveform(painter, trackHeight);
+
+    painter.setPen(QPen(QColor("#00d06a"), 1));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(recRect);
+}
+
+void TrackViewWidget::renderRecordingWaveform(QPainter& painter, int trackHeight) {
+    // Live waveform of the audio captured so far, drawn at true sample
+    // positions: each refresh appends a new chunk to the right and the
+    // not-yet-recorded part of the rectangle stays empty. Only the
+    // viewport-visible window is rendered, re-rendered when new peaks arrive
+    // or the view scrolls/zooms.
+    if (m_recordingPeaks.empty() || m_recordingFramesPerPeak <= 0
+        || m_recordingRecordedFrames <= 0)
+        return;
+
+    const int64_t recStart = m_recordStartSample;
+    const int64_t recFrames = m_recordingRecordedFrames;
+    const int64_t viewLeft = m_scrollOffset;
+    const int64_t viewRight = sampleAtX(width());
+    const int64_t wl = std::max<int64_t>(0, viewLeft - recStart);
+    const int64_t wr = std::min<int64_t>(recFrames, viewRight - recStart);
+    if (wr <= wl)
+        return;
+
+    const int ih = std::max(1, trackHeight - 6);
+    const int iw = std::max(1, static_cast<int>(
+        std::llround(static_cast<double>(wr - wl) * m_pixelsPerSample)));
+    const int imgX = static_cast<int>(std::llround(
+        static_cast<double>(recStart + wl - m_scrollOffset) * m_pixelsPerSample));
+    const double dpr = devicePixelRatio();
+    auto& cache = m_recordingWaveCache;
+    if (cache.image.isNull()
+        || cache.peakCount != static_cast<int64_t>(m_recordingPeaks.size())
+        || cache.offsetFrame != wl
+        || cache.visibleFrames != (wr - wl)
+        || cache.width != iw || cache.height != ih
+        || cache.devicePixelRatio != dpr) {
+        cache.image = WaveformPainter::renderFromPeaks(
+            m_recordingPeaks.data(), m_recordingPeaks.size(),
+            static_cast<size_t>(m_recordingFramesPerPeak),
+            static_cast<size_t>(recFrames),
+            static_cast<size_t>(wl), static_cast<size_t>(wr - wl),
+            iw, ih, dpr, WaveformPainter::recordingColor());
+        cache.peakCount = static_cast<int64_t>(m_recordingPeaks.size());
+        cache.offsetFrame = wl;
+        cache.visibleFrames = wr - wl;
+        cache.width = iw;
+        cache.height = ih;
+        cache.devicePixelRatio = dpr;
     }
+    if (!cache.image.isNull())
+        painter.drawImage(imgX, 3, cache.image);
 }
 
 void TrackViewWidget::drawMuteOverlay(QPainter& painter) {
-    if (m_track->isMuted()) {
-        painter.fillRect(rect(), QColor(0, 0, 0, 80));
-    }
+    if (!m_track->isMuted())
+        return;
+    painter.fillRect(rect(), QColor(0, 0, 0, 80));
 }
 
 void TrackViewWidget::drawPlayhead(QPainter& painter, int trackHeight) {
-    if (m_playheadPos >= 0) {
-        int phx = static_cast<int>((m_playheadPos - m_scrollOffset) * m_pixelsPerSample);
-        if (phx >= 0 && phx <= width()) {
-            painter.setPen(QPen(QColor("#ff4444"), 2));
-            painter.drawLine(phx, 0, phx, trackHeight);
-        }
-    }
+    if (m_playheadPos < 0)
+        return;
+    int phx = static_cast<int>((m_playheadPos - m_scrollOffset) * m_pixelsPerSample);
+    if (phx < 0 || phx > width())
+        return;
+    painter.setPen(QPen(QColor("#ff4444"), 2));
+    painter.drawLine(phx, 0, phx, trackHeight);
 }
 
 void TrackViewWidget::drawMouseCursor(QPainter& painter, int trackHeight) {
     // Thin vertical cursor line at the mouse position
-    if (m_mouseX >= 0 && m_mouseX <= width()) {
-        painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
-        painter.drawLine(m_mouseX, 0, m_mouseX, trackHeight);
-    }
+    if (m_mouseX < 0 || m_mouseX > width())
+        return;
+    painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
+    painter.drawLine(m_mouseX, 0, m_mouseX, trackHeight);
 }
 
 void TrackViewWidget::drawDragTooltip(QPainter& painter) {
     // Dragged event tooltip
-    if (m_dragging && m_dragEventIndex >= 0) {
-        int64_t start = eventStart(m_dragEventIndex);
-        int phx = static_cast<int>((start - m_scrollOffset) * m_pixelsPerSample);
-        painter.setPen(Qt::white);
-        QFont f = painter.font();
-        f.setPointSize(9);
-        painter.setFont(f);
-        painter.drawText(phx + 4, 14, QString("Sample: %1").arg(start));
-    }
+    if (!m_dragging || m_dragEventIndex < 0)
+        return;
+    int64_t start = eventStart(m_dragEventIndex);
+    int phx = static_cast<int>((start - m_scrollOffset) * m_pixelsPerSample);
+    painter.setPen(Qt::white);
+    QFont f = painter.font();
+    f.setPointSize(9);
+    painter.setFont(f);
+    painter.drawText(phx + 4, 14, QString("Sample: %1").arg(start));
 }
 
 void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
@@ -652,23 +664,23 @@ void TrackViewWidget::drawCrossfades(QPainter& painter) {
 
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
     int deltaY = static_cast<int>(event->angleDelta().y());
-    if (event->modifiers() & Qt::ControlModifier && deltaY != 0) {
-        // Zoom anchored at the frame under the cursor: the sample under the
-        // mouse must stay under it after the zoom.
-        int mouseX = std::clamp(static_cast<int>(event->position().x()), 0, std::max(0, width() - 1));
-        const int64_t anchorSample = sampleAtX(mouseX);
-        double factor = 1.0 + (std::abs(deltaY) / 120.0) * (vvvdaw::ZoomFactor - 1.0);
-        if (deltaY > 0)
-            setZoom(m_pixelsPerSample * factor);
-        else
-            setZoom(m_pixelsPerSample / factor);
-        setScrollOffset(anchorSample - static_cast<int64_t>(mouseX / m_pixelsPerSample));
-    } else {
+    if (!(event->modifiers() & Qt::ControlModifier) || deltaY == 0) {
         // Plain wheel: let the enclosing scroll area handle it (scrolls the
         // track list vertically). Horizontal panning is done by middle-drag.
         event->ignore();
         return;
     }
+
+    // Zoom anchored at the frame under the cursor: the sample under the
+    // mouse must stay under it after the zoom.
+    int mouseX = std::clamp(static_cast<int>(event->position().x()), 0, std::max(0, width() - 1));
+    const int64_t anchorSample = sampleAtX(mouseX);
+    double factor = 1.0 + (std::abs(deltaY) / 120.0) * (vvvdaw::ZoomFactor - 1.0);
+    if (deltaY > 0)
+        setZoom(m_pixelsPerSample * factor);
+    else
+        setZoom(m_pixelsPerSample / factor);
+    setScrollOffset(anchorSample - static_cast<int64_t>(mouseX / m_pixelsPerSample));
     event->accept();
 }
 

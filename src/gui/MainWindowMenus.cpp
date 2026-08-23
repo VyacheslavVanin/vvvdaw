@@ -160,16 +160,12 @@ void MainWindow::setupMenus() {
                                  "The template name is not valid.");
             return;
         }
-        bool overwrite = false;
-        if (TemplateStore::exists(name)) {
-            auto ret = QMessageBox::question(
+        bool overwrite = TemplateStore::exists(name);
+        if (overwrite && QMessageBox::question(
                 this, "Overwrite Template",
                 QString("Template \"%1\" already exists.\nOverwrite it?").arg(name),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (ret != QMessageBox::Yes)
-                return;
-            overwrite = true;
-        }
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
         if (!TemplateStore::saveTemplate(m_project, name, overwrite)) {
             QMessageBox::warning(this, "Save as Template",
                                  "Failed to save template.");
