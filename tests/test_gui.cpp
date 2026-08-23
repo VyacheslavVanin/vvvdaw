@@ -92,6 +92,18 @@ bool regionIsBackground(const QImage& img, int x0, int x1, int y0, int y1,
     return true;
 }
 
+// True if any pixel in the rectangle has the crossfade color (#ff6600 orange,
+// distinct from the blue event borders and the amber selection highlight).
+bool regionHasCrossfade(const QImage& img, int x0, int x1, int y0, int y1) {
+    for (int x = x0; x <= x1; ++x)
+        for (int y = y0; y <= y1; ++y) {
+            const QColor c = img.pixelColor(x, y);
+            if (c.red() > 240 && c.green() < 160 && c.blue() < 80)
+                return true;
+        }
+    return false;
+}
+
 // Minimal instrument plugin stub with a configurable output channel count,
 // used to exercise the channel routing UI without loading a real plugin.
 class StubSynth : public PluginInstance {
@@ -147,6 +159,11 @@ private slots:
     void midiCrossTrackMoveKeepsSiblingEvents();
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
+    void multiSelectAudioEventsCtrlAndShift();
+    void deleteAllSelectedEvents();
+    void crossfadeContextMenuAppliesAndUndoes();
+    void trackViewDrawsCrossfadeX();
+    void trackViewDrawsCrossfadeAcrossGap();
     void trackViewDrawsRecordingPreview();
     void trackViewDrawsLiveWaveformDuringRecording();
     void trackViewRecordingWaveformAddsDiscretely();
@@ -477,6 +494,229 @@ void MainWindowTest::shiftDragOnAudioDoesNotDuplicate() {
     QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
     QCOMPARE(track.events().size(), size_t(1));
     QTest::mouseRelease(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(40, 40));
+}
+
+void MainWindowTest::multiSelectAudioEventsCtrlAndShift() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    for (int i = 0; i < 3; ++i) {
+        AudioEvent ev;
+        ev.setStartSample(i * 48000);
+        ev.setDurationSample(48000);
+        track.addEvent(ev);
+    }
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001); // 1 px = 1000 samples; each event spans 48 px
+
+    // Plain click selects a single event (anchor becomes event 0).
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(1));
+
+    // Ctrl+click adds the third event to the selection.
+    QTest::mousePress(view, Qt::LeftButton, Qt::ControlModifier, QPoint(120, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::ControlModifier, QPoint(120, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(2));
+
+    // Ctrl+click on an already-selected event removes it again.
+    QTest::mousePress(view, Qt::LeftButton, Qt::ControlModifier, QPoint(120, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::ControlModifier, QPoint(120, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(1));
+
+    // Shift+click range-selects from the anchor (event 2 after the toggles) to
+    // the clicked event (event 1): events 1 and 2 become selected.
+    QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(72, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(2));
+
+    // Re-anchor on event 0, then Shift+click event 2 selects all three.
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, QPoint(120, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(3));
+
+    // Clicking empty space clears the selection.
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, QPoint(350, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(0));
+}
+
+void MainWindowTest::deleteAllSelectedEvents() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    for (int i = 0; i < 3; ++i) {
+        AudioEvent ev;
+        ev.setStartSample(i * 48000);
+        ev.setDurationSample(48000);
+        track.addEvent(ev);
+    }
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001);
+
+    // Select events 0 and 2 (plain click + Ctrl+click).
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QTest::mousePress(view, Qt::LeftButton, Qt::ControlModifier, QPoint(120, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::ControlModifier, QPoint(120, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(2));
+
+    view->deleteSelectedEvent();
+    QCOMPARE(track.events().size(), size_t(1));
+    QCOMPARE(track.events()[0].startSample(), int64_t(48000)); // middle one remains
+    QVERIFY(!view->hasSelection());
+}
+
+void MainWindowTest::crossfadeContextMenuAppliesAndUndoes() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    for (int i = 0; i < 2; ++i) {
+        AudioEvent ev;
+        ev.setStartSample(i * 48000);
+        ev.setDurationSample(48000);
+        track.addEvent(ev);
+    }
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001); // 1 px = 1000 samples
+    view->setScrollOffset(0);
+
+    // Select both events: plain click on event 0, Ctrl+click on event 1.
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, QPoint(24, 40));
+    QTest::mousePress(view, Qt::LeftButton, Qt::ControlModifier, QPoint(72, 40));
+    QTest::mouseRelease(view, Qt::LeftButton, Qt::ControlModifier, QPoint(72, 40));
+    QCOMPARE(view->selectedEventIds().size(), size_t(2));
+
+    // Default crossfade length: 5 ms at 48 kHz.
+    const int64_t defaultFade =
+        static_cast<int64_t>(project.sampleRate() * vvvdaw::DefaultCrossfadeMs / 1000);
+    QVERIFY(defaultFade > 0);
+
+    bool found = false;
+    QTimer::singleShot(0, [&] {
+        if (auto* menu = view->findChild<QMenu*>()) {
+            for (QAction* a : menu->actions()) {
+                if (a->text() == "Crossfade Selected Events") {
+                    a->trigger();
+                    found = true;
+                    break;
+                }
+            }
+            menu->close();
+        }
+    });
+
+    QContextMenuEvent ctx(QContextMenuEvent::Mouse, QPoint(24, 40),
+                          view->mapToGlobal(QPoint(24, 40)));
+    QApplication::sendEvent(view, &ctx);
+    QCoreApplication::processEvents();
+
+    QVERIFY(found);
+    const AudioEvent& ev0 = project.tracks()[0].events()[0];
+    const AudioEvent& ev1 = project.tracks()[0].events()[1];
+    QCOMPARE(ev0.fadeOutSamples(), defaultFade);
+    QCOMPARE(ev1.fadeInSamples(), defaultFade);
+    QCOMPARE(ev0.fadeInSamples(), int64_t(0));
+    QCOMPARE(ev1.fadeOutSamples(), int64_t(0));
+
+    window.performUndo();
+    QCOMPARE(project.tracks()[0].events()[0].fadeOutSamples(), int64_t(0));
+    QCOMPARE(project.tracks()[0].events()[1].fadeInSamples(), int64_t(0));
+
+    window.performRedo();
+    QCOMPARE(project.tracks()[0].events()[0].fadeOutSamples(), defaultFade);
+    QCOMPARE(project.tracks()[0].events()[1].fadeInSamples(), defaultFade);
+}
+
+void MainWindowTest::trackViewDrawsCrossfadeX() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent a, b;
+    a.setStartSample(0);
+    a.setDurationSample(48000);
+    a.setFadeOutSamples(24000); // fade-out tail: [24000, 48000)
+    b.setStartSample(48000);
+    b.setDurationSample(48000);
+    b.setFadeInSamples(24000);  // fade-in head: [48000, 72000)
+    track.addEvent(a);
+    track.addEvent(b);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001); // 1 px = 1000 samples
+    view->setScrollOffset(0);
+
+    // Junction zone spans pixels [24, 72] (fade-out start to fade-in end),
+    // vertically the event band [2, 78]. Both diagonals cross the center.
+    QImage img = view->grab().toImage();
+    QVERIFY(regionHasCrossfade(img, 24, 72, 2, 78));
+    QVERIFY(img.pixelColor(48, 40).red() > 240); // center of the X is orange
+
+    // Without opposing fades no crossfade is drawn.
+    track.events()[0].setFadeOutSamples(0);
+    track.events()[1].setFadeInSamples(0);
+    QImage cleared = view->grab().toImage();
+    QVERIFY(!regionHasCrossfade(cleared, 24, 72, 2, 78));
+}
+
+void MainWindowTest::trackViewDrawsCrossfadeAcrossGap() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+    AudioEvent a, b;
+    a.setStartSample(0);
+    a.setDurationSample(48000);
+    a.setFadeOutSamples(12000); // tail: [36000, 48000)
+    b.setStartSample(60000);    // 12 s gap of silence
+    b.setDurationSample(48000);
+    b.setFadeInSamples(12000);  // head: [60000, 72000)
+    track.addEvent(a);
+    track.addEvent(b);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(0.001);
+    view->setScrollOffset(0);
+
+    // The X still spans the junction across the gap: [36000, 72000) -> [36, 72).
+    QImage img = view->grab().toImage();
+    QVERIFY(regionHasCrossfade(img, 36, 72, 2, 78));
 }
 
 void MainWindowTest::trackViewDrawsRecordingPreview() {

@@ -28,6 +28,7 @@ private slots:
     void writeTrackToBusMono();
     void writeTrackToBusStereo();
     void routeMonoToBusCentered();
+    void eventFadeGainCurve();
     void linearToDecibelsMapping();
     void decibelsToLinearMapping();
     void busBufferPeakMax();
@@ -197,6 +198,33 @@ void TestAudio::routeMonoToBusCentered() {
         QCOMPARE(bus[i * 2], src[i] * 0.5f);
         QCOMPARE(bus[i * 2 + 1], src[i] * 0.5f);
     }
+}
+
+void TestAudio::eventFadeGainCurve() {
+    // Body of the event and events without fades: unity gain.
+    QCOMPARE(eventFadeGain(500, 1000, 100, 200), 1.0f);
+    QCOMPARE(eventFadeGain(0, 1000, 0, 0), 1.0f);
+
+    // Outside the event: silent.
+    QCOMPARE(eventFadeGain(-1, 1000, 100, 200), 0.0f);
+    QCOMPARE(eventFadeGain(1000, 1000, 100, 200), 0.0f);
+
+    // Fade-in: equal-power ramp over the head, reaching unity at its end.
+    QVERIFY(eventFadeGain(0, 1000, 100, 200) < 0.1f);
+    QVERIFY(std::fabs(eventFadeGain(49, 1000, 100, 200)
+            - 0.7071067811865476f) < 1e-5f);   // t = 0.5 -> sin(pi/4)
+    QVERIFY(std::fabs(eventFadeGain(99, 1000, 100, 200) - 1.0f) < 1e-5f);
+    QCOMPARE(eventFadeGain(100, 1000, 100, 200), 1.0f); // just past the fade
+
+    // Fade-out: equal-power ramp over the tail, decaying to ~0 at its end.
+    QCOMPARE(eventFadeGain(799, 1000, 100, 200), 1.0f); // just before the tail
+    QVERIFY(std::fabs(eventFadeGain(900, 1000, 100, 200)
+            - 0.7071067811865476f) < 1e-5f);   // t = 0.5 -> sin(pi/4)
+    QVERIFY(eventFadeGain(999, 1000, 100, 200) < 0.1f);
+
+    // Fades longer than the event are ignored (no gain shaping at all).
+    QCOMPARE(eventFadeGain(50, 100, 200, 0), 1.0f);
+    QCOMPARE(eventFadeGain(50, 100, 0, 200), 1.0f);
 }
 
 void TestAudio::linearToDecibelsMapping() {

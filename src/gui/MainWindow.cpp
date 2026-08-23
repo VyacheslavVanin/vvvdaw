@@ -54,6 +54,7 @@ using vvvdaw::TransportState;
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QJsonArray>
+#include <cmath>
 
 MainWindow::MainWindow(Project& project, AudioEngine& engine, Settings& settings,
                        QWidget* parent)
@@ -1134,7 +1135,7 @@ void MainWindow::setupMenus() {
             }
         }
         for (size_t i = m_project.tracks().size(); i > 0; --i) {
-            if (m_trackRows[i - 1].view->selectedEventIndex() >= 0) {
+            if (!m_trackRows[i - 1].view->selectedEventIds().empty()) {
                 int idx = static_cast<int>(i - 1);
                 std::vector<PluginInstance*> plugins;
                 auto& chain = m_project.tracks()[idx].pluginChain();
@@ -1158,7 +1159,7 @@ void MainWindow::setupMenus() {
             }
         }
         for (auto& row : m_trackRows) {
-            if (row.view->selectedEventIndex() >= 0) {
+            if (!row.view->selectedEventIds().empty()) {
                 row.view->deleteSelectedEvent();
                 return;
             }
@@ -1481,6 +1482,19 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
             double snapUnit = m_project.samplesPerBar() / m_snapResolution;
             executeCommand(std::make_unique<CutEventCommand>(
                 m_project, idx, eventId, cutSample, snapToGrid, snapUnit));
+        });
+
+        connect(row.view, &TrackViewWidget::crossfadeRequested, this,
+                [this, idx = trackIndex](const std::vector<int64_t>& eventIds,
+                                         int64_t fadeSamples) {
+            if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;
+            if (m_project.tracks()[idx].type() != Track::Type::Audio) return;
+            int64_t length = fadeSamples;
+            if (length < 0)
+                length = static_cast<int64_t>(std::llround(
+                    m_project.sampleRate() * vvvdaw::DefaultCrossfadeMs / 1000.0));
+            executeCommand(std::make_unique<SetEventsFadeCommand>(
+                m_project, idx, eventIds, length));
         });
 
         connect(row.view, &TrackViewWidget::eventTrimFinished, this,

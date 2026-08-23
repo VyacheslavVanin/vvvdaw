@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -102,6 +103,30 @@ inline void routeMonoToBus(float* busBuf, const float* src, unsigned long frames
         busBuf[f * 2]     += s;
         busBuf[f * 2 + 1] += s;
     }
+}
+
+// Equal-power gain applied to one event sample at relative position `relSample`
+// inside an event of `duration` samples with `fadeIn`/`fadeOut` sample lengths.
+// Returns 1 in the body, ramps 0 -> 1 across the fade-in and 1 -> 0 across the
+// fade-out, and 0 outside the event. When two adjacent events carry opposing
+// fades the junction is a smooth equal-power crossfade.
+inline float eventFadeGain(int64_t relSample, int64_t duration,
+                           int64_t fadeIn, int64_t fadeOut) {
+    if (relSample < 0 || relSample >= duration)
+        return 0.0f;
+    if (fadeIn > 0 && fadeIn < duration && relSample < fadeIn) {
+        float t = std::clamp(
+            static_cast<float>(relSample + 1) / static_cast<float>(fadeIn),
+            0.0f, 1.0f);
+        return std::sin(t * static_cast<float>(M_PI) * 0.5f);
+    }
+    if (fadeOut > 0 && fadeOut < duration && relSample >= duration - fadeOut) {
+        float t = std::clamp(
+            static_cast<float>(duration - relSample) / static_cast<float>(fadeOut),
+            0.0f, 1.0f);
+        return std::sin(t * static_cast<float>(M_PI) * 0.5f);
+    }
+    return 1.0f;
 }
 
 // Convert a linear amplitude to decibels, clamped to [-60, 0] dB for metering.

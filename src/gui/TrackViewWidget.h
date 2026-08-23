@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QMap>
 #include <memory>
+#include <set>
 #include <vector>
 #include "core/Constants.h"
 #include "model/AudioClip.h"
@@ -41,7 +42,18 @@ public:
 
     void updateFromTrack();
     void deleteSelectedEvent();
-    int selectedEventIndex() const { return m_selectedEventIndex; }
+    std::vector<int64_t> selectedEventIds() const {
+        return {m_selectedEventIds.begin(), m_selectedEventIds.end()};
+    }
+    bool hasSelection() const { return !m_selectedEventIds.empty(); }
+    bool eventIsSelected(int index) const {
+        return index >= 0 && index < eventCount() &&
+               m_selectedEventIds.count(eventIdAt(index)) > 0;
+    }
+    void setSelection(int index);
+    void toggleSelection(int index);
+    void rangeSelect(int index);
+    void clearSelection();
     void setAlternateRow(bool alternate) { m_alternateRow = alternate; update(); }
     void setDragPreview(const AudioEvent* event, int64_t startSample);
     void setMidiDragPreview(const MidiEvent* event, int64_t startSample);
@@ -75,6 +87,10 @@ signals:
     void eventDoubleClicked(int64_t eventId);
     void addMidiEventRequested(int64_t startSample);
     void cutEventRequested(int64_t eventId, int64_t cutSample, bool snapToGrid);
+    void selectionChanged();
+    // Apply (or with `fadeSamples == 0`, remove) crossfades on the junctions
+    // between the given events of this track.
+    void crossfadeRequested(const std::vector<int64_t>& eventIds, int64_t fadeSamples);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -107,6 +123,10 @@ private:
     void renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
                            int64_t offsetSample, int64_t durationSample,
                            int x, int y, int w, int h);
+    // Draw crossfade indicators: an X (rectangle outline + two diagonals)
+    // across each junction where the left event fades out and the right event
+    // fades in.
+    void drawCrossfades(QPainter& painter);
 
     bool isMidiMode() const;
     int eventCount() const;
@@ -185,6 +205,11 @@ private:
     int64_t m_dragStartSample = 0;
     int m_dragStartMouseX = 0;
     bool m_dragWasDuplicate = false;
+    // Ctrl-press on an audio event: waits for the mouse to move past a small
+    // threshold before materializing a duplicate (drag) — a click without
+    // movement toggles the event's selection instead.
+    bool m_pendingDuplicateDrag = false;
+    static constexpr int kDuplicateDragThresholdPx = 3;
 
     // Hover
     int m_hoverEventIndex = -1;
@@ -192,8 +217,10 @@ private:
     // Mouse cursor line (thin vertical line at the current mouse X).
     int m_mouseX = -1;
 
-    // Selection
-    int m_selectedEventIndex = -1;
+    // Selection (event ids; multiple events can be selected on one track).
+    std::set<int64_t> m_selectedEventIds;
+    // Index anchor for Shift-click range selection.
+    int m_selectionAnchorIndex = -1;
 
     // Row appearance
     bool m_alternateRow = false;
@@ -229,4 +256,10 @@ private:
     int64_t m_pendingCutEventId = -1;
     int64_t m_pendingCutSample = 0;
     bool m_pendingCutSnap = false;
+
+    // Crossfade requested from the context menu; emitted after the popup closes
+    // (executing the command rebuilds the tracks and would destroy the popup).
+    std::vector<int64_t> m_pendingCrossfadeIds;
+    int64_t m_pendingCrossfadeSamples = 0;
+    bool m_pendingCrossfade = false;
 };

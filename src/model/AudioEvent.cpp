@@ -34,6 +34,8 @@ QJsonObject AudioEvent::toJson(const QString& projectDir) const {
     eObj["offsetSample"] = static_cast<qint64>(m_offsetSample);
     eObj["durationSample"] = static_cast<qint64>(m_durationSample);
     eObj["sourceFrames"] = static_cast<qint64>(m_sourceFrames);
+    eObj["fadeInSamples"] = static_cast<qint64>(m_fadeInSamples);
+    eObj["fadeOutSamples"] = static_cast<qint64>(m_fadeOutSamples);
 
     if (!m_takes.empty()) {
         QJsonArray takesArr;
@@ -59,6 +61,8 @@ AudioEvent AudioEvent::fromJson(const QJsonObject& eObj, const QString& projectD
     event.setSourceFrames(eObj.contains("sourceFrames")
         ? jsonInt64(eObj, "sourceFrames")
         : event.durationSample());
+    event.setFadeInSamples(jsonInt64(eObj, "fadeInSamples"));
+    event.setFadeOutSamples(jsonInt64(eObj, "fadeOutSamples"));
 
     if (eObj.contains("takes")) {
         const QJsonArray takesArr = eObj["takes"].toArray();

@@ -914,6 +914,22 @@ void AudioEngine::mixTracksToBuses(Project* proj, unsigned long frameCount, int6
                                                     frameCount);
                 if (framesAvail > 0) {
                     int ch = activeClip->channels();
+                    // Apply the event's fade-in/fade-out gain envelope in place
+                    // (equal-power curves) so adjacent events with opposing
+                    // fades crossfade smoothly at their shared boundary.
+                    const int64_t duration = event.durationSample();
+                    const int64_t fadeIn = event.fadeInSamples();
+                    const int64_t fadeOut = event.fadeOutSamples();
+                    if ((fadeIn > 0 && fadeIn < duration) ||
+                        (fadeOut > 0 && fadeOut < duration)) {
+                        for (size_t f = 0; f < framesAvail; ++f) {
+                            const float g = eventFadeGain(
+                                pos + static_cast<int64_t>(f) - event.startSample(),
+                                duration, fadeIn, fadeOut);
+                            for (int c = 0; c < ch; ++c)
+                                m_stereoScratch[f * static_cast<size_t>(ch) + static_cast<size_t>(c)] *= g;
+                        }
+                    }
                     if (hasPlugins) {
                         addSourceToTrack(trackL, trackR, m_stereoScratch.data(), ch,
                                          framesAvail, isMono);

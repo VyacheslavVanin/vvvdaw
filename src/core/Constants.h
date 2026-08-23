@@ -43,6 +43,10 @@ inline constexpr int TickIntervalSamples = 48000;
 // Audio
 inline constexpr float MonitoringVolumeFactor = 0.7f;
 
+// Default crossfade length applied to the junction between two adjacent
+// audio events, in milliseconds.
+inline constexpr int DefaultCrossfadeMs = 5;
+
 enum class TransportState : uint8_t {
     Stopped,
     Playing,

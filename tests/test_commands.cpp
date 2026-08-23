@@ -54,6 +54,10 @@ private slots:
     void cutEventCommandSnapsBeforeGrid();
     void cutEventCommandSnapsAfterGrid();
     void cutEventCommandSnapOnGrid();
+    void setEventsFadeCommand();
+    void setEventsFadeCommandClampsToDuration();
+    void setEventsFadeCommandLessThanTwoNoOp();
+    void cutEventCommandResetsFadesAtSplice();
     void addMidiEventCommand();
     void moveMidiEventCommand();
     void trimMidiEventCommand();
@@ -981,6 +985,115 @@ void TestCommands::cutEventCommandSnapOnGrid() {
     QCOMPARE(right.durationSample(), int64_t(1000));
     QCOMPARE(right.sourceFrames(), int64_t(1000));
     QCOMPARE(left.endSample(), right.startSample());
+}
+
+void TestCommands::setEventsFadeCommand() {
+    Project p;
+    p.addTrack("T");
+    AudioEvent e1, e2, e3;
+    e1.setStartSample(0);    e1.setDurationSample(4800); e1.setSourceFrames(4800);
+    e2.setStartSample(4800); e2.setDurationSample(4800); e2.setSourceFrames(4800);
+    e3.setStartSample(9600); e3.setDurationSample(4800); e3.setSourceFrames(4800);
+    p.tracks()[0].addEvent(e1);
+    int64_t id1 = p.tracks()[0].events()[0].id();
+    p.tracks()[0].addEvent(e2);
+    int64_t id2 = p.tracks()[0].events()[1].id();
+    p.tracks()[0].addEvent(e3);
+    int64_t id3 = p.tracks()[0].events()[2].id();
+
+    UndoStack stack;
+    // Out-of-order ids: the command orders them by timeline position.
+    stack.execute(std::make_unique<SetEventsFadeCommand>(
+        p, 0, std::vector<int64_t>{id2, id1, id3}, 240));
+
+    const AudioEvent& ev1 = p.tracks()[0].events()[0];
+    const AudioEvent& ev2 = p.tracks()[0].events()[1];
+    const AudioEvent& ev3 = p.tracks()[0].events()[2];
+    QCOMPARE(ev1.fadeOutSamples(), int64_t(240));   // junction e1-e2
+    QCOMPARE(ev2.fadeInSamples(), int64_t(240));
+    QCOMPARE(ev2.fadeOutSamples(), int64_t(240));   // junction e2-e3
+    QCOMPARE(ev3.fadeInSamples(), int64_t(240));
+    QCOMPARE(ev1.fadeInSamples(), int64_t(0));      // no neighbor on the left
+    QCOMPARE(ev3.fadeOutSamples(), int64_t(0));     // no neighbor on the right
+
+    stack.undo();
+    QCOMPARE(ev1.fadeOutSamples(), int64_t(0));
+    QCOMPARE(ev2.fadeInSamples(), int64_t(0));
+    QCOMPARE(ev2.fadeOutSamples(), int64_t(0));
+    QCOMPARE(ev3.fadeInSamples(), int64_t(0));
+
+    stack.redo();
+    QCOMPARE(ev1.fadeOutSamples(), int64_t(240));
+    QCOMPARE(ev2.fadeInSamples(), int64_t(240));
+    QCOMPARE(ev3.fadeInSamples(), int64_t(240));
+}
+
+void TestCommands::setEventsFadeCommandClampsToDuration() {
+    Project p;
+    p.addTrack("T");
+    AudioEvent e1, e2;
+    e1.setStartSample(0);   e1.setDurationSample(100); e1.setSourceFrames(100);
+    e2.setStartSample(100); e2.setDurationSample(50);  e2.setSourceFrames(50);
+    p.tracks()[0].addEvent(e1);
+    int64_t id1 = p.tracks()[0].events()[0].id();
+    p.tracks()[0].addEvent(e2);
+    int64_t id2 = p.tracks()[0].events()[1].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<SetEventsFadeCommand>(
+        p, 0, std::vector<int64_t>{id1, id2}, 1000));
+
+    QCOMPARE(p.tracks()[0].events()[0].fadeOutSamples(), int64_t(99)); // duration-1
+    QCOMPARE(p.tracks()[0].events()[1].fadeInSamples(), int64_t(49));
+}
+
+void TestCommands::setEventsFadeCommandLessThanTwoNoOp() {
+    Project p;
+    p.addTrack("T");
+    AudioEvent e1;
+    e1.setStartSample(0);
+    e1.setDurationSample(4800);
+    e1.setFadeOutSamples(12);
+    p.tracks()[0].addEvent(e1);
+    int64_t id1 = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<SetEventsFadeCommand>(
+        p, 0, std::vector<int64_t>{id1}, 240));
+    QCOMPARE(p.tracks()[0].events()[0].fadeOutSamples(), int64_t(12)); // untouched
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].events()[0].fadeOutSamples(), int64_t(12));
+}
+
+void TestCommands::cutEventCommandResetsFadesAtSplice() {
+    Project p;
+    p.addTrack("T");
+    auto clip = std::make_shared<AudioClip>(std::vector<float>(48000, 0.5f), 48000, 1);
+    AudioEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(1000);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(10000);
+    ev.setSourceFrames(10000);
+    ev.setFadeInSamples(100);
+    ev.setFadeOutSamples(200);
+    p.tracks()[0].addEvent(ev);
+    int64_t id = p.tracks()[0].events()[0].id();
+
+    UndoStack stack;
+    stack.execute(std::make_unique<CutEventCommand>(p, 0, id, 4000));
+    const AudioEvent& left = p.tracks()[0].events()[0];
+    const AudioEvent& right = p.tracks()[0].events()[1];
+    QCOMPARE(left.fadeInSamples(), int64_t(100));   // outer fade kept
+    QCOMPARE(left.fadeOutSamples(), int64_t(0));    // splice fade cleared
+    QCOMPARE(right.fadeInSamples(), int64_t(0));    // splice fade cleared
+    QCOMPARE(right.fadeOutSamples(), int64_t(200)); // outer fade kept
+
+    stack.undo();
+    const AudioEvent& restored = p.tracks()[0].events()[0];
+    QCOMPARE(restored.fadeInSamples(), int64_t(100));
+    QCOMPARE(restored.fadeOutSamples(), int64_t(200));
 }
 
 static QJsonObject makeMidiEventJson() {

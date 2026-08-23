@@ -111,12 +111,40 @@ private:
     int64_t m_savedOffset = 0;
     int64_t m_savedDuration = 0;
     int64_t m_savedSourceFrames = 0;
+    int64_t m_savedFadeIn = 0;
+    int64_t m_savedFadeOut = 0;
     std::shared_ptr<AudioClip> m_savedClip;
     std::vector<std::shared_ptr<AudioClip>> m_savedTakes;
     int m_savedActiveTakeIndex = -1;
 
     int64_t m_rightEventId = -1;
     bool m_didCut = false;
+};
+
+// Set fade-in / fade-out lengths (in samples) on the junctions between the
+// given audio events, sorted by their timeline start position. For each
+// consecutive pair the left event gets a fade-out and the right event a
+// fade-in of `fadeSamples`, so the shared boundary crossfades and hides the
+// discontinuity. `fadeSamples` of 0 removes the fades. Fewer than two events
+// is a no-op.
+class SetEventsFadeCommand : public UndoCommand {
+public:
+    SetEventsFadeCommand(Project& project, int trackIndex,
+                         std::vector<int64_t> eventIds, int64_t fadeSamples);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 47; }
+    bool requiresPluginWindowsClose() const override { return false; }
+private:
+    struct FadeState {
+        int64_t oldFadeIn = 0;
+        int64_t oldFadeOut = 0;
+    };
+    Project& m_project;
+    int m_trackIndex;
+    std::vector<int64_t> m_eventIds;
+    int64_t m_fadeSamples;
+    std::vector<FadeState> m_oldStates;
 };
 
 // Move an event from one track to another. The move already happened live

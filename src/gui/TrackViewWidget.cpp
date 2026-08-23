@@ -73,6 +73,49 @@ void TrackViewWidget::updateFromTrack() {
     update();
 }
 
+void TrackViewWidget::setSelection(int index) {
+    m_selectedEventIds.clear();
+    if (index >= 0 && index < eventCount())
+        m_selectedEventIds.insert(eventIdAt(index));
+    m_selectionAnchorIndex = index;
+    update();
+    emit selectionChanged();
+}
+
+void TrackViewWidget::toggleSelection(int index) {
+    if (index < 0 || index >= eventCount()) return;
+    int64_t id = eventIdAt(index);
+    if (m_selectedEventIds.count(id) > 0)
+        m_selectedEventIds.erase(id);
+    else
+        m_selectedEventIds.insert(id);
+    m_selectionAnchorIndex = index;
+    update();
+    emit selectionChanged();
+}
+
+void TrackViewWidget::rangeSelect(int index) {
+    if (index < 0 || index >= eventCount()) return;
+    int anchor = m_selectionAnchorIndex;
+    if (anchor < 0 || anchor >= eventCount())
+        anchor = index;
+    int lo = std::min(anchor, index);
+    int hi = std::max(anchor, index);
+    m_selectedEventIds.clear();
+    for (int i = lo; i <= hi; ++i)
+        m_selectedEventIds.insert(eventIdAt(i));
+    m_selectionAnchorIndex = anchor;
+    update();
+    emit selectionChanged();
+}
+
+void TrackViewWidget::clearSelection() {
+    m_selectedEventIds.clear();
+    m_selectionAnchorIndex = -1;
+    update();
+    emit selectionChanged();
+}
+
 int64_t TrackViewWidget::sampleAtX(int x) const {
     return m_scrollOffset + static_cast<int64_t>(x / m_pixelsPerSample);
 }
@@ -261,7 +304,7 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
 
         bool isHovered = (i == m_hoverEventIndex);
         bool isDragged = (i == m_dragEventIndex && m_dragging);
-        bool isSelected = (i == m_selectedEventIndex);
+        bool isSelected = eventIsSelected(i);
         if (isDragged && !m_dragSourceVisible) continue;
 
         QColor bgColor = isSelected ? QColor("#334466")
@@ -317,6 +360,9 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
                 QString("T%1/%2").arg(eventActiveTake(i) + 1).arg(eventTakeCount(i)));
         }
     }
+
+    if (!isMidiMode())
+        drawCrossfades(painter);
 
     // Drag preview on target track
     if (m_dragPreview.midiEvent && m_dragPreview.midiEvent->clip()) {
@@ -529,6 +575,60 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
         painter.drawImage(x, y, cache.image);
 }
 
+void TrackViewWidget::drawCrossfades(QPainter& painter) {
+    if (!m_track || m_track->type() != Track::Type::Audio)
+        return;
+    const auto& events = m_track->events();
+    if (events.size() < 2)
+        return;
+
+    // The event vector is insertion-ordered; pair events by timeline position
+    // so adjacent events are compared regardless of move history.
+    std::vector<int> order(events.size());
+    for (size_t i = 0; i < events.size(); ++i)
+        order[i] = static_cast<int>(i);
+    std::sort(order.begin(), order.end(), [&events](int a, int b) {
+        return events[a].startSample() < events[b].startSample();
+    });
+
+    const int trackHeight = height();
+    const QColor crossfadeColor("#ff6600");
+    painter.setPen(QPen(crossfadeColor, 1));
+    painter.setBrush(Qt::NoBrush);
+
+    for (size_t k = 0; k + 1 < order.size(); ++k) {
+        const AudioEvent& left = events[order[k]];
+        const AudioEvent& right = events[order[k + 1]];
+        if (left.fadeOutSamples() <= 0 || right.fadeInSamples() <= 0)
+            continue;
+
+        // Junction zone: from where the left event starts fading out to where
+        // the right event finishes fading in. Drawn even across a gap.
+        const int64_t fadeStart = left.endSample() - left.fadeOutSamples();
+        const int64_t fadeEnd = right.startSample() + right.fadeInSamples();
+        if (fadeEnd <= fadeStart)
+            continue;
+
+        const int64_t x1 = static_cast<int64_t>(
+            (fadeStart - m_scrollOffset) * m_pixelsPerSample);
+        const int64_t x2 = static_cast<int64_t>(
+            (fadeEnd - m_scrollOffset) * m_pixelsPerSample);
+        if (x2 < 0 || x1 > width())
+            continue;
+
+        const int px1 = static_cast<int>(std::clamp<int64_t>(x1, 0, width()));
+        const int px2 = static_cast<int>(std::clamp<int64_t>(x2, 0, width()));
+        if (px2 <= px1)
+            continue;
+
+        const int y = 2;
+        const int h = trackHeight - 4;
+        painter.drawRect(px1, y, px2 - px1, h);
+        painter.drawLine(px1, y, px2, y + h);
+        painter.drawLine(px2, y, px1, y + h);
+    }
+}
+
 void TrackViewWidget::wheelEvent(QWheelEvent* event) {
     int deltaY = static_cast<int>(event->angleDelta().y());
     if (event->modifiers() & Qt::ControlModifier && deltaY != 0) {
@@ -565,7 +665,7 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
         if (eventAtX(static_cast<int>(event->position().x()), idx) >= 0) {
             EdgeDrag edge = edgeAtX(static_cast<int>(event->position().x()), idx);
             if (edge != EdgeDrag::None) {
-                m_selectedEventIndex = idx;
+                setSelection(idx);
                 m_edgeDrag = edge;
                 m_edgeDragEventIndex = idx;
                 m_edgeDragStartOffset = eventOffset(idx);
@@ -577,39 +677,63 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
                 return;
             }
 
-            m_selectedEventIndex = idx;
-
             bool ctrlDrag = (event->modifiers() & Qt::ControlModifier);
             bool shiftDrag = (event->modifiers() & Qt::ShiftModifier);
-            bool duplicate = ctrlDrag || (isMidiMode() && shiftDrag);
-            m_dragWasDuplicate = duplicate;
-            if (duplicate) {
-                emit eventDragStarted();
-                auto lock = m_project ? m_project->writeLock()
-                                      : std::unique_lock<std::shared_mutex>();
-                if (isMidiMode()) {
+
+            if (isMidiMode()) {
+                // Legacy MIDI behavior: Ctrl/Shift-drag duplicates.
+                setSelection(idx);
+                bool duplicate = ctrlDrag || shiftDrag;
+                m_dragWasDuplicate = duplicate;
+                if (duplicate) {
+                    emit eventDragStarted();
+                    auto lock = m_project ? m_project->writeLock()
+                                          : std::unique_lock<std::shared_mutex>();
                     MidiEvent copy = shiftDrag ? m_track->midiEvents()[idx].cloneDeep()
                                                : m_track->midiEvents()[idx];
                     copy.setStartSample(copy.startSample() +
                         static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
                     m_track->addMidiEvent(std::move(copy));
-                    m_selectedEventIndex = eventCount() - 1;
-                } else {
-                    AudioEvent copy = m_track->events()[idx];
-                    copy.setStartSample(copy.startSample() +
-                        static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
-                    m_track->addEvent(std::move(copy));
-                    m_selectedEventIndex = eventCount() - 1;
+                    setSelection(eventCount() - 1);
                 }
+                m_dragEventIndex = idx;
+                if (duplicate)
+                    m_dragEventIndex = eventCount() - 1;
+                m_dragging = true;
+                m_dragStartSample = eventStart(m_dragEventIndex);
+                m_dragStartMouseX = static_cast<int>(event->position().x());
+                setCursor(Qt::ClosedHandCursor);
+                update();
+                return;
             }
 
-            m_dragEventIndex = m_selectedEventIndex;
+            // Audio tracks: Ctrl+click toggles selection (or starts a deferred
+            // duplicate drag once the mouse moves), Shift+click range-selects.
+            if (ctrlDrag) {
+                m_dragWasDuplicate = true;
+                m_pendingDuplicateDrag = true;
+                m_dragEventIndex = idx;
+                m_dragging = true;
+                m_dragStartSample = eventStart(idx);
+                m_dragStartMouseX = static_cast<int>(event->position().x());
+                setCursor(Qt::ClosedHandCursor);
+                update();
+                return;
+            }
+            if (shiftDrag) {
+                rangeSelect(idx);
+                update();
+                return;
+            }
+
+            setSelection(idx);
+            m_dragEventIndex = idx;
             m_dragging = true;
-            m_dragStartSample = eventStart(m_selectedEventIndex);
+            m_dragStartSample = eventStart(idx);
             m_dragStartMouseX = static_cast<int>(event->position().x());
             setCursor(Qt::ClosedHandCursor);
         } else {
-            m_selectedEventIndex = -1;
+            clearSelection();
         }
         update();
     }
@@ -702,6 +826,30 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
     }
 
     if (m_dragging && m_dragEventIndex >= 0 && m_track) {
+        if (m_pendingDuplicateDrag) {
+            // Still within the click threshold: treat as a potential Ctrl-click
+            // toggle, not a drag yet.
+            if (std::abs(mouseX - m_dragStartMouseX) <= kDuplicateDragThresholdPx) {
+                update();
+                return;
+            }
+            // Past the threshold: materialize the duplicate and drag the copy.
+            emit eventDragStarted();
+            auto lock = m_project ? m_project->writeLock()
+                                  : std::unique_lock<std::shared_mutex>();
+            AudioEvent copy = m_track->events()[m_dragEventIndex];
+            copy.setStartSample(copy.startSample() +
+                static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
+            m_track->addEvent(std::move(copy));
+            m_dragEventIndex = eventCount() - 1;
+            setSelection(m_dragEventIndex);
+            m_pendingDuplicateDrag = false;
+            m_dragStartSample = eventStart(m_dragEventIndex);
+            m_dragStartMouseX = mouseX;
+            m_thumbnailCache.clear();
+            m_decodeCache.clear();
+        }
+
         int dx = static_cast<int>(event->position().x()) - m_dragStartMouseX;
         int64_t newStart = m_dragStartSample + static_cast<int64_t>(dx / m_pixelsPerSample);
 
@@ -759,6 +907,17 @@ void TrackViewWidget::mouseReleaseEvent(QMouseEvent* event) {
         if (m_dragging) {
             m_dragging = false;
             unsetCursor();
+            if (m_pendingDuplicateDrag) {
+                // Ctrl-click without movement: toggle the event's selection
+                // instead of duplicating it.
+                m_pendingDuplicateDrag = false;
+                int idx = m_dragEventIndex;
+                m_dragEventIndex = -1;
+                m_dragWasDuplicate = false;
+                toggleSelection(idx);
+                update();
+                return;
+            }
             if (m_track && m_dragEventIndex >= 0) {
                 int64_t id = eventIdAt(m_dragEventIndex);
                 int64_t start = eventStart(m_dragEventIndex);
@@ -778,7 +937,7 @@ void TrackViewWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && isMidiMode()) {
         int idx = -1;
         if (eventAtX(static_cast<int>(event->position().x()), idx) >= 0) {
-            m_selectedEventIndex = idx;
+            setSelection(idx);
             emit eventDoubleClicked(eventIdAt(idx));
             update();
             return;
@@ -797,7 +956,7 @@ void TrackViewWidget::leaveEvent(QEvent* event) {
 
 void TrackViewWidget::keyPressEvent(QKeyEvent* event) {
     if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
-        m_selectedEventIndex >= 0 && m_track) {
+        hasSelection() && m_track) {
         deleteSelectedEvent();
         return;
     }
@@ -805,17 +964,19 @@ void TrackViewWidget::keyPressEvent(QKeyEvent* event) {
 }
 
 void TrackViewWidget::deleteSelectedEvent() {
-    if (!m_track || m_selectedEventIndex < 0 || m_selectedEventIndex >= eventCount())
+    if (!m_track || m_selectedEventIds.empty())
         return;
 
     auto lock = m_project ? m_project->writeLock()
                           : std::unique_lock<std::shared_mutex>();
-    int64_t id = eventIdAt(m_selectedEventIndex);
-    if (isMidiMode())
-        m_track->removeMidiEvent(id);
-    else
-        m_track->removeEvent(id);
-    m_selectedEventIndex = -1;
+    std::vector<int64_t> ids(m_selectedEventIds.begin(), m_selectedEventIds.end());
+    for (int64_t id : ids) {
+        if (isMidiMode())
+            m_track->removeMidiEvent(id);
+        else
+            m_track->removeEvent(id);
+    }
+    clearSelection();
     m_thumbnailCache.clear();
     m_midiThumbCache.clear();
     m_decodeCache.clear();
@@ -1003,6 +1164,14 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
 
     QMenu menu(this);
 
+    // Right-click on an event inside a multi-selection keeps the selection;
+    // right-click on an unselected event narrows the selection to just it.
+    if (!eventIsSelected(idx)) {
+        setSelection(idx);
+    } else {
+        m_selectionAnchorIndex = idx;
+    }
+
     QAction* duplicateAction = menu.addAction("Duplicate");
     connect(duplicateAction, &QAction::triggered, this, [this, idx] {
         if (!m_track || idx < 0 || idx >= eventCount()) return;
@@ -1020,7 +1189,7 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
                 static_cast<int64_t>(vvvdaw::DefaultSnapUnitSamples));
             m_track->addEvent(std::move(copy));
         }
-        m_selectedEventIndex = eventCount() - 1;
+        setSelection(eventCount() - 1);
         m_thumbnailCache.clear();
         m_midiThumbCache.clear();
         m_decodeCache.clear();
@@ -1054,18 +1223,39 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     QAction* deleteAction = menu.addAction("Delete");
-    connect(deleteAction, &QAction::triggered, this, [this, idx] {
+    connect(deleteAction, &QAction::triggered, this, [this] {
         if (!m_track) return;
         emit takeSwitchStarted();
-        m_selectedEventIndex = idx;
         deleteSelectedEvent();
     });
+
+    // Crossfade the junctions between the selected audio events to hide the
+    // discontinuities at their boundaries. Deferred until the popup closes
+    // (the command rebuilds the tracks and would destroy the menu's parent).
+    // A negative length asks the MainWindow for the default crossfade; 0
+    // removes the fades.
+    if (!isMidiMode() && m_selectedEventIds.size() >= 2) {
+        QAction* crossfadeAction = menu.addAction("Crossfade Selected Events");
+        connect(crossfadeAction, &QAction::triggered, this, [this] {
+            m_pendingCrossfadeIds.assign(m_selectedEventIds.begin(),
+                                         m_selectedEventIds.end());
+            m_pendingCrossfadeSamples = -1;
+            m_pendingCrossfade = true;
+        });
+        QAction* removeCrossfadeAction = menu.addAction("Remove Crossfades");
+        connect(removeCrossfadeAction, &QAction::triggered, this, [this] {
+            m_pendingCrossfadeIds.assign(m_selectedEventIds.begin(),
+                                         m_selectedEventIds.end());
+            m_pendingCrossfadeSamples = 0;
+            m_pendingCrossfade = true;
+        });
+    }
 
     if (isMidiMode()) {
         QAction* pianoRollAction = menu.addAction("Open Piano Roll");
         connect(pianoRollAction, &QAction::triggered, this, [this, idx] {
             if (!m_track || idx < 0 || idx >= eventCount()) return;
-            m_selectedEventIndex = idx;
+            setSelection(idx);
             emit eventDoubleClicked(eventIdAt(idx));
         });
     }
@@ -1086,6 +1276,16 @@ void TrackViewWidget::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     menu.exec(event->globalPos());
+
+    if (m_pendingCrossfade) {
+        m_pendingCrossfade = false;
+        std::vector<int64_t> ids = std::move(m_pendingCrossfadeIds);
+        int64_t fadeSamples = m_pendingCrossfadeSamples;
+        m_pendingCrossfadeIds.clear();
+        m_pendingCrossfadeSamples = 0;
+        if (ids.size() >= 2)
+            emit crossfadeRequested(ids, fadeSamples);
+    }
 
     if (m_pendingCutEventId >= 0) {
         int64_t eventId = m_pendingCutEventId;

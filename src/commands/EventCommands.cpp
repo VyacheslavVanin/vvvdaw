@@ -147,6 +147,8 @@ CutEventCommand::CutEventCommand(Project& project, int trackIndex, int64_t event
             m_savedOffset = ev->offsetSample();
             m_savedDuration = ev->durationSample();
             m_savedSourceFrames = ev->sourceFrames();
+            m_savedFadeIn = ev->fadeInSamples();
+            m_savedFadeOut = ev->fadeOutSamples();
             m_savedClip = ev->clip();
             m_savedTakes = ev->takes();
             m_savedActiveTakeIndex = ev->activeTakeIndex();
@@ -203,16 +205,22 @@ void CutEventCommand::execute() {
         / static_cast<double>(duration)));
     leftSrcEnd = std::clamp<int64_t>(leftSrcEnd, 1, srcFrames - 1);
 
-    // Left part: the original event, truncated to the (snapped) cut.
+    // Left part: the original event, truncated to the (snapped) cut. The
+    // original's outer fade-in is kept; the fade-out must not reach into the
+    // new cut boundary (that junction is a fresh splice).
     AudioEvent right = *ev;
     ev->setDurationSample(leftEndRel);
     ev->setSourceFrames(leftSrcEnd);
+    ev->setFadeOutSamples(0);
 
     // Right part: a copy of the original shifted to start at the (snapped) cut.
+    // The original's outer fade-out is kept; the fade-in at the splice is
+    // cleared so only the left piece's tail fades at the junction.
     right.setStartSample(rightStart);
     right.setOffsetSample(ev->offsetSample() + cutSrc);
     right.setDurationSample(duration - cutRel);
     right.setSourceFrames(srcFrames - cutSrc);
+    right.setFadeInSamples(0);
     track->addEvent(std::move(right));
     m_rightEventId = track->events().back().id();
     m_didCut = true;
@@ -232,11 +240,74 @@ void CutEventCommand::undo() {
     restored.setOffsetSample(m_savedOffset);
     restored.setDurationSample(m_savedDuration);
     restored.setSourceFrames(m_savedSourceFrames);
+    restored.setFadeInSamples(m_savedFadeIn);
+    restored.setFadeOutSamples(m_savedFadeOut);
     restored.setClip(m_savedClip);
     restored.takes() = m_savedTakes;
     restored.setActiveTakeIndex(m_savedActiveTakeIndex);
     track->importEvent(std::move(restored));
     m_didCut = false;
+}
+
+// --- SetEventsFadeCommand ---
+
+SetEventsFadeCommand::SetEventsFadeCommand(Project& project, int trackIndex,
+                                           std::vector<int64_t> eventIds,
+                                           int64_t fadeSamples)
+    : m_project(project), m_trackIndex(trackIndex),
+      m_eventIds(std::move(eventIds)), m_fadeSamples(fadeSamples) {
+    Track* track = m_project.trackAt(trackIndex);
+    if (!track)
+        return;
+    // Order by timeline position so consecutive ids are the adjacent events
+    // whose shared boundaries get the fades.
+    std::sort(m_eventIds.begin(), m_eventIds.end(),
+              [track](int64_t a, int64_t b) {
+                  const AudioEvent* ea = track->findEvent(a);
+                  const AudioEvent* eb = track->findEvent(b);
+                  if (!ea) return false;
+                  if (!eb) return true;
+                  return ea->startSample() < eb->startSample();
+              });
+    m_oldStates.reserve(m_eventIds.size());
+    for (int64_t id : m_eventIds) {
+        const AudioEvent* ev = track->findEvent(id);
+        if (!ev) {
+            m_oldStates.push_back({});
+            continue;
+        }
+        m_oldStates.push_back({ev->fadeInSamples(), ev->fadeOutSamples()});
+    }
+}
+
+void SetEventsFadeCommand::execute() {
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track || m_eventIds.size() < 2)
+        return;
+    for (size_t i = 0; i + 1 < m_eventIds.size(); ++i) {
+        AudioEvent* left = track->findEvent(m_eventIds[i]);
+        AudioEvent* right = track->findEvent(m_eventIds[i + 1]);
+        if (!left || !right)
+            continue;
+        const int64_t leftLen = left->durationSample() > 1
+            ? left->durationSample() - 1 : 0;
+        const int64_t rightLen = right->durationSample() > 1
+            ? right->durationSample() - 1 : 0;
+        left->setFadeOutSamples(std::min<int64_t>(m_fadeSamples, leftLen));
+        right->setFadeInSamples(std::min<int64_t>(m_fadeSamples, rightLen));
+    }
+}
+
+void SetEventsFadeCommand::undo() {
+    Track* track = m_project.trackAt(m_trackIndex);
+    if (!track)
+        return;
+    for (size_t i = 0; i < m_eventIds.size() && i < m_oldStates.size(); ++i) {
+        if (AudioEvent* ev = track->findEvent(m_eventIds[i])) {
+            ev->setFadeInSamples(m_oldStates[i].oldFadeIn);
+            ev->setFadeOutSamples(m_oldStates[i].oldFadeOut);
+        }
+    }
 }
 
 // --- MoveEventToTrackCommand ---

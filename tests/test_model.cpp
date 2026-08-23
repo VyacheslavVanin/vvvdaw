@@ -57,6 +57,7 @@ private slots:
     void instrumentRoutingSerialization();
     void trackSerialization();
     void audioEventSerialization();
+    void audioEventFadesDefaultToZero();
     void midiEventSerialization();
 };
 
@@ -1168,6 +1169,8 @@ void TestModel::audioEventSerialization() {
     ev.setOffsetSample(50);
     ev.setDurationSample(200);
     ev.setSourceFrames(1024);
+    ev.setFadeInSamples(30);
+    ev.setFadeOutSamples(40);
     ev.takes().push_back(clip);
 
     QJsonObject obj = ev.toJson(dir.path());
@@ -1180,7 +1183,22 @@ void TestModel::audioEventSerialization() {
     QCOMPARE(restored.offsetSample(), int64_t(50));
     QCOMPARE(restored.durationSample(), int64_t(200));
     QCOMPARE(restored.sourceFrames(), int64_t(1024));
+    QCOMPARE(restored.fadeInSamples(), int64_t(30));
+    QCOMPARE(restored.fadeOutSamples(), int64_t(40));
     QCOMPARE(restored.takes().size(), size_t(1));
+}
+
+void TestModel::audioEventFadesDefaultToZero() {
+    AudioEvent ev;
+    ev.setStartSample(0);
+    ev.setDurationSample(1000);
+    QCOMPARE(ev.fadeInSamples(), int64_t(0));
+    QCOMPARE(ev.fadeOutSamples(), int64_t(0));
+
+    // Old project files without fade fields round-trip to zero fades.
+    AudioEvent restored = AudioEvent::fromJson(ev.toJson());
+    QCOMPARE(restored.fadeInSamples(), int64_t(0));
+    QCOMPARE(restored.fadeOutSamples(), int64_t(0));
 }
 
 void TestModel::midiEventSerialization() {
