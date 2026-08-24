@@ -290,6 +290,10 @@ private:
     std::mutex m_previewMutex;
     std::vector<PreviewHeldNote> m_previewHeld;
     std::atomic<int> m_previewCount{0};
+    // After the last preview note-off / CC, keep rendering the instrument chain
+    // for this many seconds so release envelopes decay instead of freezing (a
+    // frozen voice would otherwise resume audibly on the next preview activity).
+    static constexpr int kPreviewReleaseGraceSeconds = 2;
 
     // Latched CC / pitch-bend preview messages (GUI/audio thread appends,
     // audio thread flushes them into the instrument buffer each block).
@@ -303,6 +307,24 @@ private:
     };
     std::vector<PreviewControl> m_previewControls;
     std::atomic<int> m_previewControlCount{0};
+
+    // Audio-thread: arm the release-grace window (keeps rendering after the
+    // last note / CC so release tails complete).
+    void armPreviewReleaseGrace();
+    // Audio-thread: decrement the grace window and report whether the
+    // instrument chain must keep rendering in the stopped state.
+    bool tickPreviewRender();
+    // Audio-thread: true while the stopped state must keep processing the audio
+    // graph (held / queued preview or release tails still decaying).
+    bool stoppedStateNeedsRender() const;
+    // Audio-thread (under m_previewMutex): deliver latched CC / pitch-bend
+    // preview messages; true when any was sent.
+    bool flushPreviewControls();
+    // Audio-thread (under m_previewMutex): deliver preview note-ons / note-offs
+    // and remove released notes; true when any was sent.
+    bool flushPreviewNotes();
+    // Audio-thread block countdown: when > 0 the stopped state keeps rendering.
+    int m_releaseGraceBlocks = 0;
 
     struct ActiveMidiNote {
         int trackIndex = 0;

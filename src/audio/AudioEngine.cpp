@@ -336,8 +336,7 @@ void AudioEngine::processAudio(const float* input, float* output,
     }
 
     if ((state == TransportState::Stopped || state == TransportState::Paused)
-        && ((input && inCh > 0) || m_previewCount.load(std::memory_order_acquire) > 0
-            || m_midiInput.hasPendingNotes())) {
+        && ((input && inCh > 0) || stoppedStateNeedsRender())) {
         auto* proj = m_project.load(std::memory_order_acquire);
         if (!proj) return;
         std::shared_lock projectLock(proj->mutex(), std::try_to_lock);

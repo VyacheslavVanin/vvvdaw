@@ -34,6 +34,8 @@ private slots:
     void openFirstDeviceWhenPresent();
     void cancelReleasesHeldPreviewNotes();
     void previewControlFlushesToInstrument();
+    void previewNoteOffArmsReleaseGrace();
+    void previewControlArmsReleaseGrace();
     void matchTransportCc();
     void matchTransportNote();
     void matchTransportTypeScoping();
@@ -612,6 +614,82 @@ void TestMidi::previewControlFlushesToInstrument() {
     QCOMPARE(int(m.status), 0xB7);
     QCOMPARE(int(m.data1), 1);
     QCOMPARE(int(m.data2), 66);
+}
+
+void TestMidi::previewNoteOffArmsReleaseGrace() {
+    Project project;
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setInstrumentIndex(0);
+
+    AudioEngine engine;
+    engine.setProject(&project);
+    engine.ensureInstrumentMidiBuffers(1);
+    QCOMPARE(engine.m_releaseGraceBlocks, 0);
+
+    // Press a note: the preview flush sends the note-on and arms the grace so
+    // the instrument keeps rendering while the voice is held.
+    engine.previewNoteOn(0, 60, 100);
+    engine.m_instrumentMidi[0].clear();
+    engine.injectPreviewMidi();
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(1));
+    QVERIFY(engine.m_releaseGraceBlocks > 0);
+
+    // Release it: the note-off is delivered and the held list empties, but the
+    // grace stays armed so the release tail decays instead of freezing (a
+    // frozen voice would otherwise resume audibly on the next key / wheel move).
+    engine.previewNoteOff(0, 60);
+    engine.m_instrumentMidi[0].clear();
+    engine.injectPreviewMidi();
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(1));
+    QVERIFY(engine.m_instrumentMidi[0][0].isNoteOff());
+    QCOMPARE(engine.m_previewCount.load(), 0);
+    QVERIFY(engine.m_releaseGraceBlocks > 0);
+
+    // The stopped-state gate keeps rendering while grace is active.
+    QVERIFY(engine.tickPreviewRender());
+
+    // The grace counts down one block at a time and eventually expires; after
+    // that the gate goes idle (nothing held, nothing pending).
+    const int blocks = engine.m_releaseGraceBlocks;
+    for (int i = 0; i < blocks; ++i)
+        engine.tickPreviewRender();
+    QCOMPARE(engine.m_releaseGraceBlocks, 0);
+    QVERIFY(!engine.tickPreviewRender());
+}
+
+void TestMidi::previewControlArmsReleaseGrace() {
+    Project project;
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setInstrumentIndex(0);
+
+    AudioEngine engine;
+    engine.setProject(&project);
+    engine.ensureInstrumentMidiBuffers(1);
+    QCOMPARE(engine.m_releaseGraceBlocks, 0);
+
+    // A CC alone arms the grace: while the wheel is moved (and for a short
+    // window after), the instrument keeps rendering so a just-released tail
+    // decays instead of being resumed by the wheel movement.
+    engine.previewControl(0, 0xB0, 1, 66);
+    engine.m_instrumentMidi[0].clear();
+    engine.injectPreviewMidi();
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(1));
+    QVERIFY(engine.m_releaseGraceBlocks > 0);
+
+    QVERIFY(engine.tickPreviewRender());
+
+    // The grace expires back to idle.
+    const int blocks = engine.m_releaseGraceBlocks;
+    for (int i = 0; i < blocks; ++i)
+        engine.tickPreviewRender();
+    QCOMPARE(engine.m_releaseGraceBlocks, 0);
+    QVERIFY(!engine.tickPreviewRender());
 }
 
 void TestMidi::matchTransportCc() {

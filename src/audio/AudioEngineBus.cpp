@@ -102,8 +102,7 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         scheduleMidiTracks(proj, frameCount, pos);
         injectPreviewMidi();
         processInstruments(proj, frameCount);
-    } else if (m_previewCount.load(std::memory_order_acquire) > 0
-               || m_previewControlCount.load(std::memory_order_acquire) > 0) {
+    } else if (tickPreviewRender()) {
         injectPreviewMidi();
         processInstruments(proj, frameCount);
     }

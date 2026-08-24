@@ -581,40 +581,76 @@ void AudioEngine::cancelPreviewNotes(int trackIndex) {
 }
 
 
-void AudioEngine::injectPreviewMidi() {
-    std::lock_guard<std::mutex> lock(m_previewMutex);
-
-    // Flush latched CC / pitch-bend preview messages into the instrument
-    // buffer (or external device) so they survive the per-block buffer clear.
+bool AudioEngine::flushPreviewControls() {
+    bool processed = false;
     for (const auto& c : m_previewControls) {
-        if (c.target >= 0)
-            queueMidiEvent(c.target, c.toInstrument, c.status, c.data1, c.data2, 0);
+        if (c.target < 0)
+            continue;
+        queueMidiEvent(c.target, c.toInstrument, c.status, c.data1, c.data2, 0);
+        processed = true;
     }
     m_previewControls.clear();
     m_previewControlCount.store(0);
+    return processed;
+}
 
+bool AudioEngine::flushPreviewNotes() {
     if (m_previewHeld.empty())
-        return;
-
+        return false;
+    bool processed = false;
     for (auto& n : m_previewHeld) {
         if (n.offPending) {
             sendNoteOff(n.target, n.toInstrument, n.channel, n.pitch);
+            processed = true;
             continue;
         }
-        if (n.noteOnSent) continue;
-
+        if (n.noteOnSent)
+            continue;
         if (n.target >= 0) {
             sendNoteOn(n.target, n.toInstrument, n.channel, n.pitch, n.velocity);
             n.noteOnSent = true;
+            processed = true;
         } else {
             n.offPending = true; // nowhere to play it: drop
         }
     }
-
     m_previewHeld.erase(
         std::remove_if(m_previewHeld.begin(), m_previewHeld.end(),
                        [](const PreviewHeldNote& n) { return n.offPending; }),
         m_previewHeld.end());
     if (m_previewHeld.empty())
         m_previewCount.store(0);
+    return processed;
+}
+
+void AudioEngine::armPreviewReleaseGrace() {
+    m_releaseGraceBlocks = kPreviewReleaseGraceSeconds * m_sampleRate / std::max(1, m_bufferSize);
+}
+
+bool AudioEngine::tickPreviewRender() {
+    const bool hadGrace = m_releaseGraceBlocks > 0;
+    if (hadGrace)
+        --m_releaseGraceBlocks;
+    return m_previewCount.load(std::memory_order_acquire) > 0
+        || m_previewControlCount.load(std::memory_order_acquire) > 0
+        || hadGrace;
+}
+
+bool AudioEngine::stoppedStateNeedsRender() const {
+    return m_previewCount.load(std::memory_order_acquire) > 0
+        || m_midiInput.hasPendingNotes() || m_releaseGraceBlocks > 0;
+}
+
+void AudioEngine::injectPreviewMidi() {
+    std::lock_guard<std::mutex> lock(m_previewMutex);
+
+    bool processed = flushPreviewControls();
+    if (flushPreviewNotes())
+        processed = true;
+
+    // Any note / CC processed means an instrument voice is in flight (held or
+    // in release). Keep rendering for a grace window so release envelopes decay
+    // instead of freezing (a frozen voice resumes audibly on the next activity).
+    if (processed)
+        armPreviewReleaseGrace();
 }
