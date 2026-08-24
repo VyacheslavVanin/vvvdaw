@@ -22,6 +22,16 @@ void MidiRecorder::captureNote(int64_t sample, uint8_t pitch, uint8_t velocity,
     m_pending.push(m);
 }
 
+void MidiRecorder::captureControl(int64_t sample, uint8_t status, uint8_t data1,
+                                  uint8_t data2) {
+    TimedMidiMessage m;
+    m.sample = sample;
+    m.msg.status = status;
+    m.msg.data1 = data1;
+    m.msg.data2 = data2;
+    m_pending.push(m);
+}
+
 MidiEvent* MidiRecorder::resolveTarget(Project& project, RecTarget& target) {
     Track* track = project.trackAt(target.trackIndex);
     if (!track)
@@ -37,6 +47,56 @@ int64_t MidiRecorder::noteStartTick(const Project& project, const RecTarget& tar
     int64_t offsetTicks = project.samplesToTicks(ev->offsetSample());
     int64_t tick = project.samplesToTicks(sample - ev->startSample()) + offsetTicks;
     return std::max<int64_t>(0, tick);
+}
+
+bool MidiRecorder::recordMessage(Project& project, RecTarget& target,
+                                 const MidiMessage& msg, int64_t tick) {
+    MidiEvent* ev = resolveTarget(project, target);
+    if (!ev)
+        return false;
+    MidiClip* clip = ev->activeClip().get();
+    if (!clip)
+        return false;
+
+    if (msg.isNoteOn()) {
+        int64_t noteId = clip->addNote(msg.data1, msg.data2, tick, 1);
+        target.pendingNoteIds[msg.data1] = noteId;
+        clip->bumpRevision();
+        return true;
+    }
+    if (msg.isNoteOff()) {
+        auto it = target.pendingNoteIds.find(msg.data1);
+        if (it == target.pendingNoteIds.end())
+            return false;
+        MidiNote* note = clip->findNote(it->second);
+        if (note) {
+            note->durationTicks = std::max<int64_t>(1, tick - note->startTick);
+            clip->bumpRevision();
+        }
+        target.pendingNoteIds.erase(it);
+        return note != nullptr;
+    }
+    if (msg.isCc() || msg.isPitchBend())
+        return recordControlMessage(*clip, msg, tick);
+    return false;
+}
+
+bool MidiRecorder::recordControlMessage(MidiClip& clip, const MidiMessage& msg, int64_t tick) {
+    MidiControlEvent::Kind kind;
+    uint8_t number;
+    int value;
+    if (msg.isPitchBend()) {
+        kind = MidiControlEvent::Kind::PitchBend;
+        number = 0;
+        value = static_cast<int>(msg.data1) | (static_cast<int>(msg.data2) << 7);
+    } else {
+        kind = MidiControlEvent::Kind::ControlChange;
+        number = msg.data1;
+        value = msg.data2;
+    }
+    clip.addControlEvent(kind, number, value, tick);
+    clip.bumpRevision();
+    return true;
 }
 
 MidiRecorder::RecTarget* MidiRecorder::findOrCreateTarget(Project& project, int trackIndex,
@@ -105,11 +165,10 @@ void MidiRecorder::finish(Project& project, int64_t playPosition) {
         target.pendingNoteIds.clear();
 
         if (target.created) {
-            int64_t endTick = MidiClip::kPPQ;
-            for (const auto& note : clip->notes())
-                endTick = std::max(endTick, note.endTick());
             // Preserve the recorded extent so a session without notes does not
-            // snap the event back to a single PPQ on stop.
+            // snap the event back to a single PPQ on stop. lengthTicks() also
+            // covers control events (CC / pitch bend) recorded during the take.
+            int64_t endTick = std::max<int64_t>(clip->lengthTicks(), MidiClip::kPPQ);
             int64_t recordedTicks = project.samplesToTicks(playPosition - m_recordStartSample);
             endTick = std::max(endTick, recordedTicks);
             clip->setLengthTicks(endTick);
@@ -173,40 +232,13 @@ bool MidiRecorder::pump(Project& project, bool recording, int64_t playPosition,
     bool changed = false;
     TimedMidiMessage m;
     while (m_pending.pop(m)) {
-        uint8_t pitch = m.msg.data1;
-        bool noteOn = m.msg.isNoteOn();
-
         for (int tIdx : armedTracks) {
             RecTarget* target = findOrCreateTarget(project, tIdx, m_recordStartSample, m.sample);
             if (!target)
                 continue;
-            MidiEvent* ev = resolveTarget(project, *target);
-            if (!ev)
-                continue;
-            MidiClip* clip = ev->activeClip().get();
-            if (!clip)
-                continue;
-
             int64_t tick = noteStartTick(project, *target, m.sample);
-
-            if (noteOn) {
-                int64_t noteId = clip->addNote(pitch, m.msg.data2, tick, 1);
-                target->pendingNoteIds[pitch] = noteId;
-                clip->bumpRevision();
+            if (recordMessage(project, *target, m.msg, tick))
                 changed = true;
-            } else {
-                auto it = target->pendingNoteIds.find(pitch);
-                if (it != target->pendingNoteIds.end()) {
-                    MidiNote* note = clip->findNote(it->second);
-                    if (note) {
-                        int64_t dur = std::max<int64_t>(1, tick - note->startTick);
-                        note->durationTicks = dur;
-                        clip->bumpRevision();
-                        changed = true;
-                    }
-                    target->pendingNoteIds.erase(it);
-                }
-            }
         }
     }
 

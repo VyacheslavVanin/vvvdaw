@@ -12,10 +12,64 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <map>
 #include <QDebug>
 
 using vvvdaw::TransportState;
 using namespace vvvdaw::audioengine;
+
+namespace {
+
+// Encode a stored control event into raw MIDI bytes for the given channel.
+struct EncodedControl {
+    uint8_t status = 0;
+    uint8_t data1 = 0;
+    uint8_t data2 = 0;
+};
+
+EncodedControl encodeControlEvent(const MidiControlEvent& ce, uint8_t channel) {
+    EncodedControl out;
+    if (ce.kind == MidiControlEvent::Kind::PitchBend) {
+        out.status = static_cast<uint8_t>(0xE0 | channel);
+        out.data1 = static_cast<uint8_t>(ce.value & 0x7F);
+        out.data2 = static_cast<uint8_t>((ce.value >> 7) & 0x7F);
+    } else {
+        out.status = static_cast<uint8_t>(0xB0 | channel);
+        out.data1 = ce.number;
+        out.data2 = static_cast<uint8_t>(ce.value & 0x7F);
+    }
+    return out;
+}
+
+// Default value when a clip has automation of the given kind but no event at
+// or before the playhead: CCs reset to 0, pitch bend to center (8192).
+int controlDefaultValue(MidiControlEvent::Kind kind) {
+    return kind == MidiControlEvent::Kind::PitchBend ? 8192 : 0;
+}
+
+// Output destination of an audible MIDI track. `valid` is false when the track
+// is silent (muted / solo-skipped / no target) and nothing should be sent.
+struct MidiTarget {
+    int destIndex = -1;
+    bool toInstrument = false;
+    uint8_t channel = 0;
+    bool valid = false;
+};
+
+MidiTarget resolveMidiTarget(const Project* proj, const Track& track, bool anySolo) {
+    MidiTarget t;
+    int instIdx = track.instrumentIndex();
+    t.toInstrument = instIdx >= 0 && instIdx < static_cast<int>(proj->instruments().size());
+    bool targetMuted = t.toInstrument && proj->instruments()[instIdx].isMuted();
+    if (track.isMuted() || targetMuted || (anySolo && !track.isSolo()))
+        return t;
+    t.destIndex = t.toInstrument ? instIdx : track.midiOutputDeviceId();
+    t.channel = static_cast<uint8_t>(track.midiChannel());
+    t.valid = true;
+    return t;
+}
+
+} // namespace
 
 void AudioEngine::pollMidiInput(Project* proj, int64_t pos, unsigned long frameCount,
                                 vvvdaw::TransportState state) {
@@ -32,20 +86,47 @@ void AudioEngine::pollMidiInput(Project* proj, int64_t pos, unsigned long frameC
     bool canPreview = previewTrack >= 0 && previewTrack < static_cast<int>(proj->tracks().size())
         && proj->tracks()[static_cast<size_t>(previewTrack)].type() == Track::Type::Midi;
 
-    for (int i = 0; i < n; ++i) {
-        const MidiMessage& m = msgs[i];
-        if (m.isNoteOn()) {
-            if (recording)
-                m_midiRecorder.captureNote(pos, m.data1, m.data2, true);
-            if (canPreview)
-                previewNoteOn(previewTrack, m.data1, m.data2);
-        } else if (m.isNoteOff()) {
-            if (recording)
-                m_midiRecorder.captureNote(pos, m.data1, 0, false);
-            if (canPreview)
-                previewNoteOff(previewTrack, m.data1);
-        }
+    for (int i = 0; i < n; ++i)
+        handleMidiInputMessage(msgs[i], pos, recording, canPreview, previewTrack);
+}
+
+void AudioEngine::handleMidiInputMessage(const MidiMessage& m, int64_t pos,
+                                         bool recording, bool canPreview,
+                                         int previewTrack) {
+    recordMidiMessage(m, pos, recording);
+    previewMidiMessage(m, previewTrack, canPreview);
+}
+
+void AudioEngine::recordMidiMessage(const MidiMessage& m, int64_t pos, bool recording) {
+    if (!recording)
+        return;
+    if (m.isNoteOn()) {
+        m_midiRecorder.captureNote(pos, m.data1, m.data2, true);
+        return;
     }
+    if (m.isNoteOff()) {
+        m_midiRecorder.captureNote(pos, m.data1, 0, false);
+        return;
+    }
+    if (m.isCc() || m.isPitchBend())
+        m_midiRecorder.captureControl(pos, m.status, m.data1, m.data2);
+}
+
+void AudioEngine::previewMidiMessage(const MidiMessage& m, int previewTrack, bool canPreview) {
+    if (!canPreview)
+        return;
+    if (m.isNoteOn()) {
+        previewNoteOn(previewTrack, m.data1, m.data2);
+        return;
+    }
+    if (m.isNoteOff()) {
+        previewNoteOff(previewTrack, m.data1);
+        return;
+    }
+    // Continuous controllers: preview them live so the instrument responds
+    // while playing the keyboard.
+    if (m.isCc() || m.isPitchBend())
+        previewControl(previewTrack, m.status, m.data1, m.data2);
 }
 
 
@@ -124,7 +205,7 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
 
         int deviceId = track.midiOutputDeviceId();
         int destIdx = toInstrument ? instIdx : deviceId;
-        uint8_t channel = static_cast<uint8_t>(trackIndex % 16);
+        uint8_t channel = static_cast<uint8_t>(track.midiChannel());
 
         for (const auto& event : track.midiEvents()) {
             auto clip = event.activeClip();
@@ -151,6 +232,8 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                 continue;
 
             int64_t offsetTicks = proj->samplesToTicks(event.offsetSample());
+            scheduleControlEvents(proj, trackIndex, event, offsetTicks, destIdx,
+                                  toInstrument, channel, pos, frameCount);
             for (const auto& note : clip->notes()) {
                 int64_t noteStart = event.startSample()
                     + proj->ticksToSamples(note.startTick - offsetTicks);
@@ -225,6 +308,125 @@ void AudioEngine::scheduleMidiTracks(Project* proj, unsigned long frameCount, in
                     m_activeMidiNotes.erase(it, m_activeMidiNotes.end());
                 }
             }
+        }
+        ++trackIndex;
+    }
+}
+
+void AudioEngine::scheduleControlEvents(const Project* proj, int trackIndex,
+                                        const MidiEvent& event, int64_t offsetTicks,
+                                        int destIdx, bool toInstrument, uint8_t channel,
+                                        int64_t pos, unsigned long frameCount) {
+    auto clip = event.activeClip();
+    if (!clip)
+        return;
+
+    int64_t eventEnd = event.startSample() + event.durationSample();
+    int64_t blockEnd = pos + static_cast<int64_t>(frameCount);
+
+    for (const auto& ce : clip->controlEvents()) {
+        int64_t sample = event.startSample()
+            + proj->ticksToSamples(ce.startTick - offsetTicks);
+        // Onset at/after the event's end never sounds.
+        if (sample >= eventEnd)
+            continue;
+        if (sample < pos || sample >= blockEnd)
+            continue;
+        if (controlEventSent(trackIndex, event.id(), ce.id))
+            continue;
+
+        EncodedControl enc = encodeControlEvent(ce, channel);
+        int off = static_cast<int>(sample - pos);
+        queueMidiEvent(destIdx, toInstrument, enc.status, enc.data1, enc.data2, off);
+        SentControlEvent sc;
+        sc.trackIndex = trackIndex;
+        sc.eventId = event.id();
+        sc.controlId = ce.id;
+        m_sentControlEvents.push_back(sc);
+    }
+}
+
+bool AudioEngine::controlEventSent(int trackIndex, int64_t eventId, int64_t controlId) const {
+    for (const auto& sc : m_sentControlEvents) {
+        if (sc.trackIndex == trackIndex && sc.eventId == eventId
+            && sc.controlId == controlId)
+            return true;
+    }
+    return false;
+}
+
+void AudioEngine::applyEventControlState(const Project* proj, const MidiEvent& event,
+                                         int trackIndex, int destIdx, bool toInstrument,
+                                         uint8_t channel, int64_t pos) {
+    auto clip = event.activeClip();
+    if (!clip)
+        return;
+    int64_t offsetTicks = proj->samplesToTicks(event.offsetSample());
+
+    using Key = std::pair<uint8_t, uint8_t>; // (kind, number)
+    std::map<Key, const MidiControlEvent*> hasKey;
+    std::map<Key, const MidiControlEvent*> latest;
+    for (const auto& ce : clip->controlEvents()) {
+        Key key(static_cast<uint8_t>(ce.kind), ce.number);
+        hasKey[key] = &ce;
+        int64_t sample = event.startSample()
+            + proj->ticksToSamples(ce.startTick - offsetTicks);
+        if (sample > pos)
+            continue;
+        auto it = latest.find(key);
+        if (it == latest.end() || it->second->startTick < ce.startTick)
+            latest[key] = &ce;
+    }
+
+    for (const auto& [key, ce] : latest) {
+        EncodedControl enc = encodeControlEvent(*ce, channel);
+        queueMidiEvent(destIdx, toInstrument, enc.status, enc.data1, enc.data2, 0);
+        SentControlEvent sc;
+        sc.trackIndex = trackIndex;
+        sc.eventId = event.id();
+        sc.controlId = ce->id;
+        m_sentControlEvents.push_back(sc);
+    }
+    // Keys automated in the clip but without an event at/before pos: reset to
+    // the default so no stale value from an earlier position (or another clip)
+    // leaks through.
+    for (const auto& [key, ce] : hasKey) {
+        if (latest.count(key))
+            continue;
+        MidiControlEvent def;
+        def.kind = ce->kind;
+        def.number = ce->number;
+        def.value = controlDefaultValue(ce->kind);
+        def.startTick = -1;
+        def.id = -1;
+        EncodedControl enc = encodeControlEvent(def, channel);
+        queueMidiEvent(destIdx, toInstrument, enc.status, enc.data1, enc.data2, 0);
+    }
+}
+
+void AudioEngine::reapplyControlState(Project* proj, int64_t pos) {
+    m_sentControlEvents.clear();
+    bool anySolo = anyTrackSolo(proj);
+
+    int trackIndex = 0;
+    for (const auto& track : proj->tracks()) {
+        if (track.type() != Track::Type::Midi) { ++trackIndex; continue; }
+
+        MidiTarget target = resolveMidiTarget(proj, track, anySolo);
+        if (!target.valid) {
+            ++trackIndex;
+            continue;
+        }
+
+        for (const auto& event : track.midiEvents()) {
+            auto clip = event.activeClip();
+            if (!clip)
+                continue;
+            int64_t eventEnd = event.startSample() + event.durationSample();
+            if (pos >= eventEnd || pos < event.startSample())
+                continue;
+            applyEventControlState(proj, event, trackIndex, target.destIndex,
+                                   target.toInstrument, target.channel, pos);
         }
         ++trackIndex;
     }
@@ -323,7 +525,7 @@ void AudioEngine::previewNoteOn(int trackIndex, int pitch, int velocity) {
     }
     PreviewHeldNote n;
     n.trackIndex = trackIndex;
-    n.channel = static_cast<uint8_t>(trackIndex % 16);
+    n.channel = static_cast<uint8_t>(track.midiChannel());
     n.pitch = static_cast<uint8_t>(pitch);
     n.velocity = static_cast<uint8_t>(velocity);
     n.target = target;
@@ -344,6 +546,31 @@ void AudioEngine::previewNoteOff(int trackIndex, int pitch) {
     }
 }
 
+void AudioEngine::previewControl(int trackIndex, uint8_t status, uint8_t data1,
+                                 uint8_t data2) {
+    auto* proj = m_project.load(std::memory_order_acquire);
+    if (!proj || trackIndex < 0 || trackIndex >= static_cast<int>(proj->tracks().size()))
+        return;
+    const auto& track = proj->tracks()[trackIndex];
+    if (track.type() != Track::Type::Midi) return;
+
+    int instIdx = track.instrumentIndex();
+    bool toInstrument = instIdx >= 0 && instIdx < static_cast<int>(proj->instruments().size());
+    int target = toInstrument ? instIdx : track.midiOutputDeviceId();
+    if (!toInstrument && target < 0) return;
+
+    std::lock_guard<std::mutex> lock(m_previewMutex);
+    PreviewControl c;
+    c.target = target;
+    c.toInstrument = toInstrument;
+    c.channel = static_cast<uint8_t>(track.midiChannel());
+    c.status = static_cast<uint8_t>((status & 0xF0) | c.channel);
+    c.data1 = data1;
+    c.data2 = data2;
+    m_previewControls.push_back(c);
+    ++m_previewControlCount;
+}
+
 
 void AudioEngine::cancelPreviewNotes(int trackIndex) {
     std::lock_guard<std::mutex> lock(m_previewMutex);
@@ -356,7 +583,18 @@ void AudioEngine::cancelPreviewNotes(int trackIndex) {
 
 void AudioEngine::injectPreviewMidi() {
     std::lock_guard<std::mutex> lock(m_previewMutex);
-    if (m_previewHeld.empty()) return;
+
+    // Flush latched CC / pitch-bend preview messages into the instrument
+    // buffer (or external device) so they survive the per-block buffer clear.
+    for (const auto& c : m_previewControls) {
+        if (c.target >= 0)
+            queueMidiEvent(c.target, c.toInstrument, c.status, c.data1, c.data2, 0);
+    }
+    m_previewControls.clear();
+    m_previewControlCount.store(0);
+
+    if (m_previewHeld.empty())
+        return;
 
     for (auto& n : m_previewHeld) {
         if (n.offPending) {

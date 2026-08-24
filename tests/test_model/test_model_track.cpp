@@ -20,6 +20,7 @@ private slots:
     void instrumentSerialization();
     void instrumentRoutingSerialization();
     void trackSerialization();
+    void midiChannel();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
 };
@@ -109,6 +110,33 @@ void TestTrack::trackSerialization() {
     QCOMPARE(rm.midiEvents().size(), size_t(1));
     QVERIFY(rm.midiEvents()[0].clip());
     QCOMPARE(rm.midiEvents()[0].clip()->notes().size(), size_t(1));
+}
+
+
+void TestTrack::midiChannel() {
+    Track m("Keys", Track::Type::Midi);
+    QCOMPARE(m.midiChannel(), 0); // default channel 1
+
+    m.setMidiChannel(9);
+    QCOMPARE(m.midiChannel(), 9);
+
+    // Out-of-range values are clamped to 0..15.
+    m.setMidiChannel(-3);
+    QCOMPARE(m.midiChannel(), 0);
+    m.setMidiChannel(99);
+    QCOMPARE(m.midiChannel(), 15);
+
+    m.setMidiChannel(4);
+    Track rm;
+    rm.fromJson(m.toJson());
+    QCOMPARE(rm.midiChannel(), 4);
+
+    // Legacy midi tracks without the field keep channel 0.
+    QJsonObject legacy = m.toJson();
+    legacy.remove("midiChannel");
+    Track legacyTrack;
+    legacyTrack.fromJson(legacy);
+    QCOMPARE(legacyTrack.midiChannel(), 0);
 }
 
 

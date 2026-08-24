@@ -83,6 +83,10 @@ public:
     // (or cancelPreviewNotes) is delivered on the audio thread.
     void previewNoteOn(int trackIndex, int pitch, int velocity);
     void previewNoteOff(int trackIndex, int pitch);
+    // Live pass-through of a continuous controller (CC / pitch bend) while
+    // playing the keyboard; latched like held preview notes and flushed into
+    // the instrument buffer on the audio thread (after the buffer clear).
+    void previewControl(int trackIndex, uint8_t status, uint8_t data1, uint8_t data2);
     void cancelPreviewNotes(int trackIndex = -1);
 
     static std::vector<MidiOutputManager::Device> enumerateMidiOutputDevices() {
@@ -157,6 +161,19 @@ private:
     void clearStretchSlots();
 
     void scheduleMidiTracks(Project* proj, unsigned long frameCount, int64_t pos);
+    // Schedule CC / pitch-bend onsets of one event that fall inside
+    // [pos, pos+frameCount) and have not been delivered this playback pass.
+    void scheduleControlEvents(const Project* proj, int trackIndex,
+                               const MidiEvent& event, int64_t offsetTicks,
+                               int destIdx, bool toInstrument, uint8_t channel,
+                               int64_t pos, unsigned long frameCount);
+    // True when a control event was already delivered during this playback pass.
+    bool controlEventSent(int trackIndex, int64_t eventId, int64_t controlId) const;
+    // Send the current CC / pitch-bend values of one event (last event at/before
+    // `pos`, defaults for automated keys with no event yet) and mark them sent.
+    void applyEventControlState(const Project* proj, const MidiEvent& event,
+                                int trackIndex, int destIdx, bool toInstrument,
+                                uint8_t channel, int64_t pos);
     void processInstruments(Project* proj, unsigned long frameCount);
     void flushActiveMidiNotes();
     void releaseInstruments();
@@ -165,6 +182,15 @@ private:
     // active piano-roll track and capture notes while recording.
     void pollMidiInput(Project* proj, int64_t pos, unsigned long frameCount,
                        vvvdaw::TransportState state);
+    // Dispatch one captured MIDI keyboard message: record it while recording
+    // and/or preview it into the active piano-roll track.
+    void handleMidiInputMessage(const MidiMessage& msg, int64_t pos,
+                                bool recording, bool canPreview, int previewTrack);
+    // Record a note / CC / pitch-bend message while recording (no-op otherwise).
+    void recordMidiMessage(const MidiMessage& msg, int64_t pos, bool recording);
+    // Preview a note / CC / pitch-bend message into the active piano-roll track
+    // (no-op when no track is available for preview).
+    void previewMidiMessage(const MidiMessage& msg, int previewTrack, bool canPreview);
 
     // Mix each audible track into its target bus buffer (monitoring, event
     // playback and track plugin chains).
@@ -186,6 +212,10 @@ private:
     // instrument buffer or the external device.
     void queueMidiEvent(int destIndex, bool toInstrument, uint8_t status,
                         uint8_t pitch, uint8_t velocity, int sampleOffset);
+    // Re-apply the current CC / pitch-bend value (last event at/before `pos`)
+    // for every audible MIDI track and reset the "already sent" set. Called on
+    // transport start / seek so the destination never keeps a stale value.
+    void reapplyControlState(Project* proj, int64_t pos);
 
     void generateClickEnvelope();
     // Advances the metronome click envelope for one sample position and adds
@@ -261,6 +291,19 @@ private:
     std::vector<PreviewHeldNote> m_previewHeld;
     std::atomic<int> m_previewCount{0};
 
+    // Latched CC / pitch-bend preview messages (GUI/audio thread appends,
+    // audio thread flushes them into the instrument buffer each block).
+    struct PreviewControl {
+        int target = -1;
+        bool toInstrument = false;
+        uint8_t channel = 0;
+        uint8_t status = 0;
+        uint8_t data1 = 0;
+        uint8_t data2 = 0;
+    };
+    std::vector<PreviewControl> m_previewControls;
+    std::atomic<int> m_previewControlCount{0};
+
     struct ActiveMidiNote {
         int trackIndex = 0;
         int64_t eventId = 0;
@@ -272,6 +315,16 @@ private:
     };
     void sendActiveNoteOff(const ActiveMidiNote& note, int sampleOffset);
     std::vector<ActiveMidiNote> m_activeMidiNotes;
+
+    // Control events (CC / pitch bend) already delivered during the current
+    // playback pass, so a note-style onset loop does not re-send them every
+    // block. Cleared (and the current value re-applied) on transport start/seek.
+    struct SentControlEvent {
+        int trackIndex = 0;
+        int64_t eventId = 0;
+        int64_t controlId = 0;
+    };
+    std::vector<SentControlEvent> m_sentControlEvents;
     int64_t m_lastMidiPos = 0;
     bool m_midiTransportActive = false;
 

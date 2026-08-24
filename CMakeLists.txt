@@ -140,6 +140,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/PianoRollWidget.cpp
     src/gui/PianoRollWindow.cpp
     src/gui/VelocityEditorWidget.cpp
+    src/gui/ControlEventEditorWidget.cpp
     src/gui/WaveformPainter.cpp
     src/gui/TimelineRuler.cpp
     src/gui/MeasureRuler.cpp

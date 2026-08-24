@@ -38,6 +38,13 @@ public:
     int midiOutputDeviceId() const { return m_midiOutputDeviceId; }
     void setMidiOutputDeviceId(int id) { m_midiOutputDeviceId = id; }
 
+    // MIDI output channel (0-15). Used when scheduling notes / control events
+    // for this track, instead of deriving a channel from the track index.
+    int midiChannel() const { return m_midiChannel; }
+    void setMidiChannel(int channel) {
+        m_midiChannel = channel < 0 ? 0 : (channel > 15 ? 15 : channel);
+    }
+
     const QString& midiOutputDeviceName() const { return m_midiOutputDeviceName; }
     void setMidiOutputDeviceName(const QString& name) { m_midiOutputDeviceName = name; }
 
@@ -95,6 +102,7 @@ private:
 
     int m_midiOutputDeviceId = -1;
     QString m_midiOutputDeviceName;
+    int m_midiChannel = 0;
     int m_instrumentIndex = -1;
 
     bool m_recordArmed = false;

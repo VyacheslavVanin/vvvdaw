@@ -70,7 +70,8 @@ public:
     // GUI thread: pop the captured learn message, filling `out` (type + value).
     bool popLearned(MidiTransportControls& out);
 
-    // Audio-thread consumer: all note messages received since the last poll.
+    // Audio-thread consumer: all channel voice messages (notes, CC, pitch
+    // bend, ...) received since the last poll.
     bool hasPendingNotes() const;
     int pollNotes(MidiMessage* out, int maxCount);
 

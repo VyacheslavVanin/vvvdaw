@@ -26,6 +26,7 @@ private slots:
     void setNoteVelocityCommand();
     void removeNoteCommand();
     void removeNotesCommand();
+    void editControlEventsCommand();
 };
 
 static QJsonObject makeMidiEventJson() {
@@ -140,6 +141,100 @@ void TestNoteCommands::removeNotesCommand() {
     QCOMPARE(clip->notes().size(), size_t(2));
     QVERIFY(clip->findNote(n1));
     QVERIFY(clip->findNote(n2));
+}
+
+
+void TestNoteCommands::editControlEventsCommand() {
+    Project p;
+    p.addMidiTrack("M");
+    UndoStack stack;
+    stack.execute(std::make_unique<AddMidiEventCommand>(p, 0, makeMidiEventJson()));
+    int64_t eventId = p.tracks()[0].midiEvents()[0].id();
+    MidiClip* clip = p.tracks()[0].midiEvents()[0].clip().get();
+
+    // Add two CC1 events in one gesture (a single undo step).
+    std::vector<ControlEventChange> adds;
+    ControlEventChange a1;
+    a1.op = ControlEventChange::Op::Add;
+    a1.kind = MidiControlEvent::Kind::ControlChange;
+    a1.number = 1;
+    a1.newValue = 30;
+    a1.newStartTick = 0;
+    ControlEventChange a2 = a1;
+    a2.newValue = 90;
+    a2.newStartTick = 480;
+    adds.push_back(a1);
+    adds.push_back(a2);
+
+    stack.execute(std::make_unique<EditControlEventsCommand>(p, 0, eventId, std::move(adds)));
+    QCOMPARE(clip->controlEvents().size(), size_t(2));
+    QCOMPARE(clip->controlEvents()[0].value, 30);
+    QCOMPARE(clip->controlEvents()[1].value, 90);
+    int64_t id0 = clip->controlEvents()[0].id;
+    int64_t id1 = clip->controlEvents()[1].id;
+    QVERIFY(id0 != id1);
+
+    // Undo removes the whole gesture; redo restores the same ids.
+    stack.undo();
+    QCOMPARE(clip->controlEvents().size(), size_t(0));
+    stack.redo();
+    QCOMPARE(clip->controlEvents().size(), size_t(2));
+    QCOMPARE(clip->controlEvents()[0].id, id0);
+    QCOMPARE(clip->controlEvents()[1].id, id1);
+
+    // Update one event.
+    std::vector<ControlEventChange> upd;
+    ControlEventChange u;
+    u.op = ControlEventChange::Op::Update;
+    u.kind = MidiControlEvent::Kind::ControlChange;
+    u.number = 1;
+    u.controlEventId = id0;
+    u.oldValue = 30;
+    u.oldStartTick = 0;
+    u.newValue = 55;
+    u.newStartTick = 0;
+    upd.push_back(u);
+    stack.execute(std::make_unique<EditControlEventsCommand>(p, 0, eventId, std::move(upd)));
+    QCOMPARE(clip->findControlEvent(id0)->value, 55);
+    stack.undo();
+    QCOMPARE(clip->findControlEvent(id0)->value, 30);
+
+    // Remove one event; undo restores it with its original values.
+    std::vector<ControlEventChange> rm;
+    ControlEventChange r;
+    r.op = ControlEventChange::Op::Remove;
+    r.kind = MidiControlEvent::Kind::ControlChange;
+    r.number = 1;
+    r.controlEventId = id1;
+    r.oldValue = 90;
+    r.oldStartTick = 480;
+    rm.push_back(r);
+    stack.execute(std::make_unique<EditControlEventsCommand>(p, 0, eventId, std::move(rm)));
+    QCOMPARE(clip->controlEvents().size(), size_t(1));
+    stack.undo();
+    QCOMPARE(clip->controlEvents().size(), size_t(2));
+    QVERIFY(clip->findControlEvent(id1));
+    QCOMPARE(clip->findControlEvent(id1)->value, 90);
+
+    // Pitch bend events are stored with their 14-bit value.
+    std::vector<ControlEventChange> pb;
+    ControlEventChange b;
+    b.op = ControlEventChange::Op::Add;
+    b.kind = MidiControlEvent::Kind::PitchBend;
+    b.number = 0;
+    b.newValue = 4000;
+    b.newStartTick = 960;
+    pb.push_back(b);
+    stack.execute(std::make_unique<EditControlEventsCommand>(p, 0, eventId, std::move(pb)));
+    bool foundPb = false;
+    for (const auto& e : clip->controlEvents()) {
+        if (e.kind == MidiControlEvent::Kind::PitchBend) {
+            QCOMPARE(e.value, 4000);
+            QCOMPARE(e.startTick, int64_t(960));
+            foundPb = true;
+        }
+    }
+    QVERIFY(foundPb);
 }
 
 

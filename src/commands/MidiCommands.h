@@ -1,5 +1,6 @@
 #pragma once
 #include "core/UndoCommand.h"
+#include "model/MidiControlEvent.h"
 #include <QJsonObject>
 #include <QJsonArray>
 #include <cstdint>
@@ -268,4 +269,42 @@ private:
     int64_t m_eventId;
     QJsonArray m_sourceNotes;
     std::vector<int64_t> m_createdNoteIds;
+};
+
+// --- Control-event (CC / pitch bend) editing ---
+
+// One operation of a control-event draw gesture. For Add ops the id is
+// allocated on the first execute and reused across undo/redo so the same event
+// keeps its identity. For Remove ops the old value/tick are captured at
+// construction (the GUI supplies them) so undo can restore the event.
+struct ControlEventChange {
+    enum class Op { Add, Update, Remove };
+    Op op = Op::Add;
+    MidiControlEvent::Kind kind = MidiControlEvent::Kind::ControlChange;
+    uint8_t number = 0;
+    int64_t controlEventId = -1;
+    int oldValue = 0;
+    int newValue = 0;
+    int64_t oldStartTick = 0;
+    int64_t newStartTick = 0;
+};
+
+class EditControlEventsCommand : public UndoCommand {
+public:
+    EditControlEventsCommand(Project& project, int trackIndex, int64_t eventId,
+                             std::vector<ControlEventChange> changes);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 81; }
+    bool requiresPluginWindowsClose() const override { return false; }
+    // Ids allocated for Add ops during the first execute (parallel to the
+    // Add ops in the change list), so the GUI can select the new events.
+    const std::vector<int64_t>& createdEventIds() const { return m_createdEventIds; }
+private:
+    void apply(bool useNew);
+    Project& m_project;
+    int m_trackIndex;
+    int64_t m_eventId;
+    std::vector<ControlEventChange> m_changes;
+    std::vector<int64_t> m_createdEventIds;
 };

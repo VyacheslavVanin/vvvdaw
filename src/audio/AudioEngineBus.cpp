@@ -84,6 +84,10 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         (pos < m_lastMidiPos || pos - m_lastMidiPos > static_cast<int64_t>(frameCount) * 2);
     if ((firstActiveBlock && !m_activeMidiNotes.empty()) || midiJumped)
         flushActiveMidiNotes();
+    // On transport start / seek, re-apply the current CC / pitch-bend value so
+    // the destination never keeps a stale value from an earlier position.
+    if (firstActiveBlock || midiJumped)
+        reapplyControlState(proj, pos);
     // Mark active transport once playback blocks start so the discontinuity
     // flush only runs on real jumps. The flag is reset to false on any
     // explicit Stop or Pause (see setTransportState), which makes the next
@@ -98,7 +102,8 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         scheduleMidiTracks(proj, frameCount, pos);
         injectPreviewMidi();
         processInstruments(proj, frameCount);
-    } else if (m_previewCount.load(std::memory_order_acquire) > 0) {
+    } else if (m_previewCount.load(std::memory_order_acquire) > 0
+               || m_previewControlCount.load(std::memory_order_acquire) > 0) {
         injectPreviewMidi();
         processInstruments(proj, frameCount);
     }

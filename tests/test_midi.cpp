@@ -26,8 +26,14 @@ private slots:
     void recorderCreatesEventBeforeAnyNote();
     void recorderGrowsEventDuration();
     void recorderBeginWithHintDoesNotDuplicate();
+    void recorderCapturesControlEvents();
+    void recorderControlEventsIntoHintEvent();
+    void messagePredicates();
+    void schedulerSendsControlEventsWithChannel();
+    void reapplyControlStateOnSeek();
     void openFirstDeviceWhenPresent();
     void cancelReleasesHeldPreviewNotes();
+    void previewControlFlushesToInstrument();
     void matchTransportCc();
     void matchTransportNote();
     void matchTransportTypeScoping();
@@ -321,6 +327,219 @@ void TestMidi::recorderBeginWithHintDoesNotDuplicate() {
     QCOMPARE(track->findMidiEvent(eventId)->activeClip()->notes().size(), size_t(1));
 }
 
+void TestMidi::recorderCapturesControlEvents() {
+    Project project;
+    Track* armed = project.addMidiTrack("Midi 1");
+    armed->setRecordArmed(true);
+
+    MidiRecorder rec;
+    const int64_t recordStart = 0;
+    rec.pump(project, true, 0, recordStart);
+
+    // CC1 (mod wheel) to 70, then a pitch bend to center (8192).
+    rec.captureControl(5000, 0xB0, 1, 70);
+    rec.captureControl(10000, 0xE0, 0x00, 0x40);
+    QVERIFY(rec.pump(project, true, 20000, recordStart));
+
+    auto& events = project.tracks()[0].midiEvents();
+    QCOMPARE(events.size(), size_t(1));
+    MidiClip* clip = events[0].activeClip().get();
+    QVERIFY(clip);
+    QCOMPARE(clip->controlEvents().size(), size_t(2));
+
+    bool foundCc = false;
+    bool foundPb = false;
+    for (const auto& e : clip->controlEvents()) {
+        if (e.kind == MidiControlEvent::Kind::ControlChange) {
+            QCOMPARE(e.number, uint8_t(1));
+            QCOMPARE(e.value, 70);
+            QCOMPARE(e.startTick, project.samplesToTicks(5000));
+            foundCc = true;
+        } else {
+            QCOMPARE(e.kind, MidiControlEvent::Kind::PitchBend);
+            QCOMPARE(e.value, 8192);
+            QCOMPARE(e.startTick, project.samplesToTicks(10000));
+            foundPb = true;
+        }
+    }
+    QVERIFY(foundCc);
+    QVERIFY(foundPb);
+
+    // Stop: the created event's extent covers the control events too.
+    QVERIFY(!rec.pump(project, false, 30000, recordStart));
+    QVERIFY(clip->lengthTicks() >= project.samplesToTicks(10000));
+    QVERIFY(events[0].durationSample() >= project.ticksToSamples(clip->lengthTicks()));
+}
+
+void TestMidi::recorderControlEventsIntoHintEvent() {
+    Project project;
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setRecordArmed(true);
+
+    MidiEvent ev;
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(100000);
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(1000);
+    ev.setClip(clip);
+    track->addMidiEvent(ev);
+    int64_t eventId = track->midiEvents().back().id();
+
+    MidiRecorder rec;
+    rec.setTargetHints({ { 0, eventId } });
+    rec.captureControl(5000, 0xB0, 11, 90); // expression CC11
+    QVERIFY(rec.pump(project, true, 0, 0));
+
+    // No new event created; the control event landed in the hinted clip.
+    QCOMPARE(track->midiEvents().size(), size_t(1));
+    MidiClip* c = track->findMidiEvent(eventId)->activeClip().get();
+    QVERIFY(c);
+    QCOMPARE(c->controlEvents().size(), size_t(1));
+    QCOMPARE(c->controlEvents()[0].number, uint8_t(11));
+    QCOMPARE(c->controlEvents()[0].value, 90);
+    QCOMPARE(c->controlEvents()[0].startTick, project.samplesToTicks(5000));
+}
+
+void TestMidi::messagePredicates() {
+    MidiMessage cc;
+    cc.status = 0xB0; cc.data1 = 1; cc.data2 = 70;
+    QVERIFY(cc.isCc());
+    QVERIFY(!cc.isPitchBend());
+    QVERIFY(cc.isChannelVoice());
+    QVERIFY(cc.hasDiscreteValue());
+    QCOMPARE(int(cc.channel()), 0);
+
+    // Pitch bend is a 14-bit pair, not a discrete single-byte control.
+    MidiMessage pb;
+    pb.status = 0xE0; pb.data1 = 0; pb.data2 = 64;
+    QVERIFY(pb.isPitchBend());
+    QVERIFY(!pb.isCc());
+    QVERIFY(pb.isChannelVoice());
+    QVERIFY(!pb.hasDiscreteValue());
+
+    MidiMessage onCh10;
+    onCh10.status = 0x99; onCh10.data1 = 60; onCh10.data2 = 100;
+    QVERIFY(onCh10.isNoteOn());
+    QVERIFY(onCh10.isChannelVoice());
+    QCOMPARE(int(onCh10.channel()), 9);
+
+    // System messages are not channel voice.
+    MidiMessage sys;
+    sys.status = 0xF0;
+    QVERIFY(!sys.isChannelVoice());
+}
+
+void TestMidi::schedulerSendsControlEventsWithChannel() {
+    Project project;
+    Instrument inst;
+    inst.setName("Synth");
+    project.addInstrument(std::move(inst));
+
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setInstrumentIndex(0);
+    track->setMidiChannel(3);
+
+    auto clip = std::make_shared<MidiClip>();
+    clip->addNote(60, 100, 0, 480);
+    clip->addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 40, 0);
+    clip->addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 100, 480);
+    clip->addControlEvent(MidiControlEvent::Kind::PitchBend, 0, 8192, 960);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(200000);
+    track->addMidiEvent(ev);
+
+    AudioEngine engine;
+    engine.setProject(&project);
+    engine.ensureInstrumentMidiBuffers(1);
+    engine.m_instrumentMidi[0].clear();
+
+    // Block [0, 512): the note onset and the CC1=40 event at tick 0 land here.
+    // Control events are scheduled before notes.
+    engine.scheduleMidiTracks(&project, 512, 0);
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(2));
+
+    const MidiMessage& cc = engine.m_instrumentMidi[0][0];
+    QCOMPARE(int(cc.status), 0xB3); // CC on channel 4 (index 3)
+    QCOMPARE(int(cc.data1), 1);
+    QCOMPARE(int(cc.data2), 40);
+    QCOMPARE(cc.sampleOffset, 0);
+
+    const MidiMessage& note = engine.m_instrumentMidi[0][1];
+    QCOMPARE(int(note.status), 0x93); // note on, channel 4
+    QCOMPARE(int(note.data1), 60);
+    QCOMPARE(int(note.data2), 100);
+    QCOMPARE(note.sampleOffset, 0);
+
+    // Next block at tick 480 (sample 12000): CC1=100 lands, and the note's
+    // note-off fires at its end. Once delivered, events are not re-sent.
+    engine.m_instrumentMidi[0].clear();
+    engine.scheduleMidiTracks(&project, 512, 12000);
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(2));
+    const MidiMessage& cc2 = engine.m_instrumentMidi[0][0];
+    QVERIFY(cc2.isCc());
+    QCOMPARE(int(cc2.data2), 100);
+    QVERIFY(engine.m_instrumentMidi[0][1].isNoteOff());
+
+    // A later block (no onsets inside) sends nothing new.
+    engine.m_instrumentMidi[0].clear();
+    engine.scheduleMidiTracks(&project, 512, 20000);
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(0));
+}
+
+void TestMidi::reapplyControlStateOnSeek() {
+    Project project;
+    Instrument inst;
+    inst.setName("Synth");
+    project.addInstrument(std::move(inst));
+
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setInstrumentIndex(0);
+    track->setMidiChannel(3);
+
+    auto clip = std::make_shared<MidiClip>();
+    clip->addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 40, 0);
+    clip->addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 100, 480);
+    clip->addControlEvent(MidiControlEvent::Kind::PitchBend, 0, 8192, 960);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(200000);
+    track->addMidiEvent(ev);
+
+    AudioEngine engine;
+    engine.setProject(&project);
+    engine.ensureInstrumentMidiBuffers(1);
+    engine.m_instrumentMidi[0].clear();
+
+    // Seek to sample 15000 (tick 600): the last CC1 value is 100 (at tick 480);
+    // pitch bend's first event is at tick 960, so it resets to center.
+    engine.reapplyControlState(&project, 15000);
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(2));
+    bool foundCc100 = false;
+    bool foundPbCenter = false;
+    for (const auto& m : engine.m_instrumentMidi[0]) {
+        if (m.isCc()) {
+            QCOMPARE(int(m.status), 0xB3);
+            QCOMPARE(int(m.data1), 1);
+            QCOMPARE(int(m.data2), 100);
+            QCOMPARE(m.sampleOffset, 0);
+            foundCc100 = true;
+        } else if (m.isPitchBend()) {
+            QCOMPARE(int(m.status), 0xE3);
+            QCOMPARE(int(m.data1), 0);
+            QCOMPARE(int(m.data2), 64); // (8192 >> 7) & 0x7F
+            foundPbCenter = true;
+        }
+    }
+    QVERIFY(foundCc100);
+    QVERIFY(foundPbCenter);
+}
+
 void TestMidi::openFirstDeviceWhenPresent() {
     auto devices = MidiInputManager::enumerateInputDevices();
     if (devices.empty())
@@ -365,6 +584,34 @@ void TestMidi::cancelReleasesHeldPreviewNotes() {
     // The audio block flush delivers the note-offs and clears the held set.
     engine.injectPreviewMidi();
     QCOMPARE(engine.m_previewCount.load(), 0);
+}
+
+void TestMidi::previewControlFlushesToInstrument() {
+    Project project;
+    Track* track = project.addMidiTrack("Midi 1");
+    track->setMidiChannel(7);
+    Instrument inst;
+    inst.setName("Pad");
+    project.addInstrument(std::move(inst));
+    track->setInstrumentIndex(0);
+
+    AudioEngine engine;
+    engine.setProject(&project);
+    engine.ensureInstrumentMidiBuffers(1);
+
+    // A mod-wheel move latches a preview control message (CC1 on channel 8).
+    engine.previewControl(0, 0xB0, 1, 66);
+    QCOMPARE(engine.m_previewControlCount.load(), 1);
+
+    // The next audio block flush delivers it into the instrument buffer.
+    engine.m_instrumentMidi[0].clear();
+    engine.injectPreviewMidi();
+    QCOMPARE(engine.m_previewControlCount.load(), 0);
+    QCOMPARE(engine.m_instrumentMidi[0].size(), size_t(1));
+    const MidiMessage& m = engine.m_instrumentMidi[0][0];
+    QCOMPARE(int(m.status), 0xB7);
+    QCOMPARE(int(m.data1), 1);
+    QCOMPARE(int(m.data2), 66);
 }
 
 void TestMidi::matchTransportCc() {

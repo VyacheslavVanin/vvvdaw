@@ -31,6 +31,10 @@ public:
     // Audio thread: queue a captured note.
     void captureNote(int64_t sample, uint8_t pitch, uint8_t velocity, bool noteOn);
 
+    // Audio thread: queue a captured control message (CC / pitch bend /
+    // pressure / program change). The raw status byte carries the channel.
+    void captureControl(int64_t sample, uint8_t status, uint8_t data1, uint8_t data2);
+
     // GUI thread: while `recording` is true, apply captured notes to the armed
     // tracks' recording clips; when it turns false, finalize the recorded
     // event(s). Returns true if any clip changed (caller refreshes piano rolls).
@@ -53,6 +57,12 @@ private:
     void finish(Project& project, int64_t playPosition);
     int64_t noteStartTick(const Project& project, const RecTarget& target,
                           int64_t sample);
+    // Add a captured CC / pitch-bend message to the clip at `tick`.
+    bool recordControlMessage(MidiClip& clip, const MidiMessage& msg, int64_t tick);
+    // Apply one captured message to a recording target's clip (notes pair up
+    // via pendingNoteIds; control messages are appended).
+    bool recordMessage(Project& project, RecTarget& target, const MidiMessage& msg,
+                       int64_t tick);
 
     MidiRingBuffer<TimedMidiMessage> m_pending;
     std::unordered_map<int, int64_t> m_hints;

@@ -55,6 +55,8 @@
 #include "gui/PluginWindow.h"
 #include "gui/PianoRollWindow.h"
 #include "gui/PianoRollWidget.h"
+#include "gui/VelocityEditorWidget.h"
+#include "gui/ControlEventEditorWidget.h"
 #include "gui/ChannelRoutingDialog.h"
 #include "gui/SettingsDialog.h"
 #include "commands/TrackCommands.h"
@@ -69,6 +71,8 @@ private slots:
     void previewTargetFollowsFocusedPianoRoll();
     void pianoRollMiddleDragPans();
     void pianoRollCtrlWheelZoomAnchorsCursor();
+    void channelComboUpdatesTrackChannel();
+    void controlLaneEditorDrawsAndDeletesEvents();
 private:
     GuiTestEnv m_env;
 };
@@ -208,6 +212,82 @@ void PianoRollTest::pianoRollCtrlWheelZoomAnchorsCursor() {
     const int expected = std::max(0, static_cast<int>(std::lround(
         anchorTick * newPps - viewportX + 56)));
     QCOMPARE(hbar->value(), expected);
+}
+
+
+void PianoRollTest::channelComboUpdatesTrackChannel() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(MidiClip::kPPQ);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    window.openPianoRoll(0, project.tracks()[0].midiEvents()[0].id());
+    QCoreApplication::processEvents();
+
+    auto* combo = window.m_pianoRollWindows[0]->findChild<QComboBox*>("midiChannelCombo");
+    QVERIFY(combo);
+    QCOMPARE(combo->currentIndex(), 0); // default channel 1
+
+    combo->setCurrentIndex(5); // channel 6
+    QCOMPARE(project.tracks()[0].midiChannel(), 5);
+
+    // Undo reverts the channel; reload keeps the combo aligned with the model.
+    window.m_undoStack.undo();
+    window.resyncPianoRollWindows();
+    QCOMPARE(project.tracks()[0].midiChannel(), 0);
+    QCOMPARE(combo->currentIndex(), 0);
+}
+
+
+void PianoRollTest::controlLaneEditorDrawsAndDeletesEvents() {
+    Project project;
+    project.addMidiTrack("Midi 1");
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(MidiClip::kPPQ * 16);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    window.openPianoRoll(0, project.tracks()[0].midiEvents()[0].id());
+    QCoreApplication::processEvents();
+
+    auto* lane = window.m_pianoRollWindows[0]->findChild<ControlEventEditorWidget*>();
+    QVERIFY(lane);
+    QVERIFY(lane->width() > 200);
+
+    // A click in the lane draws a CC1 (default lane) control event. With the
+    // default zoom (0.06 px/tick) and snap (1/4 beat = 240 ticks) x=200 maps
+    // to tick 2400, y=20 to a value of 95.
+    QTest::mouseClick(lane, Qt::LeftButton, Qt::NoModifier, QPoint(200, 20));
+    QCOMPARE(clip->controlEvents().size(), size_t(1));
+    QCOMPARE(clip->controlEvents()[0].number, uint8_t(1));
+    QCOMPARE(clip->controlEvents()[0].startTick, int64_t(2400));
+    QCOMPARE(clip->controlEvents()[0].value, 95);
+
+    // The draw gesture is one undoable step.
+    window.m_undoStack.undo();
+    QCOMPARE(clip->controlEvents().size(), size_t(0));
+
+    // Redo restores it, then right-clicking the point removes it again.
+    window.m_undoStack.redo();
+    QCOMPARE(clip->controlEvents().size(), size_t(1));
+    QTest::mouseClick(lane, Qt::RightButton, Qt::NoModifier, QPoint(200, 20));
+    QCOMPARE(clip->controlEvents().size(), size_t(0));
 }
 
 

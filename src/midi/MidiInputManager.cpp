@@ -156,7 +156,9 @@ void MidiInputManager::midiCallback(double /*deltaTime*/, std::vector<unsigned c
         return;
     }
 
-    if (msg.isNoteOn() || msg.isNoteOff())
+    // Every remaining channel voice message (notes, CC, pitch bend, pressure,
+    // program change) is delivered to the audio thread for recording/preview.
+    if (msg.isChannelVoice())
         state->notes.push(msg);
 }
 #endif

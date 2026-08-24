@@ -480,3 +480,80 @@ void DuplicateNotesCommand::undo() {
         clip->removeNote(id);
     m_createdNoteIds.clear();
 }
+
+// --- EditControlEventsCommand ---
+
+EditControlEventsCommand::EditControlEventsCommand(Project& project, int trackIndex,
+                                                   int64_t eventId,
+                                                   std::vector<ControlEventChange> changes)
+    : m_project(project), m_trackIndex(trackIndex), m_eventId(eventId),
+      m_changes(std::move(changes)) {}
+
+void EditControlEventsCommand::execute() {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+
+    if (m_createdEventIds.size() != m_changes.size())
+        m_createdEventIds.assign(m_changes.size(), -1);
+
+    for (size_t i = 0; i < m_changes.size(); ++i) {
+        auto& ch = m_changes[i];
+        if (ch.op == ControlEventChange::Op::Add) {
+            if (m_createdEventIds[i] < 0) {
+                m_createdEventIds[i] = clip->addControlEvent(ch.kind, ch.number,
+                                                             ch.newValue, ch.newStartTick);
+            } else {
+                MidiControlEvent ev;
+                ev.id = m_createdEventIds[i];
+                ev.kind = ch.kind;
+                ev.number = ch.number;
+                ev.value = ch.newValue;
+                ev.startTick = ch.newStartTick;
+                clip->importControlEvent(ev);
+            }
+        } else if (ch.op == ControlEventChange::Op::Update) {
+            MidiControlEvent* ev = clip->findControlEvent(ch.controlEventId);
+            if (ev) {
+                ev->value = ch.newValue;
+                ev->startTick = ch.newStartTick;
+            }
+        } else { // Remove
+            clip->removeControlEvent(ch.controlEventId);
+        }
+    }
+    clip->bumpRevision();
+}
+
+void EditControlEventsCommand::undo() {
+    MidiClip* clip = activeClipForEvent(m_project, m_trackIndex, m_eventId);
+    if (!clip) return;
+
+    // Removes run first so a later Add with the same tick cannot collide with
+    // the removed event while it is still present.
+    for (auto it = m_changes.rbegin(); it != m_changes.rend(); ++it) {
+        const auto& ch = *it;
+        if (ch.op == ControlEventChange::Op::Remove) {
+            MidiControlEvent ev;
+            ev.id = ch.controlEventId;
+            ev.kind = ch.kind;
+            ev.number = ch.number;
+            ev.value = ch.oldValue;
+            ev.startTick = ch.oldStartTick;
+            clip->importControlEvent(ev);
+        }
+    }
+    for (size_t i = 0; i < m_changes.size(); ++i) {
+        const auto& ch = m_changes[i];
+        if (ch.op == ControlEventChange::Op::Add) {
+            if (m_createdEventIds[i] >= 0)
+                clip->removeControlEvent(m_createdEventIds[i]);
+        } else if (ch.op == ControlEventChange::Op::Update) {
+            MidiControlEvent* ev = clip->findControlEvent(ch.controlEventId);
+            if (ev) {
+                ev->value = ch.oldValue;
+                ev->startTick = ch.oldStartTick;
+            }
+        }
+    }
+    clip->bumpRevision();
+}

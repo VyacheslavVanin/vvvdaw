@@ -25,6 +25,8 @@ private slots:
     void midiClipCloneIndependent();
     void midiClipNotes();
     void midiClipSerialization();
+    void midiClipControlEvents();
+    void midiClipControlEventsSerialization();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
 };
@@ -211,6 +213,69 @@ void TestClips::midiClipSerialization() {
     QCOMPARE(legacyClip.notes().size(), size_t(0));
     int64_t id = legacyClip.addNote(50, 90, 0, 10);
     QCOMPARE(id, int64_t(1));
+}
+
+
+void TestClips::midiClipControlEvents() {
+    MidiClip clip;
+    clip.setLengthTicks(100);
+    int64_t id1 = clip.addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 40, 0);
+    int64_t id2 = clip.addControlEvent(MidiControlEvent::Kind::PitchBend, 0, 8192, 480);
+    QVERIFY(id1 != id2);
+    QCOMPARE(clip.controlEvents().size(), size_t(2));
+    QCOMPARE(clip.controlEvents()[0].number, uint8_t(1));
+    QCOMPARE(clip.controlEvents()[0].value, 40);
+    QCOMPARE(clip.controlEvents()[1].value, 8192);
+    QCOMPARE(clip.revision(), int64_t(2));
+
+    // lengthTicks covers control-event ticks (max of stored length / notes /
+    // control events).
+    QCOMPARE(clip.lengthTicks(), int64_t(480));
+
+    QVERIFY(clip.findControlEvent(id1));
+    QVERIFY(!clip.findControlEvent(999));
+
+    QVERIFY(clip.removeControlEvent(id1));
+    QCOMPARE(clip.controlEvents().size(), size_t(1));
+    QVERIFY(!clip.removeControlEvent(id1));
+
+    MidiControlEvent imported;
+    imported.id = 1000;
+    imported.kind = MidiControlEvent::Kind::ControlChange;
+    imported.number = 11;
+    imported.value = 70;
+    imported.startTick = 960;
+    clip.importControlEvent(imported);
+    QVERIFY(clip.findControlEvent(1000));
+    QCOMPARE(clip.lengthTicks(), int64_t(960));
+}
+
+void TestClips::midiClipControlEventsSerialization() {
+    MidiClip clip;
+    clip.addNote(60, 100, 0, 240);
+    clip.addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 64, 0);
+    clip.addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 100, 480);
+    clip.addControlEvent(MidiControlEvent::Kind::PitchBend, 0, 4000, 720);
+
+    MidiClip restored;
+    restored.fromJson(clip.toJson());
+    QCOMPARE(restored.controlEvents().size(), size_t(3));
+    QCOMPARE(restored.controlEvents()[0].number, uint8_t(1));
+    QCOMPARE(restored.controlEvents()[0].value, 64);
+    QCOMPARE(restored.controlEvents()[0].startTick, int64_t(0));
+    QCOMPARE(restored.controlEvents()[1].value, 100);
+    QCOMPARE(restored.controlEvents()[2].kind, MidiControlEvent::Kind::PitchBend);
+    QCOMPARE(restored.controlEvents()[2].value, 4000);
+    QCOMPARE(restored.controlEvents()[2].startTick, int64_t(720));
+    QCOMPARE(restored.lengthTicks(), clip.lengthTicks());
+
+    // New ids continue past the restored maximum.
+    int64_t next = restored.addControlEvent(MidiControlEvent::Kind::ControlChange, 1, 10, 960);
+    QCOMPARE(next, int64_t(4));
+
+    // Clone keeps control events.
+    auto copy = clip.clone();
+    QCOMPARE(copy->controlEvents().size(), size_t(3));
 }
 
 

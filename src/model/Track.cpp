@@ -81,6 +81,7 @@ QJsonObject Track::toJson(const QString& projectDir) const {
         tObj["midiOutputDeviceId"] = m_midiOutputDeviceId;
         if (!m_midiOutputDeviceName.isEmpty())
             tObj["midiOutputDeviceName"] = m_midiOutputDeviceName;
+        tObj["midiChannel"] = m_midiChannel;
         tObj["instrumentIndex"] = m_instrumentIndex;
     }
 
@@ -116,6 +117,7 @@ void Track::fromJson(const QJsonObject& tObj, const QString& projectDir, PluginM
     if (m_type == Type::Midi) {
         m_midiOutputDeviceId = tObj["midiOutputDeviceId"].toInt(-1);
         m_midiOutputDeviceName = tObj["midiOutputDeviceName"].toString();
+        m_midiChannel = tObj["midiChannel"].toInt(0);
         m_instrumentIndex = tObj["instrumentIndex"].toInt(-1);
     }
 
