@@ -2,8 +2,10 @@
 #include <QMainWindow>
 #include <QJsonObject>
 #include <QScrollBar>
+
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 #include <functional>
 
@@ -77,6 +79,15 @@ private:
     void closeAllPluginWindows();
     void closePluginWindowsFor(const std::vector<PluginInstance*>& plugins);
     void closePluginWindowsFor(PluginInstance* plugin);
+    // Separate-window native UIs (DPF ExternalWindow, e.g. ZynAddSubFX): the
+    // editor is the plugin's own toplevel, not a PluginWindow container.
+    void openDetachedPluginEditor(class LV2Instance* lv2, PluginChain* chain);
+    void closeDetachedEditorsFor(const std::vector<PluginInstance*>& plugins);
+    // Sync the engine's open-editor count (silent plugin rendering while the
+    // transport is stopped) from the open embedded / detached editors.
+    void updateEditorRenderCount();
+    std::set<PluginInstance*> m_detachedEditors;
+
     // Push the playhead position into the engine, rulers and all track views.
     void syncPlayheadViews(int64_t sample);
     // Reflect the live recording preview (growing rectangle) state into the

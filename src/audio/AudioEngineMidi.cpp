@@ -638,6 +638,7 @@ bool AudioEngine::tickPreviewRender() {
 
 bool AudioEngine::stoppedStateNeedsRender() const {
     return m_previewCount.load(std::memory_order_acquire) > 0
+        || m_editorsOpen.load(std::memory_order_acquire) > 0
         || m_midiInput.hasPendingNotes() || m_releaseGraceBlocks > 0;
 }
 

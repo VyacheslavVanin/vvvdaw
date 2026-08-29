@@ -66,6 +66,8 @@ public:
 
     virtual bool hasNativeUI() const { return false; }
     virtual bool hasEditor() const = 0;
+    // Whether a native editor is currently instantiated.
+    virtual bool editorOpen() const { return false; }
     virtual void* createEditor(void* parentWindow) = 0;
     virtual void destroyEditor() = 0;
     virtual void resizeEditor(int width, int height) = 0;

@@ -17,9 +17,30 @@ public:
               LV2_Handle pluginHandle, unsigned long parentWindowId);
     void close();
 
+    // Show/hide via the ui:showInterface extension (separate-window UIs).
+    bool show();
+    void hide();
+
+    // Best-effort window-manager hints for a detached external UI window:
+    // make it transient to `transientParentXid` and keep it above other
+    // windows (matching the embedded PluginWindow stay-on-top behaviour).
+    // Returns true only once the hints are verified as stored by the window
+    // manager — keep calling until it returns true (the WM may ignore early
+    // applications, so verification happens on a later call).
+    bool applyWindowHints(unsigned long transientParentXid);
+
+    // The first verified external toplevel window (0 while unknown / not yet
+    // mapped by the UI process).
+    unsigned long externalWindow() const;
+    // Whether the external toplevel still exists (checked via the X window
+    // tree — safe against destroyed foreign windows).
+    bool externalWindowAlive() const;
+    // Raise the external toplevel and re-assert the window hints.
+    bool raiseExternalWindow();
+
     unsigned long getChildWindow() const;
     bool hasIdleInterface() const;
-    void idle();
+    bool idle();
     void sendPortEvent(int portIndex, float value);
     void sendAtomEvent(int portIndex, uint32_t bufferSize, uint32_t format, const void* buffer);
 

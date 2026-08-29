@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <csignal>
 #include <setjmp.h>
+#include <set>
 
 #ifdef DEBUG_LV2UI
 #define LV2UI_LOG(fmt, ...) fprintf(stderr, "LV2UIHost: " fmt "\n", ##__VA_ARGS__)
@@ -25,11 +26,52 @@ static int temporaryXErrorHandler(Display*, XErrorEvent*) {
     return 0;
 }
 
+// Snapshot of the current toplevel (root children) window IDs.
+static void collectRootChildren(Display* dpy, std::set<unsigned long>& out) {
+    Window root, parent, *children = nullptr;
+    unsigned int nchildren = 0;
+    if (!XQueryTree(dpy, RootWindow(dpy, DefaultScreen(dpy)),
+                    &root, &parent, &children, &nchildren))
+        return;
+    for (unsigned int i = 0; i < nchildren; ++i)
+        out.insert(static_cast<unsigned long>(children[i]));
+    if (children) XFree(children);
+}
+
+// Request "always on top" for a toplevel window via the EWMH client message.
+static void sendNetWmStateAbove(Display* dpy, Window w) {
+    Atom netWmState = XInternAtom(dpy, "_NET_WM_STATE", False);
+    Atom above = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", False);
+    XEvent ev{};
+    ev.xclient.type = ClientMessage;
+    ev.xclient.window = w;
+    ev.xclient.message_type = netWmState;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = 1; // _NET_WM_STATE_ADD
+    ev.xclient.data.l[1] = static_cast<long>(above);
+    ev.xclient.data.l[2] = 0;
+    ev.xclient.data.l[3] = 1; // source indication: normal application
+    ev.xclient.data.l[4] = 0;
+    XSendEvent(dpy, RootWindow(dpy, DefaultScreen(dpy)), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+}
+
 struct LV2UIHost::Impl {
     Display* display = nullptr;
     Window parentWindow = 0;
     Window childWindow = 0;
     bool ownsParentWindow = false;
+    // Toplevel windows that existed before the UI was opened; used to
+    // identify the detached external UI window (root-children diff).
+    std::set<unsigned long> rootWindowsBefore;
+    // Detached external UI windows: candidates found and ones whose hints the
+    // window manager has verified as stored.
+    std::set<unsigned long> externalWindows;
+    std::set<unsigned long> externalWindowsVerified;
+    unsigned long transientParent = 0;
+    // True when the UI runs detached (own toplevel in its own process, shown
+    // via ui:showInterface) rather than embedded as an X11 child.
+    bool detached = false;
 
     void* dlHandle = nullptr;
     LV2UI_Descriptor* descriptor = nullptr;
@@ -191,32 +233,16 @@ bool LV2UIHost::open(const char* pluginUri, const char* bundlePath, const char* 
         m_impl->parentWindow = parentWindowId;
         m_impl->ownsParentWindow = false;
     } else {
-        // Create an intermediate parent window with WM_STATE so the window
-        // manager treats it as a managed toplevel. pugl creates its child as
-        // a subwindow of this parent, avoiding the cross-Display crash (no
-        // Qt window involved) while still getting proper window decorations
-        // and event delivery.
-        Window root = RootWindow(m_impl->display, DefaultScreen(m_impl->display));
-        m_impl->parentWindow = XCreateSimpleWindow(
-            m_impl->display, root, 0, 0, 800, 500, 0,
-            BlackPixel(m_impl->display, DefaultScreen(m_impl->display)),
-            WhitePixel(m_impl->display, DefaultScreen(m_impl->display)));
-
-        // Set window properties for proper WM management
-        XStoreName(m_impl->display, m_impl->parentWindow, "LV2 Native UI");
-        XClassHint classHint{};
-        classHint.res_name = const_cast<char*>("lv2_native_ui");
-        classHint.res_class = const_cast<char*>("VVVDaw");
-        XSetClassHint(m_impl->display, m_impl->parentWindow, &classHint);
-
-        // WM_DELETE_WINDOW protocol
-        Atom wmDelete = XInternAtom(m_impl->display, "WM_DELETE_WINDOW", False);
-        XSetWMProtocols(m_impl->display, m_impl->parentWindow, &wmDelete, 1);
-
-        // Select events on the parent so we can see child creation and mapping
-        XSelectInput(m_impl->display, m_impl->parentWindow, SubstructureNotifyMask);
-
-        m_impl->ownsParentWindow = true;
+        // Detached mode (DPF ExternalWindow / ui:showInterface UIs, e.g.
+        // ZynAddSubFX): the UI runs in its own process and manages its own
+        // toplevel window, so the host creates no container window at all.
+        // Snapshot the existing toplevels so the plugin window can later be
+        // identified as a new root child and given window-manager hints.
+        m_impl->parentWindow = 0;
+        m_impl->ownsParentWindow = false;
+        m_impl->detached = true;
+        m_impl->rootWindowsBefore.clear();
+        collectRootChildren(m_impl->display, m_impl->rootWindowsBefore);
     }
 
     m_impl->portMapData.handle = m_impl;
@@ -279,7 +305,9 @@ bool LV2UIHost::open(const char* pluginUri, const char* bundlePath, const char* 
         return false;
     }
 
-    if (m_impl->widget) {
+    // Detached external UIs own their window inside a separate process; the
+    // widget is not an embeddable X11 window of ours and gets no patching.
+    if (parentWindowId != 0 && m_impl->widget) {
         LV2UI_LOG("widget: %p uiHandle: %p", m_impl->widget, m_impl->uiHandle);
 
         // Patch DPF's internal window-ID function-pointer fields before any
@@ -372,6 +400,8 @@ void LV2UIHost::close() {
     if (!m_impl) return;
 
     if (m_impl->descriptor && m_impl->uiHandle) {
+        if (m_impl->detached)
+            hide();
         if (m_impl->descriptor->cleanup)
             m_impl->descriptor->cleanup(m_impl->uiHandle);
         m_impl->uiHandle = nullptr;
@@ -383,6 +413,11 @@ void LV2UIHost::close() {
     m_impl->parentWindow = 0;
     m_impl->childWindow = 0;
     m_impl->widget = nullptr;
+    m_impl->detached = false;
+    m_impl->transientParent = 0;
+    m_impl->rootWindowsBefore.clear();
+    m_impl->externalWindows.clear();
+    m_impl->externalWindowsVerified.clear();
 
     if (m_impl->display) {
         XCloseDisplay(m_impl->display);
@@ -399,6 +434,140 @@ void LV2UIHost::close() {
 
 unsigned long LV2UIHost::getChildWindow() const {
     return m_impl ? m_impl->childWindow : 0;
+}
+
+bool LV2UIHost::show() {
+    if (!m_impl || !m_impl->descriptor || !m_impl->descriptor->extension_data || !m_impl->uiHandle)
+        return false;
+    auto* showIface = reinterpret_cast<const LV2UI_Show_Interface*>(
+        m_impl->descriptor->extension_data(LV2_UI__showInterface));
+    if (!showIface || !showIface->show) return false;
+    bool ok = runSigGuarded([&] { showIface->show(m_impl->uiHandle); });
+    if (!ok) return false;
+    LV2UI_LOG("show() done");
+    return true;
+}
+
+void LV2UIHost::hide() {
+    if (!m_impl || !m_impl->descriptor || !m_impl->descriptor->extension_data || !m_impl->uiHandle)
+        return;
+    auto* showIface = reinterpret_cast<const LV2UI_Show_Interface*>(
+        m_impl->descriptor->extension_data(LV2_UI__showInterface));
+    if (!showIface || !showIface->hide) return;
+    runSigGuarded([&] { showIface->hide(m_impl->uiHandle); });
+}
+
+namespace {
+
+// Whether the window's _NET_WM_STATE property currently contains ABOVE.
+bool readNetWmStateAbove(Display* dpy, Window w) {
+    Atom netWmState = XInternAtom(dpy, "_NET_WM_STATE", True);
+    if (!netWmState) return false;
+    Atom type = 0;
+    int fmt = 0;
+    unsigned long nitems = 0, bytes = 0;
+    unsigned char* prop = nullptr;
+    bool hasAbove = false;
+    if (XGetWindowProperty(dpy, w, netWmState, 0, 64, False, XA_ATOM,
+                           &type, &fmt, &nitems, &bytes, &prop) == Success &&
+        prop && type == XA_ATOM) {
+        Atom above = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", True);
+        auto* atoms = reinterpret_cast<Atom*>(prop);
+        for (unsigned long i = 0; i < nitems; ++i)
+            if (above && atoms[i] == above) hasAbove = true;
+    }
+    if (prop) XFree(prop);
+    return hasAbove;
+}
+
+bool windowIsViewableRootChild(Display* dpy, Window w) {
+    Window root, parent, *children = nullptr;
+    unsigned int nchildren = 0;
+    bool found = false;
+    if (XQueryTree(dpy, RootWindow(dpy, DefaultScreen(dpy)),
+                   &root, &parent, &children, &nchildren)) {
+        for (unsigned int i = 0; i < nchildren; ++i)
+            if (children[i] == w) found = true;
+        if (children) XFree(children);
+    }
+    return found;
+}
+
+} // namespace
+
+bool LV2UIHost::applyWindowHints(unsigned long transientParentXid) {
+    if (!m_impl || !m_impl->display) return false;
+    Display* dpy = m_impl->display;
+    m_impl->transientParent = transientParentXid;
+    Window root, parent, *children = nullptr;
+    unsigned int nchildren = 0;
+    if (!XQueryTree(dpy, RootWindow(dpy, DefaultScreen(dpy)),
+                    &root, &parent, &children, &nchildren))
+        return false;
+
+    auto& candidates = m_impl->externalWindows;
+    auto& verified = m_impl->externalWindowsVerified;
+    for (unsigned int i = 0; i < nchildren; ++i) {
+        Window w = children[i];
+        // Only windows that appeared after the UI was opened can be the
+        // external UI's toplevel.
+        if (m_impl->rootWindowsBefore.count(static_cast<unsigned long>(w)))
+            continue;
+        XWindowAttributes attrs{};
+        if (!XGetWindowAttributes(dpy, w, &attrs) || attrs.map_state != IsViewable)
+            continue;
+        candidates.insert(static_cast<unsigned long>(w));
+
+        // The WM may ignore state changes on windows it has not taken over
+        // yet (mutter clears them when it starts managing), so keep applying
+        // until the property verifies — on a later call.
+        bool above = readNetWmStateAbove(dpy, w);
+        if (above) {
+            if (transientParentXid)
+                XSetTransientForHint(dpy, w, static_cast<Window>(transientParentXid));
+            verified.insert(static_cast<unsigned long>(w));
+            LV2UI_LOG("verified hints on toplevel %lu", static_cast<unsigned long>(w));
+            continue;
+        }
+        sendNetWmStateAbove(dpy, w);
+        LV2UI_LOG("requested ABOVE on toplevel %lu", static_cast<unsigned long>(w));
+    }
+    if (children) XFree(children);
+
+    if (candidates.empty()) return false;
+    return verified.size() == candidates.size();
+}
+
+unsigned long LV2UIHost::externalWindow() const {
+    if (!m_impl || m_impl->externalWindowsVerified.empty()) return 0;
+    return *m_impl->externalWindowsVerified.begin();
+}
+
+bool LV2UIHost::externalWindowAlive() const {
+    if (!m_impl || !m_impl->display || m_impl->externalWindowsVerified.empty())
+        return false;
+    Display* dpy = m_impl->display;
+    for (unsigned long w : m_impl->externalWindowsVerified)
+        if (windowIsViewableRootChild(dpy, static_cast<Window>(w)))
+            return true;
+    return false;
+}
+
+bool LV2UIHost::raiseExternalWindow() {
+    if (!externalWindowAlive()) return false;
+    Display* dpy = m_impl->display;
+    for (unsigned long w : m_impl->externalWindowsVerified) {
+        if (!windowIsViewableRootChild(dpy, static_cast<Window>(w)))
+            continue;
+        Window win = static_cast<Window>(w);
+        if (m_impl->transientParent)
+            XSetTransientForHint(dpy, win, static_cast<Window>(m_impl->transientParent));
+        sendNetWmStateAbove(dpy, win);
+        XRaiseWindow(dpy, win);
+        LV2UI_LOG("raised external toplevel %lu", w);
+    }
+    XFlush(dpy);
+    return true;
 }
 
 bool LV2UIHost::hasIdleInterface() const {
@@ -419,17 +588,20 @@ void LV2UIHost::sendAtomEvent(int portIndex, uint32_t bufferSize, uint32_t forma
 }
 
 
-void LV2UIHost::idle() {
+bool LV2UIHost::idle() {
     if (!m_impl || !m_impl->descriptor || !m_impl->descriptor->extension_data || !m_impl->uiHandle)
-        return;
+        return false;
 
+    bool idleOk = true;
     bool ok = runSigGuarded([&] {
         auto* idle = reinterpret_cast<const LV2UI_Idle_Interface*>(
             m_impl->descriptor->extension_data(LV2_UI__idleInterface));
         if (idle && idle->idle) {
             int ret = idle->idle(m_impl->uiHandle);
-            if (ret != 0)
+            if (ret != 0) {
                 LV2UI_LOG("idle() returned %d (error)", ret);
+                idleOk = false;
+            }
         } else {
             LV2UI_LOG("idle interface has no idle() function");
         }
@@ -441,6 +613,7 @@ void LV2UIHost::idle() {
                         m_impl->parentWindow,
                         m_impl->childWindow);
     }
+    return ok && idleOk;
 }
 
 bool LV2UIHost::getChildSize(int& width, int& height) const {

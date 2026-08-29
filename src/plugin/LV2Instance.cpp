@@ -381,9 +381,18 @@ void LV2Instance::setupAudioBuffers() {
 }
 
 void LV2Instance::setupAtomBuffers() {
+    // Plugins that push large payloads to their UI (e.g. ZynAddSubFX sending
+    // its whole synth state) overflow a minimumSize-sized output buffer —
+    // their log then shows "Sending key 'state' to UI failed, out of space".
+    // Give output ports a generous capacity; input ports keep the declared
+    // minimum (the host only forges small control/MIDI atoms into them).
+    constexpr uint32_t kOutputAtomBufferSize = 65536;
+
     m_atomBuffers.resize(m_atomPorts.size());
     for (size_t j = 0; j < m_atomPorts.size(); ++j) {
         uint32_t bufSize = m_atomPorts[j].minSize;
+        if (!m_atomPorts[j].isInput && bufSize < kOutputAtomBufferSize)
+            bufSize = kOutputAtomBufferSize;
         if (bufSize < sizeof(LV2_Atom_Sequence) + sizeof(LV2_Atom))
             bufSize = sizeof(LV2_Atom_Sequence) + sizeof(LV2_Atom);
         m_atomBuffers[j].resize(bufSize, 0);
@@ -401,6 +410,8 @@ void LV2Instance::detectUI() {
     LilvNode* uiX11 = lilv_new_uri(m_world, "http://lv2plug.in/ns/extensions/ui#X11UI");
     LilvNode* uiBase = lilv_new_uri(m_world, "http://lv2plug.in/ns/extensions/ui#UI");
     const LilvUIs* uis = lilv_plugin_get_uis(m_plugin);
+
+    m_uiExternal = false;
 
     // Extract bundle/binary paths from a UI node into m_ui* members.
     auto acceptUI = [&](const LilvUI* ui, bool isX11) {
@@ -420,6 +431,7 @@ void LV2Instance::detectUI() {
 
         qInfo() << m_name << ": found" << (isX11 ? "X11" : "generic external") << "UI"
                  << m_uiUri << "bundle:" << m_uiBundlePath << "binary:" << m_uiBinaryPath;
+        m_uiExternal = !isX11;
     };
 
     // Prefer a classic X11 native UI (ui:X11UI, e.g. Zam/Dragonfly DPF UIs).
@@ -893,14 +905,87 @@ bool LV2Instance::hasEditor() const {
     return !m_ctrlPortIndices.empty() || !m_atomPorts.empty();
 }
 
+unsigned long LV2Instance::externalEditorWindow() const {
+    return m_uiHost ? m_uiHost->externalWindow() : 0;
+}
+
+bool LV2Instance::externalEditorAlive() const {
+    return m_uiHost && m_uiHost->externalWindowAlive();
+}
+
+bool LV2Instance::raiseExternalEditor() {
+    return m_uiHost && m_uiHost->raiseExternalWindow();
+}
+
+void LV2Instance::queueUiAtomForPlugin(int portIndex, const LV2_Atom* atom) {
+    uint32_t total = lv2_atom_total_size(atom);
+    if (total < sizeof(LV2_Atom)) return;
+    std::lock_guard<std::mutex> lock(m_uiMutex);
+    if (m_uiToPlugin.size() >= 128) return;
+    UiMessage msg;
+    msg.portIndex = static_cast<uint32_t>(portIndex);
+    msg.data = QByteArray(reinterpret_cast<const char*>(atom), static_cast<int>(total));
+    m_uiToPlugin.push_back(std::move(msg));
+}
+
+void LV2Instance::applyUiPatchSet(int portIndex, const LV2_Atom_Object* obj) {
+    if (obj->body.otype != m_uridPatchSet) return;
+
+    const LV2_Atom* property = nullptr;
+    const LV2_Atom* value = nullptr;
+    LV2_ATOM_OBJECT_FOREACH(obj, prop) {
+        if (prop->key == m_uridPatchProperty)
+            property = &prop->value;
+        else if (prop->key == m_uridPatchValue)
+            value = &prop->value;
+    }
+    if (!property || !value) return;
+
+    QString strValue;
+    if (value->type == m_uridAtomPath) {
+        auto* pathData = static_cast<const char*>(LV2_ATOM_BODY(value));
+        uint32_t pathLen = strnlen(pathData, value->size);
+        strValue = QString::fromUtf8(pathData, static_cast<int>(pathLen));
+    } else if (value->type == m_uridAtomString) {
+        auto* strData = static_cast<const char*>(LV2_ATOM_BODY(value));
+        strValue = QString::fromUtf8(strData, static_cast<int>(value->size));
+    }
+
+    if (strValue.isEmpty()) return;
+    QString oldValue = m_stringParams[portIndex];
+    if (oldValue == strValue) return;
+    m_stringParams[portIndex] = strValue;
+    if (m_stringParamChangeCallback)
+        m_stringParamChangeCallback(portIndex, oldValue, strValue);
+}
+
+void LV2Instance::handleUiAtomWrite(int portIndex, uint32_t protocol, const void* buffer) {
+    if (protocol == 0) return;
+    const LV2_Atom* atom = static_cast<const LV2_Atom*>(buffer);
+    if (!atom) return;
+
+    // Forward the message to the plugin's input atom port (e.g. SiSco's
+    // ui_on/ui_state/ui_off) on the next process cycle.
+    queueUiAtomForPlugin(portIndex, atom);
+
+    if (atom->type == m_uridAtomObject)
+        applyUiPatchSet(portIndex, reinterpret_cast<const LV2_Atom_Object*>(atom));
+}
+
 void* LV2Instance::createEditor(void* parentWindow) {
     if (m_uiUri.isEmpty()) return nullptr;
-    if (m_uiHost) return m_uiContainer;
+    if (m_uiHost) return m_uiContainer ? m_uiContainer : (void*)1;
 
     if (!QGuiApplication::platformName().contains("xcb")) {
         qWarning() << m_name << ": LV2 X11 UI requires X11 (QT_QPA_PLATFORM=xcb)";
         return nullptr;
     }
+
+    // The plugin engine must be live for UIs that talk to the DSP over OSC or
+    // atom ports (e.g. ZynAddSubFX's external GUI process). Without this the
+    // window only populated once playback started the engine.
+    if (!m_active && !activate(m_sampleRate, m_maxBlockSize))
+        qWarning() << m_name << ": could not activate plugin for UI";
 
     m_uiHost = std::make_unique<LV2UIHost>();
     buildPortSymbolMap();
@@ -914,56 +999,7 @@ void* LV2Instance::createEditor(void* parentWindow) {
     };
     m_uiHost->atomWriteCallback = [this](int portIndex, uint32_t, uint32_t,
                                           uint32_t protocol, const void* buffer) {
-        if (protocol == 0) return;
-        const LV2_Atom* atom = static_cast<const LV2_Atom*>(buffer);
-        if (!atom) return;
-
-        // Forward the message to the plugin's input atom port (e.g. SiSco's
-        // ui_on/ui_state/ui_off) on the next process cycle.
-        uint32_t total = lv2_atom_total_size(atom);
-        if (total >= sizeof(LV2_Atom)) {
-            std::lock_guard<std::mutex> lock(m_uiMutex);
-            if (m_uiToPlugin.size() < 128) {
-                UiMessage msg;
-                msg.portIndex = static_cast<uint32_t>(portIndex);
-                msg.data = QByteArray(reinterpret_cast<const char*>(atom), static_cast<int>(total));
-                m_uiToPlugin.push_back(std::move(msg));
-            }
-        }
-
-        if (atom->type == m_uridAtomObject) {
-            auto* obj = reinterpret_cast<const LV2_Atom_Object*>(atom);
-            if (obj->body.otype != m_uridPatchSet) return;
-
-            const LV2_Atom* property = nullptr;
-            const LV2_Atom* value = nullptr;
-            LV2_ATOM_OBJECT_FOREACH(obj, prop) {
-                if (prop->key == m_uridPatchProperty)
-                    property = &prop->value;
-                else if (prop->key == m_uridPatchValue)
-                    value = &prop->value;
-            }
-            if (!property || !value) return;
-
-            QString strValue;
-            if (value->type == m_uridAtomPath) {
-                auto* pathData = static_cast<const char*>(LV2_ATOM_BODY(value));
-                uint32_t pathLen = strnlen(pathData, value->size);
-                strValue = QString::fromUtf8(pathData, static_cast<int>(pathLen));
-            } else if (value->type == m_uridAtomString) {
-                auto* strData = static_cast<const char*>(LV2_ATOM_BODY(value));
-                strValue = QString::fromUtf8(strData, static_cast<int>(value->size));
-            }
-
-            if (!strValue.isEmpty()) {
-                QString oldValue = m_stringParams[portIndex];
-                if (oldValue != strValue) {
-                    m_stringParams[portIndex] = strValue;
-                    if (m_stringParamChangeCallback)
-                        m_stringParamChangeCallback(portIndex, oldValue, strValue);
-                }
-            }
-        }
+        handleUiAtomWrite(portIndex, protocol, buffer);
     };
 
     auto* pluginUriNode = lilv_new_uri(m_world, m_pluginId.toUtf8().constData());
@@ -971,9 +1007,17 @@ void* LV2Instance::createEditor(void* parentWindow) {
     lilv_node_free(pluginUriNode);
 
     unsigned long parentXid = 0;
+    unsigned long transientXid = 0;
     if (parentWindow) {
         auto* container = static_cast<QWidget*>(parentWindow);
-        parentXid = container->winId();
+        if (m_uiExternal) {
+            // ExternalWindow UIs (separate process / showInterface) do not
+            // embed: they must run detached as their own toplevel, keeping the
+            // caller's window only as the transient parent.
+            transientXid = container->winId();
+        } else {
+            parentXid = container->winId();
+        }
     }
 
     if (!m_uiHost->open(pluginUri.toUtf8().constData(),
@@ -993,17 +1037,56 @@ void* LV2Instance::createEditor(void* parentWindow) {
         // Deliver atom messages and output-control (meter) values first so the
         // repaint triggered by idle() in the same tick sees fresh data.
         drainUiEvents();
-        if (m_uiHost->hasIdleInterface())
-            m_uiHost->idle();
+        if (m_uiHost->hasIdleInterface()) {
+            bool ok = m_uiHost->idle();
+            // DPF only reports "closed" if the UI process exited; when it
+            // merely hides its window (or lingers), detect the vanished
+            // toplevel directly so the editor can be re-opened.
+            if (ok && m_uiExternal && m_uiHost->externalWindow() != 0 &&
+                !m_uiHost->externalWindowAlive())
+                ok = false;
+            trackExternalUiClosed(ok);
+        }
+        // The external UI process maps its window asynchronously; keep trying
+        // to raise it / attach window hints until they are verified as stored
+        // by the window manager (it may ignore applications on unmanaged
+        // windows, e.g. mutter clears them when it takes the window over).
+        if (m_uiExternal && m_uiHintAttempts > 0) {
+            --m_uiHintAttempts;
+            if (m_uiHost->applyWindowHints(m_transientXid))
+                m_uiHintAttempts = 0;
+        }
     });
     m_idleTimer->start(16);
+    if (m_uiExternal) {
+        m_transientXid = transientXid;
+        m_uiHintAttempts = 300;
+        m_uiHost->show();
+    }
 
     // Sync current parameter values to the freshly-created UI
     for (int idx : m_ctrlPortIndices)
         m_uiHost->sendPortEvent(idx, m_ctrlValues[idx]);
 
-    qInfo() << m_name << ": LV2 X11 UI created (embedded, parent=" << parentXid << ")";
-    return (void*)1;
+    qInfo() << m_name << ": LV2 UI created ("
+            << (m_uiExternal ? "detached toplevel" : "embedded")
+            << ", parent=" << parentXid << "transient=" << transientXid << ")";
+    return m_uiContainer ? m_uiContainer : (void*)1;
+}
+
+void LV2Instance::trackExternalUiClosed(bool idleOk) {
+    if (!m_uiExternal || !m_uiHost) return;
+    if (idleOk) {
+        m_uiIdleFailTicks = 0;
+        return;
+    }
+    // DPF's idle() reports "not visible" once the user closed the external UI
+    // window. Tear the editor down so it can be opened again later.
+    if (++m_uiIdleFailTicks < 30) return;
+    m_uiIdleFailTicks = 0;
+    auto cb = m_editorClosedCallback;
+    destroyEditor();
+    if (cb) cb();
 }
 
 void LV2Instance::destroyEditor() {
@@ -1021,6 +1104,8 @@ void LV2Instance::destroyEditor() {
         m_uiHost->close();
         m_uiHost.reset();
     }
+    m_uiHintAttempts = 0;
+    m_uiIdleFailTicks = 0;
 }
 
 void LV2Instance::resizeEditor(int, int) {

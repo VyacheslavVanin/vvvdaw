@@ -60,6 +60,7 @@ private slots:
     void multiChannelProcess();
     void outputControlPortMetersFlow();
     void genericExternalUIDetection();
+    void embeddedUIStillDetected();
 };
 
 void TestLV2::sigGuardRecovers() {
@@ -469,12 +470,28 @@ void TestLV2::genericExternalUIDetection() {
     // base type "a ui:UI" (not "a ui:X11UI") while still shipping a native
     // binary. detectUI() previously only accepted ui:X11UI, so the plugin had
     // no native GUI at all (the editor fell back to generic parameter knobs).
-    // Any ui:UI resource with a native binary must be detected.
+    // Any ui:UI resource with a native binary must be detected, and it must be
+    // classified as a separate-window UI (DPF ExternalWindow): the editor is
+    // the plugin's own toplevel, not an embeddable X11 child widget.
     LV2Instance inst;
     if (!inst.load(kZynAddSubFxUri))
         QSKIP("ZynAddSubFX LV2 plugin not installed");
 
     QVERIFY(inst.hasNativeUI());
+    QVERIFY(inst.isNativeUISeparateWindow());
+    QVERIFY(!inst.editorOpen());
+}
+
+void TestLV2::embeddedUIStillDetected() {
+    // Guard: the generic-ui:UI fallback must not change how classic ui:X11UI
+    // plugins (ZamComp) are classified — they remain embedded child widgets.
+    LV2Instance inst;
+    if (!inst.load(kZamCompUri))
+        QSKIP("ZamComp LV2 plugin not installed");
+
+    QVERIFY(inst.hasNativeUI());
+    QVERIFY(!inst.isNativeUISeparateWindow());
+    QVERIFY(!inst.editorOpen());
 }
 
 QTEST_MAIN(TestLV2)

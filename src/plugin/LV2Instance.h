@@ -80,6 +80,28 @@ public:
 
     bool hasNativeUI() const override { return !m_uiUri.isEmpty(); }
 
+    // True when the native UI is a separate top-level window (DPF
+    // ExternalWindow style, e.g. ZynAddSubFX) rather than an X11 child widget
+    // that can be embedded into a host container. Detected from the bundle:
+    // ui:X11UI -> embeddable, generic ui:UI with a native binary -> separate.
+    bool isNativeUISeparateWindow() const { return m_uiExternal; }
+
+    // Whether a native editor is currently instantiated.
+    bool editorOpen() const override { return m_uiHost != nullptr; }
+
+    // Separate-window (DPF ExternalWindow) editor controls: the verified
+    // toplevel window of the UI process (0 while unknown), whether it still
+    // exists, and raising it (used when the editor is re-opened).
+    unsigned long externalEditorWindow() const;
+    bool externalEditorAlive() const;
+    bool raiseExternalEditor();
+
+    // Called when the user closed a separate-window native UI, after the
+    // editor has been destroyed (used by MainWindow to forget the tracking).
+    void setEditorClosedCallback(std::function<void()> cb) {
+        m_editorClosedCallback = std::move(cb);
+    }
+
     // Current values of all output control ports (meters such as gain
     // reduction, input/output level, clip) as written by the plugin on the
     // audio thread during run(). The native UI consumes these via port_event.
@@ -259,6 +281,20 @@ private:
     QString m_uiUri;
     QString m_uiBundlePath;
     QString m_uiBinaryPath;
+    bool m_uiExternal = false;
+    // Separate-window UI bookkeeping: transient parent XID, remaining idle
+    // ticks spent applying window hints, consecutive failed idle() calls
+    // (external window closed by the user).
+    unsigned long m_transientXid = 0;
+    int m_uiHintAttempts = 0;
+    int m_uiIdleFailTicks = 0;
+    std::function<void()> m_editorClosedCallback;
+    void trackExternalUiClosed(bool idleOk);
+    // UI -> plugin atom messages from the native editor: queue forwarding and
+    // patch:Set string-parameter handling.
+    void handleUiAtomWrite(int portIndex, uint32_t protocol, const void* buffer);
+    void queueUiAtomForPlugin(int portIndex, const LV2_Atom* atom);
+    void applyUiPatchSet(int portIndex, const LV2_Atom_Object* obj);
     std::unique_ptr<LV2UIHost> m_uiHost;
     QTimer* m_idleTimer = nullptr;
     QWidget* m_uiContainer = nullptr;

@@ -68,6 +68,14 @@ public:
     void activatePluginChain(PluginChain& chain);
     void deactivatePluginChain(PluginChain& chain);
 
+    // Number of open plugin editors. While > 0 the engine keeps rendering
+    // plugins with silent blocks even when the transport is stopped, so
+    // UI<->plugin handshakes / state transfers (e.g. ZynAddSubFX's external
+    // GUI) work without starting playback.
+    void setEditorsOpen(int count) {
+        m_editorsOpen.store(count, std::memory_order_release);
+    }
+
     // Post-fader output metering for bus `busIndex` (linear amplitude peak and
     // a latched clip flag). Safe to call from the GUI thread while the audio
     // thread runs; clearBusMeterClip() resets the latched clip after display.
@@ -290,6 +298,9 @@ private:
     std::mutex m_previewMutex;
     std::vector<PreviewHeldNote> m_previewHeld;
     std::atomic<int> m_previewCount{0};
+    // Open plugin editors (see setEditorsOpen): keeps silent plugin rendering
+    // alive while the transport is stopped.
+    std::atomic<int> m_editorsOpen{0};
     // After the last preview note-off / CC, keep rendering the instrument chain
     // for this many seconds so release envelopes decay instead of freezing (a
     // frozen voice would otherwise resume audibly on the next preview activity).

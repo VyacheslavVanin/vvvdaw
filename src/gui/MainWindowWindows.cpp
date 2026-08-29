@@ -60,6 +60,8 @@ void MainWindow::closeAllPluginWindows() {
     std::vector<PluginWindow*> toClose = m_pluginWindows;
     for (auto* w : toClose)
         w->close();
+    std::vector<PluginInstance*> detached(m_detachedEditors.begin(), m_detachedEditors.end());
+    closeDetachedEditorsFor(detached);
 }
 
 
@@ -75,6 +77,71 @@ void MainWindow::closePluginWindowsFor(const std::vector<PluginInstance*>& plugi
     }
     for (auto* w : toClose)
         w->close();
+    closeDetachedEditorsFor(plugins);
+}
+
+
+void MainWindow::closeDetachedEditorsFor(const std::vector<PluginInstance*>& plugins) {
+    for (auto* p : plugins) {
+        auto it = m_detachedEditors.find(p);
+        if (it == m_detachedEditors.end()) continue;
+        m_detachedEditors.erase(it);
+        auto* lv2 = dynamic_cast<LV2Instance*>(p);
+        if (!lv2) continue;
+        lv2->setEditorClosedCallback({});
+        lv2->destroyEditor();
+        lv2->setParameterChangeCallback({});
+        lv2->setStringParameterChangeCallback({});
+        updateEditorRenderCount();
+    }
+}
+
+
+void MainWindow::openDetachedPluginEditor(LV2Instance* lv2, PluginChain* chain) {
+    if (lv2->editorOpen()) {
+        if (lv2->externalEditorWindow() == 0)
+            return; // toplevel not discovered yet (still mapping)
+        if (lv2->raiseExternalEditor())
+            return;
+        // The window is gone but the host state lingers (the UI process may
+        // hide instead of exiting, so closing was not detected): rebuild.
+        closeDetachedEditorsFor({lv2});
+    }
+    if (!lv2->createEditor(this)) {
+        qWarning() << "Could not open detached editor for" << lv2->name();
+        return;
+    }
+    m_detachedEditors.insert(lv2);
+    lv2->setEditorClosedCallback([this, lv2]() {
+        m_detachedEditors.erase(lv2);
+        lv2->setParameterChangeCallback({});
+        lv2->setStringParameterChangeCallback({});
+        updateEditorRenderCount();
+    });
+    lv2->setParameterChangeCallback(
+        [this, chain, lv2](int paramIndex, float oldValue, float newValue) {
+        if (chain)
+            m_undoStack.execute(
+                std::make_unique<SetPluginParameterCommand>(*chain, lv2, paramIndex, oldValue, newValue));
+    });
+    lv2->setStringParameterChangeCallback(
+        [this, chain, lv2](int paramIndex, const QString& oldValue, const QString& newValue) {
+        if (chain && oldValue != newValue)
+            m_undoStack.execute(
+                std::make_unique<SetPluginPathParameterCommand>(*chain, lv2, paramIndex, oldValue, newValue));
+    });
+    updateEditorRenderCount();
+}
+
+// While any plugin editor is open the engine keeps rendering plugins with
+// silent blocks even when the transport is stopped, so UI<->plugin state
+// transfer works without starting playback.
+void MainWindow::updateEditorRenderCount() {
+    int count = static_cast<int>(m_detachedEditors.size());
+    for (auto* w : m_pluginWindows)
+        if (w->isVisible())
+            ++count;
+    m_engine.setEditorsOpen(count);
 }
 
 
@@ -187,11 +254,17 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
 
     auto* chain = findChainForPlugin(plugin);
 
+    // Separate-window native UIs (DPF ExternalWindow, e.g. ZynAddSubFX) run
+    // detached as their own toplevel; opening an empty PluginWindow for them
+    // would just add a stray blank window.
     auto* lv2 = dynamic_cast<LV2Instance*>(plugin);
-    if (lv2 && lv2->hasNativeUI()) {
-        // Use plugin window path for embedding native X11 UIs.
-        // The LV2Instance::createEditor will reparent into PluginWindow.
+    if (lv2 && lv2->hasNativeUI() && lv2->isNativeUISeparateWindow()) {
+        openDetachedPluginEditor(lv2, chain);
+        return;
     }
+
+    // Embedded native X11 UIs: LV2Instance::createEditor reparents into
+    // the PluginWindow below.
 
     for (auto* w : m_pluginWindows) {
         if (w->plugin() == plugin && w->isVisible()) {
@@ -208,6 +281,7 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
         m_pluginWindows.erase(
             std::remove(m_pluginWindows.begin(), m_pluginWindows.end(), window),
             m_pluginWindows.end());
+        updateEditorRenderCount();
     });
     connect(window, &PluginWindow::parameterChangeRequested, this,
             [this, chain, plugin](int paramIndex, float oldValue, float newValue) {
@@ -234,4 +308,5 @@ void MainWindow::openPluginEditor(PluginInstance* plugin) {
                 std::make_unique<SetPluginPathParameterCommand>(*chain, plugin, paramIndex, oldValue, newValue));
     });
     window->open();
+    updateEditorRenderCount();
 }

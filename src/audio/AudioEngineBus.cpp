@@ -102,7 +102,12 @@ void AudioEngine::processBusMixing(Project* proj, float* output, unsigned long f
         scheduleMidiTracks(proj, frameCount, pos);
         injectPreviewMidi();
         processInstruments(proj, frameCount);
-    } else if (tickPreviewRender()) {
+    } else if (tickPreviewRender()
+               || m_editorsOpen.load(std::memory_order_acquire) > 0) {
+        // With plugin editors open, keep running the instruments while the
+        // transport is stopped: plugin->process() is the only path that
+        // delivers queued UI<->plugin atom messages (e.g. ZynAddSubFX's
+        // "__dpf_ui_data__" handshake that makes its GUI populate).
         injectPreviewMidi();
         processInstruments(proj, frameCount);
     }
