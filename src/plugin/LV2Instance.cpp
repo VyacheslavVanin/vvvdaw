@@ -399,35 +399,62 @@ void LV2Instance::setupAtomBuffers() {
 
 void LV2Instance::detectUI() {
     LilvNode* uiX11 = lilv_new_uri(m_world, "http://lv2plug.in/ns/extensions/ui#X11UI");
+    LilvNode* uiBase = lilv_new_uri(m_world, "http://lv2plug.in/ns/extensions/ui#UI");
     const LilvUIs* uis = lilv_plugin_get_uis(m_plugin);
 
+    // Extract bundle/binary paths from a UI node into m_ui* members.
+    auto acceptUI = [&](const LilvUI* ui, bool isX11) {
+        const LilvNode* uiUriNode = lilv_ui_get_uri(ui);
+        const LilvNode* uiBundleNode = lilv_ui_get_bundle_uri(ui);
+        const LilvNode* uiBinaryNode = lilv_ui_get_binary_uri(ui);
+
+        m_uiUri = QString::fromUtf8(lilv_node_as_string(uiUriNode));
+
+        char* bundlePath = lilv_file_uri_parse(lilv_node_as_string(uiBundleNode), nullptr);
+        m_uiBundlePath = bundlePath ? QString::fromUtf8(bundlePath) : QString();
+        free(bundlePath);
+
+        char* binaryPath = lilv_file_uri_parse(lilv_node_as_string(uiBinaryNode), nullptr);
+        m_uiBinaryPath = binaryPath ? QString::fromUtf8(binaryPath) : QString();
+        free(binaryPath);
+
+        qInfo() << m_name << ": found" << (isX11 ? "X11" : "generic external") << "UI"
+                 << m_uiUri << "bundle:" << m_uiBundlePath << "binary:" << m_uiBinaryPath;
+    };
+
+    // Prefer a classic X11 native UI (ui:X11UI, e.g. Zam/Dragonfly DPF UIs).
+    bool found = false;
     LILV_FOREACH(uis, uiIter, uis) {
         const LilvUI* ui = lilv_uis_get(uis, uiIter);
-        if (lilv_ui_is_a(ui, uiX11)) {
-            const LilvNode* uiUriNode = lilv_ui_get_uri(ui);
-            const LilvNode* uiBundleNode = lilv_ui_get_bundle_uri(ui);
-            const LilvNode* uiBinaryNode = lilv_ui_get_binary_uri(ui);
+        if (!lilv_ui_is_a(ui, uiX11))
+            continue;
+        acceptUI(ui, true);
+        found = true;
+        break;
+    }
 
-            m_uiUri = QString::fromUtf8(lilv_node_as_string(uiUriNode));
-
-            char* bundlePath = lilv_file_uri_parse(lilv_node_as_string(uiBundleNode), nullptr);
-            m_uiBundlePath = bundlePath ? QString::fromUtf8(bundlePath) : QString();
-            free(bundlePath);
-
-            char* binaryPath = lilv_file_uri_parse(lilv_node_as_string(uiBinaryNode), nullptr);
-            m_uiBinaryPath = binaryPath ? QString::fromUtf8(binaryPath) : QString();
-            free(binaryPath);
-
-            qInfo() << m_name << ": found X11 UI" << m_uiUri
-                     << "bundle:" << m_uiBundlePath << "binary:" << m_uiBinaryPath;
+    // Fall back to a generic external UI: a ui:UI resource that ships a native
+    // binary (e.g. ZynAddSubFX's DPF_UI declares "a ui:UI" without ui:X11UI).
+    // These produce X11 window widgets just like ui:X11UI; the UI host probes
+    // the window XID itself.
+    if (!found) {
+        LILV_FOREACH(uis, uiIter, uis) {
+            const LilvUI* ui = lilv_uis_get(uis, uiIter);
+            if (!lilv_ui_is_a(ui, uiBase))
+                continue;
+            if (!lilv_ui_get_binary_uri(ui))
+                continue;
+            acceptUI(ui, false);
+            found = true;
             break;
         }
     }
 
-    if (m_uiUri.isEmpty())
-        qInfo() << m_name << ": no X11 UI found";
+    if (!found)
+        qInfo() << m_name << ": no native UI found";
 
     lilv_node_free(uiX11);
+    lilv_node_free(uiBase);
 }
 
 bool LV2Instance::activate(double sampleRate, int maxBlockSize) {

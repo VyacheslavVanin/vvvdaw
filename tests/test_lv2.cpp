@@ -23,6 +23,7 @@ namespace {
 constexpr const char* kZamCompUri = "urn:zamaudio:ZamComp";
 constexpr const char* kHardLimiterUri = "http://plugin.org.uk/swh-plugins/hardLimiter";
 constexpr const char* kDrumGizmoUri = "http://drumgizmo.org/lv2";
+constexpr const char* kZynAddSubFxUri = "http://zynaddsubfx.sourceforge.net";
 constexpr int kSampleRate = 48000;
 constexpr int kBlockSize = 512;
 constexpr int kNumChannels = 2;
@@ -58,6 +59,7 @@ private slots:
     void multiChannelOutputDiscovery();
     void multiChannelProcess();
     void outputControlPortMetersFlow();
+    void genericExternalUIDetection();
 };
 
 void TestLV2::sigGuardRecovers() {
@@ -460,6 +462,19 @@ void TestLV2::outputControlPortMetersFlow() {
     QVERIFY2(gr > 0.1f, qPrintable(QString("expected Gain Reduction meter to move, got %1").arg(gr)));
 
     QVERIFY(inst.deactivate());
+}
+
+void TestLV2::genericExternalUIDetection() {
+    // Regression: ZynAddSubFX's DPF UI bundle declares its UI as the generic
+    // base type "a ui:UI" (not "a ui:X11UI") while still shipping a native
+    // binary. detectUI() previously only accepted ui:X11UI, so the plugin had
+    // no native GUI at all (the editor fell back to generic parameter knobs).
+    // Any ui:UI resource with a native binary must be detected.
+    LV2Instance inst;
+    if (!inst.load(kZynAddSubFxUri))
+        QSKIP("ZynAddSubFX LV2 plugin not installed");
+
+    QVERIFY(inst.hasNativeUI());
 }
 
 QTEST_MAIN(TestLV2)
