@@ -450,6 +450,10 @@ void InstrumentPanelWidget::openSynthDialog(int index) {
     emit synthAddRequested(index, type, path);
 }
 
+bool InstrumentPanelWidget::chooseInstrument(QString& outType, QString& outPath) {
+    return showInstrumentPicker(outType, outPath);
+}
+
 void InstrumentPanelWidget::openAddInstrumentPicker() {
     QString type, path;
     if (!showInstrumentPicker(type, path))

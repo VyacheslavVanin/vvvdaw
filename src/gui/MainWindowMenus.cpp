@@ -233,6 +233,23 @@ void MainWindow::setupMenus() {
     connect(addMidiAction, &QAction::triggered, this, [this] {
         executeCommand(std::make_unique<AddTrackCommand>(m_project, static_cast<int>(m_project.tracks().size()), Track::Type::Midi));
     });
+    auto* addInstrumentTrackAction = trackMenu->addAction("Add &Instrument Track", QKeySequence("Ctrl+Shift+I"));
+    connect(addInstrumentTrackAction, &QAction::triggered, this, [this] {
+        QString type, path;
+        if (!m_instrumentPanel->chooseInstrument(type, path))
+            return;
+        QJsonObject synthJson;
+        synthJson["type"] = type;
+        synthJson["path"] = path;
+        executeCommand(std::make_unique<AddInstrumentTrackCommand>(
+            m_project, &m_pluginManager, m_engine.sampleRate(),
+            m_engine.bufferSize(), synthJson));
+        // The new instrument/route is the last one; open its synth editor.
+        if (!m_project.instruments().empty()) {
+            if (auto* synth = m_project.instruments().back().synth())
+                openPluginEditor(synth);
+        }
+    });
 
     auto* deleteTrackAction = trackMenu->addAction("&Delete Track");
     connect(deleteTrackAction, &QAction::triggered, this, [this] {

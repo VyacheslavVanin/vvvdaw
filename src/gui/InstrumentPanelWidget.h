@@ -25,6 +25,10 @@ public:
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
 
+    // Shows the "Select Instrument" dialog; returns true and fills type/path
+    // when an instrument plugin was chosen, false if cancelled or none exist.
+    bool chooseInstrument(QString& outType, QString& outPath);
+
 signals:
     void instrumentChanged();
     // Emitted after the user picked an instrument in the "Select Instrument"

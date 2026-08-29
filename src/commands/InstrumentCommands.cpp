@@ -58,6 +58,84 @@ void RemoveInstrumentCommand::undo() {
         m_project.addInstrument(std::move(inst));
 }
 
+// --- AddInstrumentTrackCommand ---
+
+AddInstrumentTrackCommand::AddInstrumentTrackCommand(Project& project, PluginManager* manager,
+                                                     double sampleRate, int bufferSize,
+                                                     QJsonObject synthJson,
+                                                     QString instrumentName, QString trackName)
+    : m_project(project), m_manager(manager), m_sampleRate(sampleRate),
+      m_bufferSize(bufferSize), m_synthJson(std::move(synthJson)),
+      m_instrumentName(std::move(instrumentName)), m_trackName(std::move(trackName)) {}
+
+void AddInstrumentTrackCommand::execute() {
+    if (!m_redoing)
+        create();
+    else
+        restore();
+}
+
+void AddInstrumentTrackCommand::create() {
+    Instrument inst;
+    inst.setName(m_instrumentName.isEmpty()
+        ? QString("Instrument %1").arg(m_project.instruments().size() + 1)
+        : m_instrumentName);
+    if (!m_synthJson.isEmpty()) {
+        auto synth = PluginChain::createInstance(m_synthJson, m_manager);
+        if (synth) {
+            synth->activate(m_sampleRate, m_bufferSize);
+            inst.setSynth(std::move(synth));
+        }
+    }
+    m_instrumentIndex = m_project.addInstrument(std::move(inst));
+
+    QString name = m_trackName.isEmpty()
+        ? QString("MIDI %1").arg(m_instrumentIndex + 1)
+        : m_trackName;
+    Track* track = m_project.addMidiTrack(name);
+    track->setInstrumentIndex(m_instrumentIndex);
+    track->setMidiOutputDeviceId(-1);
+    track->setMidiOutputDeviceName(QString());
+    m_trackIndex = static_cast<int>(m_project.tracks().size()) - 1;
+
+    m_savedInstrument = m_project.instrumentAt(m_instrumentIndex)->toJson();
+    m_savedTrack = m_project.trackAt(m_trackIndex)->toJson();
+    m_redoing = true;
+}
+
+void AddInstrumentTrackCommand::restore() {
+    Instrument inst = Instrument::fromJson(m_savedInstrument, m_manager);
+    if (inst.synth())
+        inst.synth()->activate(m_sampleRate, m_bufferSize);
+    inst.effects().activate(m_sampleRate, m_bufferSize);
+    insertInstrument(std::move(inst));
+
+    Track track;
+    track.fromJson(m_savedTrack, {}, m_manager);
+    insertTrack(std::move(track));
+}
+
+void AddInstrumentTrackCommand::insertInstrument(Instrument inst) {
+    if (m_instrumentIndex >= 0 &&
+        m_instrumentIndex <= static_cast<int>(m_project.instruments().size()))
+        m_project.instruments().insert(m_project.instruments().begin() + m_instrumentIndex,
+                                       std::move(inst));
+    else
+        m_project.addInstrument(std::move(inst));
+}
+
+void AddInstrumentTrackCommand::insertTrack(Track track) {
+    if (m_trackIndex >= 0 && m_trackIndex <= static_cast<int>(m_project.tracks().size()))
+        m_project.tracks().insert(m_project.tracks().begin() + m_trackIndex, std::move(track));
+    else
+        m_project.addTrack(track.name());
+}
+
+void AddInstrumentTrackCommand::undo() {
+    m_project.removeTrack(m_trackIndex);
+    m_project.removeInstrument(m_instrumentIndex);
+}
+
 // --- SetInstrumentSynthCommand ---
 
 SetInstrumentSynthCommand::SetInstrumentSynthCommand(Project& project, int index,

@@ -50,6 +50,39 @@ private:
     int m_bufferSize;
 };
 
+// Adds an instrument (carrying the chosen synth) and a MIDI track routed to
+// it in one atomic undo step. Used by the Track menu "Add Instrument Track":
+// one undo removes both the instrument and the track.
+class AddInstrumentTrackCommand : public UndoCommand {
+public:
+    AddInstrumentTrackCommand(Project& project, PluginManager* manager,
+                              double sampleRate, int bufferSize,
+                              QJsonObject synthJson,
+                              QString instrumentName = {},
+                              QString trackName = {});
+    void execute() override;
+    void undo() override;
+    int id() const override { return 81; }
+private:
+    Project& m_project;
+    PluginManager* m_manager = nullptr;
+    double m_sampleRate;
+    int m_bufferSize;
+    QJsonObject m_synthJson;
+    QString m_instrumentName;
+    QString m_trackName;
+    QJsonObject m_savedInstrument;
+    QJsonObject m_savedTrack;
+    int m_instrumentIndex = -1;
+    int m_trackIndex = -1;
+    bool m_redoing = false;
+    // Split from execute() to keep each function's cyclomatic complexity low.
+    void create();
+    void restore();
+    void insertInstrument(Instrument inst);
+    void insertTrack(Track track);
+};
+
 using SetInstrumentVolumeCommand = vvvcmd::SetValueCommand<
     Instrument, float, 72, true, false, &Instrument::setVolume>;
 using SetInstrumentPanCommand = vvvcmd::SetValueCommand<

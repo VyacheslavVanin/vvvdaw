@@ -22,6 +22,7 @@ class TestInstrumentCommands : public QObject {
 private slots:
     void addInstrumentCommand();
     void addInstrumentCommandWithSynth();
+    void addInstrumentTrackCommand();
     void removeInstrumentCommand();
     void setInstrumentCommands();
     void setInstrumentRoutingCommand();
@@ -65,6 +66,41 @@ void TestInstrumentCommands::addInstrumentCommandWithSynth() {
     stack.redo();
     QCOMPARE(p.instruments().size(), size_t(1));
     QVERIFY(p.instruments()[0].synth() != nullptr);
+}
+
+
+void TestInstrumentCommands::addInstrumentTrackCommand() {
+    // Track menu "Add Instrument Track": one atomic undo step creates the
+    // instrument (with the chosen synth) and a MIDI track routed to it.
+    Project p;
+    UndoStack stack;
+    QJsonObject synthJson;
+    synthJson["type"] = "lv2";
+    synthJson["path"] = "http://drumgizmo.org/lv2";
+
+    stack.execute(std::make_unique<AddInstrumentTrackCommand>(
+        p, nullptr, 48000, 512, synthJson));
+    QCOMPARE(p.instruments().size(), size_t(1));
+    QCOMPARE(p.tracks().size(), size_t(1));
+    QCOMPARE(p.tracks()[0].type(), Track::Type::Midi);
+    QCOMPARE(p.tracks()[0].instrumentIndex(), 0);
+    QCOMPARE(p.tracks()[0].midiOutputDeviceId(), -1);
+    QVERIFY(p.tracks()[0].midiOutputDeviceName().isEmpty());
+    if (auto* synth = p.instruments()[0].synth())
+        QVERIFY(synth->isInstrument());
+    else
+        QSKIP("DrumGizmo LV2 plugin not installed");
+
+    stack.undo();
+    QCOMPARE(p.instruments().size(), size_t(0));
+    QCOMPARE(p.tracks().size(), size_t(0));
+
+    stack.redo();
+    QCOMPARE(p.instruments().size(), size_t(1));
+    QCOMPARE(p.tracks().size(), size_t(1));
+    QCOMPARE(p.tracks()[0].instrumentIndex(), 0);
+    QVERIFY(p.instruments()[0].synth() != nullptr);
+    QCOMPARE(p.tracks()[0].type(), Track::Type::Midi);
 }
 
 
