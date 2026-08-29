@@ -257,8 +257,19 @@ void MainWindow::setupInstrumentPanel(QVBoxLayout* layout) {
     if (m_settings.instrumentPanelVisible)
         m_instrumentPanel->rebuild();
 
-    connect(m_instrumentPanel, &InstrumentPanelWidget::addInstrumentRequested, this, [this] {
-        executeCommand(std::make_unique<AddInstrumentCommand>(m_project));
+    connect(m_instrumentPanel, &InstrumentPanelWidget::addInstrumentRequested, this,
+            [this](const QString& type, const QString& path) {
+        QJsonObject synthJson;
+        synthJson["type"] = type;
+        synthJson["path"] = path;
+        executeCommand(std::make_unique<AddInstrumentCommand>(
+            m_project, &m_pluginManager, m_engine.sampleRate(),
+            m_engine.bufferSize(), synthJson));
+        // The new instrument is the last one; open its synth editor right away.
+        if (!m_project.instruments().empty()) {
+            if (auto* synth = m_project.instruments().back().synth())
+                openPluginEditor(synth);
+        }
     });
 
     connect(m_instrumentPanel, &InstrumentPanelWidget::removeInstrumentRequested, this,

@@ -21,6 +21,7 @@ class TestInstrumentCommands : public QObject {
     Q_OBJECT
 private slots:
     void addInstrumentCommand();
+    void addInstrumentCommandWithSynth();
     void removeInstrumentCommand();
     void setInstrumentCommands();
     void setInstrumentRoutingCommand();
@@ -34,6 +35,36 @@ void TestInstrumentCommands::addInstrumentCommand() {
     QCOMPARE(p.instruments()[0].name(), QString("Instrument 1"));
     stack.undo();
     QCOMPARE(p.instruments().size(), size_t(0));
+}
+
+
+void TestInstrumentCommands::addInstrumentCommandWithSynth() {
+    // "Add Instrument" now opens the instrument picker and creates the
+    // instrument already carrying the chosen synth. The command must create
+    // the instrument with a live synth instance, and undo/redo must keep the
+    // instrument+synth consistent.
+    Project p;
+    UndoStack stack;
+    QJsonObject synthJson;
+    synthJson["type"] = "lv2";
+    synthJson["path"] = "http://drumgizmo.org/lv2";
+
+    stack.execute(std::make_unique<AddInstrumentCommand>(
+        p, nullptr, 48000, 512, synthJson));
+    QCOMPARE(p.instruments().size(), size_t(1));
+    QCOMPARE(p.instruments()[0].name(), QString("Instrument 1"));
+    // If the instrument plugin is not installed the synth slot stays empty;
+    // the command itself must still have added the instrument.
+    if (!p.instruments()[0].synth())
+        QSKIP("DrumGizmo LV2 plugin not installed");
+    QVERIFY(p.instruments()[0].synth()->isInstrument());
+
+    stack.undo();
+    QCOMPARE(p.instruments().size(), size_t(0));
+
+    stack.redo();
+    QCOMPARE(p.instruments().size(), size_t(1));
+    QVERIFY(p.instruments()[0].synth() != nullptr);
 }
 
 

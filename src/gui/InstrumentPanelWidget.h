@@ -27,7 +27,10 @@ public:
 
 signals:
     void instrumentChanged();
-    void addInstrumentRequested();
+    // Emitted after the user picked an instrument in the "Select Instrument"
+    // dialog; the new instrument is created directly with the chosen synth.
+    // Not emitted when the dialog is cancelled.
+    void addInstrumentRequested(const QString& type, const QString& path);
     void removeInstrumentRequested(int index);
     void openSynthEditorRequested(int index, PluginInstance* plugin);
     void openFxEditorRequested(int index, PluginInstance* plugin);
@@ -66,6 +69,8 @@ private:
     };
 
     void openSynthDialog(int index);
+    void openAddInstrumentPicker();
+    bool showInstrumentPicker(QString& outType, QString& outPath);
     void openChannelRoutingDialog(int index);
     void updateOutComboSelection(const InstrumentRow& row, int instIndex);
 

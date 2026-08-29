@@ -12,12 +12,23 @@ class PluginManager;
 
 class AddInstrumentCommand : public UndoCommand {
 public:
-    AddInstrumentCommand(Project& project);
+    // Adds a new instrument. When synthJson is non-empty ({type, path}), the
+    // instrument is created already carrying that synth plugin (the "Add
+    // Instrument" picker flow); undo removes the instrument and its synth.
+    AddInstrumentCommand(Project& project,
+                         PluginManager* manager = nullptr,
+                         double sampleRate = vvvdaw::DefaultSampleRate,
+                         int bufferSize = vvvdaw::DefaultBufferSize,
+                         QJsonObject synthJson = {});
     void execute() override;
     void undo() override;
     int id() const override { return 70; }
 private:
     Project& m_project;
+    PluginManager* m_manager = nullptr;
+    double m_sampleRate;
+    int m_bufferSize;
+    QJsonObject m_synthJson;
     int m_addedIndex = -1;
 };
 

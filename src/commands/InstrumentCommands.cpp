@@ -9,12 +9,22 @@
 
 // --- AddInstrumentCommand ---
 
-AddInstrumentCommand::AddInstrumentCommand(Project& project)
-    : m_project(project) {}
+AddInstrumentCommand::AddInstrumentCommand(Project& project, PluginManager* manager,
+                                           double sampleRate, int bufferSize,
+                                           QJsonObject synthJson)
+    : m_project(project), m_manager(manager), m_sampleRate(sampleRate),
+      m_bufferSize(bufferSize), m_synthJson(std::move(synthJson)) {}
 
 void AddInstrumentCommand::execute() {
     Instrument inst;
     inst.setName(QString("Instrument %1").arg(m_project.instruments().size() + 1));
+    if (!m_synthJson.isEmpty()) {
+        auto synth = PluginChain::createInstance(m_synthJson, m_manager);
+        if (synth) {
+            synth->activate(m_sampleRate, m_bufferSize);
+            inst.setSynth(std::move(synth));
+        }
+    }
     m_addedIndex = m_project.addInstrument(std::move(inst));
 }
 

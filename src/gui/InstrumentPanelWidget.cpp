@@ -363,8 +363,8 @@ void InstrumentPanelWidget::openChannelRoutingDialog(int index) {
     }
 }
 
-void InstrumentPanelWidget::openSynthDialog(int index) {
-    if (!m_pluginManager) return;
+bool InstrumentPanelWidget::showInstrumentPicker(QString& outType, QString& outPath) {
+    if (!m_pluginManager) return false;
 
     QDialog dialog(this);
     dialog.setWindowTitle("Select Instrument");
@@ -435,12 +435,26 @@ void InstrumentPanelWidget::openSynthDialog(int index) {
             dialog.accept();
     });
 
-    if (dialog.exec() == QDialog::Accepted && listWidget->currentItem()) {
-        auto* item = listWidget->currentItem();
-        QString type = item->data(Qt::UserRole).toString();
-        QString path = item->data(Qt::UserRole + 1).toString();
-        emit synthAddRequested(index, type, path);
-    }
+    if (dialog.exec() != QDialog::Accepted || !listWidget->currentItem())
+        return false;
+    auto* item = listWidget->currentItem();
+    outType = item->data(Qt::UserRole).toString();
+    outPath = item->data(Qt::UserRole + 1).toString();
+    return true;
+}
+
+void InstrumentPanelWidget::openSynthDialog(int index) {
+    QString type, path;
+    if (!showInstrumentPicker(type, path))
+        return;
+    emit synthAddRequested(index, type, path);
+}
+
+void InstrumentPanelWidget::openAddInstrumentPicker() {
+    QString type, path;
+    if (!showInstrumentPicker(type, path))
+        return;
+    emit addInstrumentRequested(type, path);
 }
 
 bool InstrumentPanelWidget::eventFilter(QObject* obj, QEvent* event) {
@@ -488,7 +502,7 @@ bool InstrumentPanelWidget::eventFilter(QObject* obj, QEvent* event) {
             QMenu menu(m_container);
             QAction* addAction = menu.addAction("Add Instrument");
             connect(addAction, &QAction::triggered, this, [this] {
-                emit addInstrumentRequested();
+                openAddInstrumentPicker();
             });
             menu.exec(ce->globalPos());
             return true;
