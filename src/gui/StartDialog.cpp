@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -15,6 +16,11 @@ StartDialog::StartDialog(Settings& settings, QWidget* parent)
     , m_settings(settings)
 {
     TemplateStore::ensureBuiltInTemplates();
+    m_confirm = [](const QString& name) {
+        return QMessageBox::question(nullptr, "Delete Confirmation",
+                                     QString("Delete \"%1\"?").arg(name))
+               == QMessageBox::Yes;
+    };
     setupUi();
     populateRecentProjects();
     populateTemplates();
@@ -40,8 +46,10 @@ void StartDialog::setupUi() {
     auto* recentButtons = new QHBoxLayout;
     m_openRecentButton = new QPushButton("Open", this);
     auto* browseButton = new QPushButton("Browse...", this);
+    m_deleteRecentButton = new QPushButton("Delete", this);
     recentButtons->addWidget(m_openRecentButton);
     recentButtons->addWidget(browseButton);
+    recentButtons->addWidget(m_deleteRecentButton);
     recentColumn->addLayout(recentButtons);
     columns->addLayout(recentColumn, 1);
 
@@ -53,7 +61,9 @@ void StartDialog::setupUi() {
 
     auto* templateButtons = new QHBoxLayout;
     m_useTemplateButton = new QPushButton("Use Template", this);
+    m_deleteTemplateButton = new QPushButton("Delete", this);
     templateButtons->addWidget(m_useTemplateButton);
+    templateButtons->addWidget(m_deleteTemplateButton);
     templateButtons->addStretch();
     templateColumn->addLayout(templateButtons);
     columns->addLayout(templateColumn, 1);
@@ -72,12 +82,23 @@ void StartDialog::setupUi() {
             &StartDialog::openSelectedRecent);
     connect(browseButton, &QPushButton::clicked, this,
             &StartDialog::browseForProject);
+    connect(m_deleteRecentButton, &QPushButton::clicked, this,
+            &StartDialog::deleteSelectedRecent);
     connect(m_templateList, &QListWidget::itemDoubleClicked, this,
             [this](QListWidgetItem*) { openSelectedTemplate(); });
     connect(m_useTemplateButton, &QPushButton::clicked, this,
             &StartDialog::openSelectedTemplate);
+    connect(m_deleteTemplateButton, &QPushButton::clicked, this,
+            &StartDialog::deleteSelectedTemplate);
     connect(exitButton, &QPushButton::clicked, this,
             [this] { choose(Action::Exit); });
+
+    connect(m_recentList, &QListWidget::itemSelectionChanged, this,
+            [this] { m_deleteRecentButton->setEnabled(m_recentList->currentItem() != nullptr); });
+    connect(m_templateList, &QListWidget::itemSelectionChanged, this,
+            [this] { updateTemplateDeleteEnabled(); });
+    m_deleteRecentButton->setEnabled(false);
+    m_deleteTemplateButton->setEnabled(false);
 }
 
 void StartDialog::populateRecentProjects() {
@@ -112,6 +133,46 @@ void StartDialog::openSelectedRecent() {
         return;
     m_choice.path = item->data(Qt::UserRole).toString();
     choose(Action::OpenRecent);
+}
+
+void StartDialog::deleteSelectedRecent() {
+    auto* item = m_recentList->currentItem();
+    if (!item)
+        return;
+    const QString path = item->data(Qt::UserRole).toString();
+    const QString name = QFileInfo(path).dir().dirName();
+    if (!confirmDelete(name))
+        return;
+    m_settings.removeRecentProject(path);
+    m_settings.save();
+    populateRecentProjects();
+}
+
+void StartDialog::deleteSelectedTemplate() {
+    auto* item = m_templateList->currentItem();
+    if (!item)
+        return;
+    const QString name = item->data(Qt::UserRole).toString();
+    if (TemplateStore::isBuiltIn(name)) {
+        QMessageBox::information(this, "Delete Template",
+                                 "Built-in templates cannot be deleted.");
+        return;
+    }
+    if (!confirmDelete(name))
+        return;
+    TemplateStore::removeTemplate(name);
+    populateTemplates();
+}
+
+void StartDialog::updateTemplateDeleteEnabled() {
+    auto* item = m_templateList->currentItem();
+    const bool enabled = item &&
+        !TemplateStore::isBuiltIn(item->data(Qt::UserRole).toString());
+    m_deleteTemplateButton->setEnabled(enabled);
+}
+
+bool StartDialog::confirmDelete(const QString& name) {
+    return m_confirm(name);
 }
 
 void StartDialog::openSelectedTemplate() {

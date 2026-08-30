@@ -28,6 +28,9 @@ private slots:
     void saveTemplateOverwritesWithFlag();
     void loadTemplateLeavesProjectUnsaved();
     void loadUnknownTemplateFails();
+    void deleteUserTemplateRemovesFolder();
+    void deleteTemplateRefusesBuiltIn();
+    void deleteNonexistentOrInvalidFails();
     void sanitizeName();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
@@ -153,6 +156,34 @@ void TestTemplates::loadTemplateLeavesProjectUnsaved() {
 void TestTemplates::loadUnknownTemplateFails() {
     Project p;
     QVERIFY(!TemplateStore::loadTemplate(p, "does_not_exist"));
+}
+
+
+void TestTemplates::deleteUserTemplateRemovesFolder() {
+    Project source;
+    source.addTrack("Drums");
+    QVERIFY(TemplateStore::saveTemplate(source, "to_delete"));
+    QVERIFY(TemplateStore::exists("to_delete"));
+    QVERIFY(TemplateStore::listTemplates().contains("to_delete"));
+
+    QVERIFY(TemplateStore::removeTemplate("to_delete"));
+    QVERIFY(!TemplateStore::exists("to_delete"));
+    QVERIFY(!TemplateStore::listTemplates().contains("to_delete"));
+    QFile file(TemplateStore::templateFilePath("to_delete"));
+    QVERIFY(!file.exists());
+}
+
+void TestTemplates::deleteTemplateRefusesBuiltIn() {
+    QVERIFY(!TemplateStore::removeTemplate("empty"));
+    QVERIFY(!TemplateStore::removeTemplate("rock-band"));
+    QVERIFY(TemplateStore::exists("empty"));
+    QVERIFY(TemplateStore::exists("rock-band"));
+}
+
+void TestTemplates::deleteNonexistentOrInvalidFails() {
+    QVERIFY(!TemplateStore::removeTemplate("does_not_exist"));
+    QVERIFY(!TemplateStore::removeTemplate("../evil/name"));
+    QVERIFY(!TemplateStore::removeTemplate("   "));
 }
 
 

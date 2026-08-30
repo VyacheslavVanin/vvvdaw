@@ -32,6 +32,10 @@ public:
     static bool saveTemplate(Project& project, const QString& name,
                              bool overwrite = false);
 
+    // Delete a user-saved template (its folder). Refuses built-in templates
+    // and names that do not exist or are invalid.
+    static bool removeTemplate(const QString& name);
+
     // Make `raw` safe to use as a template name/folder; empty when invalid.
     static QString sanitizeName(const QString& raw);
 

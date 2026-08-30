@@ -1,6 +1,7 @@
 #pragma once
 #include <QDialog>
 #include <QString>
+#include <functional>
 
 class Settings;
 class QListWidget;
@@ -32,13 +33,23 @@ private:
     void populateTemplates();
     void openSelectedRecent();
     void openSelectedTemplate();
+    void deleteSelectedRecent();
+    void deleteSelectedTemplate();
+    void updateTemplateDeleteEnabled();
     void browseForProject();
     void choose(Action action);
+
+    // Returns true when deletion of `name` is confirmed. Tests inject a stub
+    // via setConfirmCallback; the default shows a Yes/No question dialog.
+    bool confirmDelete(const QString& name);
 
     Settings& m_settings;
     Choice m_choice;
     QListWidget* m_recentList = nullptr;
     QListWidget* m_templateList = nullptr;
     QPushButton* m_openRecentButton = nullptr;
+    QPushButton* m_deleteRecentButton = nullptr;
     QPushButton* m_useTemplateButton = nullptr;
+    QPushButton* m_deleteTemplateButton = nullptr;
+    std::function<bool(const QString&)> m_confirm;
 };

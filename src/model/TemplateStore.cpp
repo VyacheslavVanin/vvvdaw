@@ -122,6 +122,15 @@ bool TemplateStore::saveTemplate(Project& project, const QString& name,
     return ok;
 }
 
+bool TemplateStore::removeTemplate(const QString& name) {
+    if (sanitizeName(name).isEmpty() || isBuiltIn(name))
+        return false;
+    QString path = templatesDir() + "/" + name;
+    if (!QFile::exists(templateFilePath(name)))
+        return false;
+    return QDir(path).removeRecursively();
+}
+
 QString TemplateStore::sanitizeName(const QString& raw) {
     QString s = raw.trimmed();
     s.replace('\\', ' ');

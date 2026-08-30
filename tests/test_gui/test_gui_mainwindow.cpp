@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QLabel>
 #include <QListWidget>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QPixmap>
 #include <QSignalSpy>
@@ -85,6 +86,9 @@ private slots:
     void startDialogListsRecentProjects();
     void startDialogListsTemplates();
     void startDialogSelectingTemplateSetsChoice();
+    void startDialogDeleteTemplateRemovesFromList();
+    void startDialogDeleteBuiltinTemplateRefused();
+    void startDialogDeleteRecentRemovesFromList();
     void mainWindowFileMenuHasSaveAsTemplate();
     void replaceProjectSwapsAndRebuilds();
     void midiTrackShowsArmButton();
@@ -605,6 +609,91 @@ void MainWindowTest::startDialogSelectingTemplateSetsChoice() {
 
     QCOMPARE(dialog.choice().action, StartDialog::Action::OpenTemplate);
     QCOMPARE(dialog.choice().templateName, QString("empty"));
+}
+
+
+void MainWindowTest::startDialogDeleteTemplateRemovesFromList() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    TemplateStore::setTemplatesDirOverride(tmp.path());
+
+    Project source;
+    source.addTrack("Drums");
+    QVERIFY(TemplateStore::saveTemplate(source, "to_delete"));
+
+    Settings settings;
+    StartDialog dialog(settings);
+    dialog.m_confirm = [](const QString&) { return true; };
+
+    int idx = -1;
+    for (int i = 0; i < dialog.m_templateList->count(); ++i)
+        if (dialog.m_templateList->item(i)->data(Qt::UserRole).toString() == "to_delete")
+            idx = i;
+    QVERIFY(idx >= 0);
+    dialog.m_templateList->setCurrentRow(idx);
+    dialog.m_deleteTemplateButton->click();
+
+    QVERIFY(!TemplateStore::exists("to_delete"));
+    bool found = false;
+    for (int i = 0; i < dialog.m_templateList->count(); ++i)
+        if (dialog.m_templateList->item(i)->data(Qt::UserRole).toString() == "to_delete")
+            found = true;
+    QVERIFY(!found);
+
+    TemplateStore::setTemplatesDirOverride("");
+}
+
+
+void MainWindowTest::startDialogDeleteBuiltinTemplateRefused() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    TemplateStore::setTemplatesDirOverride(tmp.path());
+    TemplateStore::ensureBuiltInTemplates();
+
+    Settings settings;
+    StartDialog dialog(settings);
+    dialog.m_confirm = [](const QString&) { return true; };
+
+    int idx = -1;
+    for (int i = 0; i < dialog.m_templateList->count(); ++i)
+        if (dialog.m_templateList->item(i)->data(Qt::UserRole).toString() == "empty")
+            idx = i;
+    QVERIFY(idx >= 0);
+    dialog.m_templateList->setCurrentRow(idx);
+    // Built-in templates cannot be deleted: the button is disabled.
+    QVERIFY(!dialog.m_deleteTemplateButton->isEnabled());
+    dialog.m_deleteTemplateButton->click();
+    QVERIFY(TemplateStore::exists("empty"));
+
+    TemplateStore::setTemplatesDirOverride("");
+}
+
+
+void MainWindowTest::startDialogDeleteRecentRemovesFromList() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings::setConfigDirOverride(tmp.path());
+
+    const QString recentPath = m_env.filePath("project_delete.json");
+    QFile f(recentPath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("{}");
+    f.close();
+
+    Settings settings;
+    settings.addRecentProject(recentPath);
+    StartDialog dialog(settings);
+    dialog.m_confirm = [](const QString&) { return true; };
+
+    QCOMPARE(dialog.m_recentList->count(), 1);
+    dialog.m_recentList->setCurrentRow(0);
+    dialog.m_deleteRecentButton->click();
+
+    QCOMPARE(dialog.m_recentList->count(), 0);
+    QVERIFY(settings.recentProjects().empty());
+    QFile::remove(recentPath);
+
+    Settings::setConfigDirOverride("");
 }
 
 
