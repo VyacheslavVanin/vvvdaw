@@ -73,6 +73,8 @@ private slots:
     void pianoRollCtrlWheelZoomAnchorsCursor();
     void channelComboUpdatesTrackChannel();
     void controlLaneEditorDrawsAndDeletesEvents();
+    void velocityBarsAreNarrowAndAnchoredAtNoteStart();
+    void selectedVelocityBarRendersOnTop();
 private:
     GuiTestEnv m_env;
 };
@@ -288,6 +290,76 @@ void PianoRollTest::controlLaneEditorDrawsAndDeletesEvents() {
     QCOMPARE(clip->controlEvents().size(), size_t(1));
     QTest::mouseClick(lane, Qt::RightButton, Qt::NoModifier, QPoint(200, 20));
     QCOMPARE(clip->controlEvents().size(), size_t(0));
+}
+
+
+void PianoRollTest::velocityBarsAreNarrowAndAnchoredAtNoteStart() {
+    // The velocity bar must be a thin column starting at the note's start tick,
+    // not spanning the whole note's duration.
+    Project project;
+    project.addMidiTrack("Midi 1");
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(MidiClip::kPPQ * 4);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+    const int64_t eventId = project.tracks()[0].midiEvents().back().id();
+
+    clip->addNote(60, 127, 0, MidiClip::kPPQ); // long note starting at tick 0
+
+    UndoStack undo;
+    VelocityEditorWidget vel(project, undo, 0, eventId);
+    vel.resize(256, 80);
+    vel.reload();
+
+    QImage img(vel.size(), QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    vel.render(&img);
+
+    // Bar occupied at the note start (inside the thin 5px column).
+    QVERIFY(img.pixelColor(56 + 2, 40).blue() > 150); // note bar blue #3d7bbf
+    // A few pixels further the bar is gone: it does not span the full duration.
+    QCOMPARE(img.pixelColor(56 + 15, 40), QColor("#232323"));
+}
+
+
+void PianoRollTest::selectedVelocityBarRendersOnTop() {
+    // Two notes landing on the same time unit overlap fully; selecting the
+    // earlier-drawn one must bring its bar to the front (drawn last/on top).
+    Project project;
+    project.addMidiTrack("Midi 1");
+    auto clip = std::make_shared<MidiClip>();
+    clip->setLengthTicks(MidiClip::kPPQ * 4);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+    const int64_t eventId = project.tracks()[0].midiEvents().back().id();
+
+    int64_t a = clip->addNote(60, 127, 0, MidiClip::kPPQ);
+    clip->addNote(72, 127, 0, MidiClip::kPPQ); // added later, drawn first by default
+
+    UndoStack undo;
+    VelocityEditorWidget vel(project, undo, 0, eventId);
+    vel.resize(256, 80);
+    vel.reload();
+
+    auto render = [&vel]() {
+        QImage img(vel.size(), QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        vel.render(&img);
+        return img;
+    };
+
+    // No selection: the later note's bar (blue) naturally sits on top.
+    QCOMPARE(render().pixelColor(56 + 2, 40), QColor("#3d7bbf"));
+
+    // Selecting the earlier note promotes its bar to the front (cyan).
+    vel.setSelection({a});
+    QCOMPARE(render().pixelColor(56 + 2, 40), QColor("#66ccff"));
 }
 
 

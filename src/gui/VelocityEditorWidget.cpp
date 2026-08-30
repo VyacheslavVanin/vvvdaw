@@ -82,14 +82,20 @@ void VelocityEditorWidget::paintEvent(QPaintEvent* /*event*/) {
 
     MidiClip* c = clip();
     if (c) {
-        for (const auto& note : c->notes()) {
+        const auto& notes = c->notes();
+        const auto drawBar = [this, &painter, laneBottom](const MidiNote& note) {
             int bx = tickToX(note.startTick);
-            int bw = std::max(3, static_cast<int>(note.durationTicks * m_pixelsPerTick));
             int bh = std::max(2, static_cast<int>(note.velocity / 127.0 * (kLaneHeight - 8)));
             bool selected = m_selectedNoteIds.count(note.id) > 0;
-            painter.fillRect(bx, laneBottom - 4 - bh, bw, bh,
+            painter.fillRect(bx, laneBottom - 4 - bh, kBarWidth, bh,
                              selected ? QColor("#66ccff") : QColor("#3d7bbf"));
-        }
+        };
+        for (const auto& note : notes)
+            if (m_selectedNoteIds.count(note.id) == 0)
+                drawBar(note);
+        for (const auto& note : notes)
+            if (m_selectedNoteIds.count(note.id) > 0)
+                drawBar(note);
     }
     painter.setPen(QPen(QColor("#444"), 1));
     painter.drawLine(0, height() - 1, width(), height() - 1);
@@ -129,13 +135,12 @@ int VelocityEditorWidget::velocityFromY(int y) const {
     return std::clamp(v, 1, 127);
 }
 
-int64_t VelocityEditorWidget::velocityBarAt(int x) const {
+    int64_t VelocityEditorWidget::velocityBarAt(int x) const {
     MidiClip* c = clip();
     if (!c) return -1;
     for (const auto& note : c->notes()) {
         int bx = tickToX(note.startTick);
-        int bw = std::max(3, static_cast<int>(note.durationTicks * m_pixelsPerTick));
-        if (x >= bx && x <= bx + bw)
+        if (x >= bx && x <= bx + kBarWidth)
             return note.id;
     }
     return -1;
@@ -149,8 +154,7 @@ std::vector<int64_t> VelocityEditorWidget::notesInXRange(int x0, int x1) const {
     int hi = std::max(x0, x1);
     for (const auto& note : c->notes()) {
         int bx = tickToX(note.startTick);
-        int bw = std::max(3, static_cast<int>(note.durationTicks * m_pixelsPerTick));
-        if (bx + bw >= lo && bx <= hi)
+        if (bx + kBarWidth >= lo && bx <= hi)
             ids.push_back(note.id);
     }
     return ids;

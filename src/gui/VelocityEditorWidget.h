@@ -34,6 +34,7 @@ protected:
 private:
     static constexpr int kKeysWidth = 56;
     static constexpr int kLaneHeight = 80;
+    static constexpr int kBarWidth = 5;
 
     MidiClip* clip() const;
     MidiEvent* currentEvent() const;
