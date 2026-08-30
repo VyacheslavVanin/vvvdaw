@@ -310,16 +310,20 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
     }
 
     // Pixel math in int64: at deep zoom a long clip can exceed int range.
-    int64_t x64 = static_cast<int64_t>(
+    const int64_t left64 = static_cast<int64_t>(
         (eventStart(index) - m_scrollOffset) * m_pixelsPerSample);
-    int64_t w64 = static_cast<int64_t>(eventDuration(index) * m_pixelsPerSample);
-    if (x64 + w64 < 0 || x64 > width()) return;
-    int x = static_cast<int>(std::clamp<int64_t>(x64, -2000000000LL, 2000000000LL));
-    // The waveform itself is clipped to the visible window; the event rect
-    // only needs to cover the viewport.
-    int w = static_cast<int>(std::min<int64_t>(w64, 2LL * width() + 2000));
+    const int64_t right64 = left64
+        + static_cast<int64_t>(eventDuration(index) * m_pixelsPerSample);
+    if (right64 < 0 || left64 > width()) return;
 
-    QRect eventRect(x, 2, w, trackHeight - 4);
+    // The background fill only needs to cover the visible part of the event,
+    // but the border/handles are drawn at the true sample positions so they
+    // stay anchored at any zoom (Qt clips their off-screen parts).
+    const int visL = static_cast<int>(std::clamp<int64_t>(left64, 0, width()));
+    const int visR = static_cast<int>(std::clamp<int64_t>(right64, 0, width()));
+    if (visR <= visL) return;
+
+    QRect eventRect(visL, 2, visR - visL, trackHeight - 4);
 
     bool isHovered = (index == m_hoverEventIndex);
     bool isDragged = (index == m_dragEventIndex && m_dragging);
@@ -332,16 +336,14 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
                        : (isSelected ? QColor("#ffaa00")
                        : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff")));
 
-    painter.setPen(QPen(borderColor, (isDragged || isSelected) ? 2 : 1));
-    painter.setBrush(bgColor);
-    painter.drawRect(eventRect);
+    painter.fillRect(eventRect, bgColor);
 
     if (isMidiMode()) {
         auto clip = midiClipAt(index);
         if (clip) {
             int th = eventRect.height() - 2;
-            renderMidiPreview(painter, clip, eventOffset(index), eventDuration(index),
-                              eventRect.x() + 1, eventRect.y() + 1, w, th);
+            renderMidiPreview(painter, clip, eventStart(index), eventOffset(index),
+                              eventDuration(index), eventRect.y() + 1, th);
         }
     } else {
         int th = eventRect.height() - 2;
@@ -353,21 +355,8 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
                         eventRect.y() + 1, th);
     }
 
-    // Edge handles
-    {
-        QColor handleColor = borderColor.lighter(130);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(handleColor);
-        int handleH = trackHeight / 3;
-        int handleY = (trackHeight - handleH) / 2;
-        painter.drawRect(eventRect.x(), handleY, EdgeHandleWidth, handleH);
-        painter.drawRect(eventRect.x() + w - EdgeHandleWidth, handleY, EdgeHandleWidth, handleH);
-    }
-
-    // Border
-    painter.setPen(QPen(borderColor, 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(eventRect);
+    drawEventBorderOutline(painter, left64, right64, borderColor, isDragged, isSelected,
+                           trackHeight);
 
     // Take indicator
     if (eventTakeCount(index) > 1) {
@@ -380,61 +369,84 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
     }
 }
 
+void TrackViewWidget::drawEventBorderOutline(QPainter& painter, int64_t left64, int64_t right64,
+                                             const QColor& borderColor, bool isDragged,
+                                             bool isSelected, int trackHeight) {
+    const int yTop = 2;
+    const int yBot = trackHeight - 2;
+    const int visL = static_cast<int>(std::clamp<int64_t>(left64, 0, width()));
+    const int visR = static_cast<int>(std::clamp<int64_t>(right64, 0, width()));
+
+    // The horizontal top/bottom edges cross the visible window; each vertical
+    // edge is drawn only when its true position is on-screen (off-screen parts
+    // fall outside the painter's clip and are discarded).
+    const int drawWeight = (isDragged || isSelected) ? 2 : 1;
+    painter.setPen(QPen(borderColor, drawWeight));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawLine(visL, yTop, visR, yTop);
+    painter.drawLine(visL, yBot, visR, yBot);
+
+    bool leftOnScreen = (left64 >= 0 && left64 <= width());
+    bool rightOnScreen = (right64 >= 0 && right64 <= width());
+    if (leftOnScreen)
+        painter.drawLine(static_cast<int>(left64), yTop, static_cast<int>(left64), yBot);
+    if (rightOnScreen)
+        painter.drawLine(static_cast<int>(right64), yTop, static_cast<int>(right64), yBot);
+
+    // Edge handles
+    QColor handleColor = borderColor.lighter(130);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(handleColor);
+    int handleH = trackHeight / 3;
+    int handleY = (trackHeight - handleH) / 2;
+    if (leftOnScreen)
+        painter.drawRect(static_cast<int>(left64), handleY, EdgeHandleWidth, handleH);
+    if (rightOnScreen)
+        painter.drawRect(static_cast<int>(right64) - EdgeHandleWidth, handleY,
+                         EdgeHandleWidth, handleH);
+}
+
 void TrackViewWidget::drawDragPreview(QPainter& painter, int trackHeight) {
-    if (m_dragPreview.midiEvent && m_dragPreview.midiEvent->clip()) {
-        int x = static_cast<int>((m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
-        int w = static_cast<int>(m_dragPreview.midiEvent->durationSample() * m_pixelsPerSample);
-        if (x + w >= 0 && x <= width()) {
-            QRect eventRect(x, 2, w, trackHeight - 4);
-
-            painter.setPen(QPen(QColor("#ffcc00"), 2));
-            painter.setBrush(QColor("#1a3344"));
-            painter.drawRect(eventRect);
-
-            {
-                auto clip = m_dragPreview.midiEvent->clip();
-                int th = eventRect.height() - 2;
-                renderMidiPreview(painter, clip,
-                                  m_dragPreview.midiEvent->offsetSample(),
-                                  m_dragPreview.midiEvent->durationSample(),
-                                  eventRect.x() + 1, eventRect.y() + 1, w, th);
-            }
-
-            painter.setPen(QPen(QColor("#ffcc00"), 1));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawRect(eventRect);
-        }
-    } else if (m_dragPreview.audioEvent && m_dragPreview.audioEvent->clip()
-               && m_dragPreview.audioEvent->clip()->isValid()) {
-        int64_t x64 = static_cast<int64_t>(
-            (m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
-        int64_t w64 = static_cast<int64_t>(
-            m_dragPreview.audioEvent->durationSample() * m_pixelsPerSample);
-        if (x64 + w64 >= 0 && x64 <= width()) {
-            int x = static_cast<int>(std::clamp<int64_t>(x64, -2000000000LL, 2000000000LL));
-            int w = static_cast<int>(std::min<int64_t>(w64, 2LL * width() + 2000));
-            QRect eventRect(x, 2, w, trackHeight - 4);
-
-            painter.setPen(QPen(QColor("#ffcc00"), 2));
-            painter.setBrush(QColor("#1a3344"));
-            painter.drawRect(eventRect);
-
-            {
-                auto clip = m_dragPreview.audioEvent->clip();
-                int th = eventRect.height() - 2;
-                renderThumbnail(painter, clip,
-                                m_dragPreview.startSample,
-                                m_dragPreview.audioEvent->durationSample(),
-                                static_cast<size_t>(m_dragPreview.audioEvent->offsetSample()),
-                                static_cast<size_t>(m_dragPreview.audioEvent->sourceFrames()),
-                                eventRect.y() + 1, th);
-            }
-
-            painter.setPen(QPen(QColor("#ffcc00"), 1));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawRect(eventRect);
-        }
+    if (m_dragPreview.midiEvent) {
+        if (!m_dragPreview.midiEvent->clip()) return;
+    } else if (!m_dragPreview.audioEvent || !m_dragPreview.audioEvent->clip()
+               || !m_dragPreview.audioEvent->clip()->isValid()) {
+        return;
     }
+
+    const int64_t dur = m_dragPreview.midiEvent
+        ? m_dragPreview.midiEvent->durationSample()
+        : m_dragPreview.audioEvent->durationSample();
+    int64_t left64 = static_cast<int64_t>(
+        (m_dragPreview.startSample - m_scrollOffset) * m_pixelsPerSample);
+    int64_t right64 = left64 + static_cast<int64_t>(dur * m_pixelsPerSample);
+    if (right64 < 0 || left64 > width()) return;
+
+    const int visL = static_cast<int>(std::clamp<int64_t>(left64, 0, width()));
+    const int visR = static_cast<int>(std::clamp<int64_t>(right64, 0, width()));
+    if (visR <= visL) return;
+
+    QRect eventRect(visL, 2, visR - visL, trackHeight - 4);
+    painter.fillRect(eventRect, QColor("#1a3344"));
+
+    int th = eventRect.height() - 2;
+    if (m_dragPreview.midiEvent) {
+        auto clip = m_dragPreview.midiEvent->clip();
+        renderMidiPreview(painter, clip, m_dragPreview.startSample,
+                          m_dragPreview.midiEvent->offsetSample(),
+                          m_dragPreview.midiEvent->durationSample(),
+                          eventRect.y() + 1, th);
+    } else {
+        auto clip = m_dragPreview.audioEvent->clip();
+        renderThumbnail(painter, clip, m_dragPreview.startSample,
+                        m_dragPreview.audioEvent->durationSample(),
+                        static_cast<size_t>(m_dragPreview.audioEvent->offsetSample()),
+                        static_cast<size_t>(m_dragPreview.audioEvent->sourceFrames()),
+                        eventRect.y() + 1, th);
+    }
+
+    drawEventBorderOutline(painter, left64, right64, QColor("#ffcc00"), true, true,
+                           trackHeight);
 }
 
 void TrackViewWidget::drawRecordingPreview(QPainter& painter, int trackHeight) {
@@ -554,26 +566,41 @@ void TrackViewWidget::drawDragTooltip(QPainter& painter) {
 }
 
 void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
-                                        int64_t offsetSample, int64_t durationSample,
-                                        int x, int y, int w, int h) {
+                                        int64_t eventStartSample, int64_t offsetSample,
+                                        int64_t durationSample, int y, int h) {
     if (!clip || clip->notes().empty() || durationSample <= 0) return;
     if (m_samplesPerTick <= 0) return;
 
-    // Visible tick window of the clip mapped onto the event's width.
-    double spt = m_samplesPerTick;
-    double startTick = static_cast<double>(offsetSample) / spt;
-    double endTick = static_cast<double>(offsetSample + durationSample) / spt;
-    double spanTicks = endTick - startTick;
-    if (spanTicks <= 0) return;
+    // Only the viewport-visible slice of the event is rasterized, mirroring
+    // renderThumbnail: the notes are placed at the true timeline pixels so they
+    // stay anchored to the sample grid at any zoom.
+    const double spt = m_samplesPerTick;
+    const double pps = m_pixelsPerSample;
+    const int64_t evFrom = eventStartSample;
+    const int64_t evTo = eventStartSample + durationSample;
+    const int64_t viewFrom = m_scrollOffset;
+    const int64_t viewTo = m_scrollOffset
+        + static_cast<int64_t>(std::ceil(static_cast<double>(width()) / pps));
+    const int64_t tlFrom = std::max(evFrom, viewFrom);
+    const int64_t tlTo = std::min(evTo, viewTo);
+    if (tlTo <= tlFrom) return;
+
+    // A note at clip tick `nt` sits at timeline sample evFrom + (nt*spt - offsetSample).
+    const int imgX = static_cast<int>((tlFrom - m_scrollOffset) * pps);
+    const int imgXEnd = static_cast<int>((tlTo - m_scrollOffset) * pps);
+    int iw = std::max(1, imgXEnd - imgX);
+    if (iw > width()) iw = width();
 
     auto& cache = m_midiThumbCache[clip];
     if (cache.image.isNull() || cache.revision != clip->revision()
+        || cache.visibleStart != tlFrom
         || cache.offsetSample != offsetSample || cache.durationSample != durationSample
         || cache.samplesPerTick != spt
-        || cache.image.width() != w || cache.image.height() != h) {
-        cache.image = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+        || cache.image.width() != iw || cache.image.height() != h) {
+        cache.image = QImage(iw, h, QImage::Format_ARGB32_Premultiplied);
         cache.image.fill(Qt::transparent);
         cache.revision = clip->revision();
+        cache.visibleStart = tlFrom;
         cache.offsetSample = offsetSample;
         cache.durationSample = durationSample;
         cache.samplesPerTick = spt;
@@ -586,26 +613,28 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
         constexpr double kMaxPitch = 84.0;
         const double pitchRange = kMaxPitch - kMinPitch;
         for (const auto& note : clip->notes()) {
-            double noteStart = static_cast<double>(note.startTick);
-            double noteEnd = static_cast<double>(note.endTick());
-            if (noteEnd <= startTick || noteStart >= endTick)
+            const int64_t noteFrom = evFrom + static_cast<int64_t>(
+                static_cast<double>(note.startTick) * spt - offsetSample);
+            const int64_t noteTo = evFrom + static_cast<int64_t>(
+                static_cast<double>(note.endTick()) * spt - offsetSample);
+            if (noteTo <= tlFrom || noteFrom >= tlTo)
                 continue; // outside the visible window
 
-            double visStart = std::max(noteStart, startTick);
-            double visEnd = std::min(noteEnd, endTick);
+            const int64_t visFrom = std::max(noteFrom, tlFrom);
+            const int64_t visTo = std::min(noteTo, tlTo);
 
             double pitchFrac = (note.pitch - kMinPitch) / pitchRange;
             pitchFrac = std::clamp(pitchFrac, 0.0, 1.0);
-            // Coordinates are relative to the cache image (drawn at (x,y) below).
+            // Coordinates are relative to the cache image (drawn at (imgX,y) below).
             int ny = static_cast<int>((1.0 - pitchFrac) * (h - 2));
-            int nx = static_cast<int>((visStart - startTick) / spanTicks * w);
-            int nw = std::max(1, static_cast<int>((visEnd - visStart) / spanTicks * w));
+            int nx = static_cast<int>((visFrom - tlFrom) * pps);
+            int nw = std::max(1, static_cast<int>((visTo - visFrom) * pps));
             p.drawRect(nx, ny, nw, std::max(2, h / 16));
         }
     }
 
     if (!cache.image.isNull())
-        painter.drawImage(x, y, cache.image);
+        painter.drawImage(imgX, y, cache.image);
 }
 
 void TrackViewWidget::drawCrossfades(QPainter& painter) {

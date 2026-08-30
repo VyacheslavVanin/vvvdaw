@@ -76,6 +76,8 @@ private slots:
     void crossfadeContextMenuAppliesAndUndoes();
     void middleDragPansTrackView();
     void ctrlWheelZoomAnchorsCursorFrame();
+    void audioEventBorderStaysAtTrueEdgeDuringDeepZoom();
+    void midiEventBorderStaysAtTrueEdgeDuringDeepZoom();
     void trackViewMouseCursorTracksAndClears();
     void trackViewContextMenuCutSplitsEvent();
     void trackViewContextMenuCutAndSnapAlignsToGrid();
@@ -489,6 +491,91 @@ void TrackViewTest::ctrlWheelZoomAnchorsCursorFrame() {
     QCOMPARE(view->scrollOffset() + static_cast<int64_t>(pos.x() / view->zoom()), before);
 }
 
+
+void TrackViewTest::audioEventBorderStaysAtTrueEdgeDuringDeepZoom() {
+    Project project;
+    project.addTrack("A1");
+    Track& track = project.tracks()[0];
+
+    std::vector<float> samples;
+    for (int i = 0; i < 4096; ++i)
+        samples.push_back((i % 2 == 0) ? 0.7f : -0.7f);
+    auto clip = std::make_shared<AudioClip>(std::move(samples), 48000, 1);
+    AudioEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(clip->frameCount());
+    ev.setSourceFrames(clip->frameCount());
+    track.addEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(vvvdaw::SampleViewPixelsPerSample); // 4 px per sample
+
+    // Scroll so the event's true right edge (sample 4096) lands at x=360 while
+    // its left edge is far off-screen: the event is much wider than the
+    // viewport, so a viewport-clamped rect used to push the border off-screen
+    // at deep zoom. The border must instead be drawn at the true right edge.
+    const int64_t scroll = 4096 - 360 / 4; // event right edge -> x=360
+    view->setScrollOffset(scroll);
+    QCoreApplication::processEvents();
+
+    QImage img = view->grab().toImage();
+
+    const int rightX = static_cast<int>((4096 - scroll) * 4); // 360
+    // The waveform of the visible tail is present up to the true right edge.
+    QVERIFY(regionHasWaveform(img, 0, rightX - 1, 3, 78));
+    // The border is drawn at the true right edge (top border row y=2).
+    QVERIFY(regionHasWaveform(img, rightX - 1, rightX + 1, 2, 2));
+    // Nothing of the event extends past its true right edge.
+    QVERIFY(regionIsBackground(img, rightX + 5, 399, 2, 78));
+}
+
+void TrackViewTest::midiEventBorderStaysAtTrueEdgeDuringDeepZoom() {
+    Project project;
+    project.addMidiTrack("M1");
+    Track& track = project.tracks()[0];
+
+    auto clip = std::make_shared<MidiClip>();
+    // A note spanning the whole event so its fill is visible at deep zoom.
+    clip->addNote(60, 100, 0, 960);
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    track.addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(vvvdaw::SampleViewPixelsPerSample);
+
+    // Same geometry as the audio case: the event is much wider than the
+    // viewport, and its true right edge lands at x=360.
+    const int64_t scroll = 48000 - 360 / 4;
+    view->setScrollOffset(scroll);
+    QCoreApplication::processEvents();
+
+    QImage img = view->grab().toImage();
+
+    const int rightX = static_cast<int>((48000 - scroll) * 4); // 360
+    // The event border is drawn at the true right edge (top border row y=2).
+    QVERIFY(regionHasWaveform(img, rightX - 1, rightX + 1, 2, 2));
+    // Nothing of the event extends past its true right edge.
+    QVERIFY(regionIsBackground(img, rightX + 5, 399, 2, 78));
+}
 
 void TrackViewTest::trackViewMouseCursorTracksAndClears() {
     Project project;

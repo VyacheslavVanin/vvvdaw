@@ -121,8 +121,13 @@ private:
                             size_t from, size_t to,
                             size_t& winStart, std::vector<float>& samples);
     void renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
-                           int64_t offsetSample, int64_t durationSample,
-                           int x, int y, int w, int h);
+                           int64_t eventStartSample, int64_t offsetSample,
+                           int64_t durationSample, int y, int h);
+    // Draw the event border + edge handles at the true sample positions (the
+    // off-screen parts are clipped away), instead of a viewport-sized rect.
+    void drawEventBorderOutline(QPainter& painter, int64_t left64, int64_t right64,
+                                const QColor& borderColor, bool isDragged,
+                                bool isSelected, int trackHeight);
     // Draw crossfade indicators: an X (rectangle outline + two diagonals)
     // across each junction where the left event fades out and the right event
     // fades in.
@@ -207,6 +212,7 @@ private:
     struct MidiThumbCache {
         QImage image;
         int64_t revision = -1;
+        int64_t visibleStart = 0;
         int64_t offsetSample = 0;
         int64_t durationSample = 0;
         double samplesPerTick = 0.0;
