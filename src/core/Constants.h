@@ -40,6 +40,15 @@ inline constexpr double DefaultSnapUnitSamples = 48000.0;
 inline constexpr int MinLoopGapSamples = 48000;
 inline constexpr int TickIntervalSamples = 48000;
 
+// Automatic bus color scheme. A folder anchors its group with a muted hue tint
+// (AutoFolder*), which the bus strips darken toward the background gray via
+// blendColor(#2e2e2e, tint, 0.4) — that resolves to ~AutoStrip*. The bus
+// color palette's S/V reset uses the strip values so manual colors blend in.
+inline constexpr int AutoFolderSaturation = 90;
+inline constexpr int AutoFolderValue = 160;
+inline constexpr int AutoStripSaturation = 64;
+inline constexpr int AutoStripValue = 92;
+
 // Audio
 inline constexpr float MonitoringVolumeFactor = 0.7f;
 

@@ -309,7 +309,8 @@ std::vector<int> Project::folderDescendants(int index) const {
 }
 
 QColor Project::folderColorFor(int folderIndex) {
-    return QColor::fromHsv((folderIndex * 47) % 360, 90, 160);
+    return QColor::fromHsv((folderIndex * 47) % 360,
+                           vvvdaw::AutoFolderSaturation, vvvdaw::AutoFolderValue);
 }
 
 QColor Project::busColor(int busIndex) const {

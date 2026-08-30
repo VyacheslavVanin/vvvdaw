@@ -1,9 +1,9 @@
 #include "BusColorBar.h"
+#include "BusColorPaletteDialog.h"
 #include <QPainter>
 #include <QMouseEvent>
 #include <QContextMenuEvent>
 #include <QMenu>
-#include <QColorDialog>
 #include <QApplication>
 
 BusColorBar::BusColorBar(QWidget* parent)
@@ -11,7 +11,9 @@ BusColorBar::BusColorBar(QWidget* parent)
     setCursor(Qt::PointingHandCursor);
     setToolTip("Click to assign a color; Ctrl+click overrides child colors");
     m_picker = [](const QColor& initial) {
-        return QColorDialog::getColor(initial, nullptr, "Choose bus color");
+        BusColorPaletteDialog dialog(initial, nullptr);
+        return (dialog.exec() == QDialog::Accepted) ? dialog.selectedColor()
+                                                    : QColor();
     };
 }
 

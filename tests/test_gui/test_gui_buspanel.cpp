@@ -18,6 +18,7 @@
 #include <QDragLeaveEvent>
 #include <QFrame>
 #include <QDialog>
+#include <QSlider>
 #include <QWheelEvent>
 #include <QScrollBar>
 #include <algorithm>
@@ -50,6 +51,7 @@
 #include "gui/BusSendsWidget.h"
 #include "gui/BusLevelMeter.h"
 #include "gui/BusColorBar.h"
+#include "gui/BusColorPaletteDialog.h"
 #include "gui/InstrumentPanelWidget.h"
 #include "gui/PluginListWidget.h"
 #include "gui/PluginWindow.h"
@@ -82,6 +84,8 @@ private slots:
     void busPanelFolderTintNoIndent();
     void busPanelColorBarAssignsAndPropagates();
     void busPanelColorBarCtrlOverridesChildren();
+    void busColorPaletteIsMutedLikeAuto();
+    void busColorPaletteDefaultsAndAppliesCurrentColor();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
     void busVolumeSliderFollowsMeterDbScale();
@@ -814,6 +818,45 @@ void BusPanelTest::busPanelColorBarCtrlOverridesChildren() {
     QVERIFY(project.buses()[3].colorSet());              // child's manual color back
     QCOMPARE(project.buses()[3].color(), QColor("#101010"));
     QVERIFY(!project.buses()[4].colorSet());
+}
+
+
+void BusPanelTest::busColorPaletteIsMutedLikeAuto() {
+    const QList<QColor> palette = BusColorPaletteDialog::suggestedColors();
+
+    // A non-empty, deterministic palette of muted swatches in the same family
+    // as the automatic bus-strip colors (no bright/saturated neons).
+    QVERIFY(palette.size() >= 9);
+    for (const QColor& c : palette) {
+        QVERIFY(c.isValid());
+        QCOMPARE(c.hsvSaturation(), vvvdaw::AutoStripSaturation);
+        QCOMPARE(c.value(), vvvdaw::AutoStripValue);
+    }
+    // The palette always starts with the same stepped hue (deterministic).
+    QCOMPARE(palette.first(), QColor::fromHsv(0, vvvdaw::AutoStripSaturation,
+                                              vvvdaw::AutoStripValue));
+    QCOMPARE(palette.last(), QColor::fromHsv((8 * 47) % 360, vvvdaw::AutoStripSaturation,
+                                             vvvdaw::AutoStripValue));
+}
+
+void BusPanelTest::busColorPaletteDefaultsAndAppliesCurrentColor() {
+    // Opening on a gray strip color must default S/V to the automatic bus tint
+    // values (not the gray's 0/46), and keep only the hue.
+    BusColorPaletteDialog dialog(QColor("#2e2e2e"), nullptr);
+    QCOMPARE(dialog.selectedColor().hsvSaturation(), vvvdaw::AutoStripSaturation);
+    QCOMPARE(dialog.selectedColor().value(), vvvdaw::AutoStripValue);
+
+    // Moving the hue scale updates the color that OK would commit.
+    QSlider* hue = nullptr;
+    for (QSlider* s : dialog.findChildren<QSlider*>())
+        if (s->maximum() == 359) {
+            hue = s;
+            break;
+        }
+    QVERIFY(hue);
+    hue->setValue(200);
+    QCOMPARE(dialog.selectedColor(),
+             QColor::fromHsv(200, vvvdaw::AutoStripSaturation, vvvdaw::AutoStripValue));
 }
 
 
