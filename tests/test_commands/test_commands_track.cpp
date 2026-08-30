@@ -27,6 +27,9 @@ private slots:
     void setTrackMuteSoloCommands();
     void setTrackOutputCommand();
     void setTrackMidiOutputCommand();
+    void setTrackHeightCommand();
+    void setAllTracksHeightCommand();
+    void reorderTracksCommand();
 };
 
 void TestTrackCommands::addTrackCommand() {
@@ -143,6 +146,80 @@ void TestTrackCommands::setTrackMidiOutputCommand() {
     stack.undo();
     QCOMPARE(p.tracks()[0].midiOutputDeviceId(), -1);
     QCOMPARE(p.tracks()[0].instrumentIndex(), -1);
+}
+
+
+void TestTrackCommands::setTrackHeightCommand() {
+    Project p;
+    p.addTrack("T");
+    QCOMPARE(p.tracks()[0].height(), vvvdaw::DefaultTrackHeight);
+
+    UndoStack stack;
+    stack.execute(std::make_unique<SetTrackHeightCommand>(p, 0, vvvdaw::DefaultTrackHeight, 240));
+    QCOMPARE(p.tracks()[0].height(), 240);
+    stack.undo();
+    QCOMPARE(p.tracks()[0].height(), vvvdaw::DefaultTrackHeight);
+
+    // Out-of-range index is a no-op.
+    stack.execute(std::make_unique<SetTrackHeightCommand>(p, 5, 240, 300));
+    QCOMPARE(p.tracks()[0].height(), vvvdaw::DefaultTrackHeight);
+}
+
+
+void TestTrackCommands::setAllTracksHeightCommand() {
+    Project p;
+    p.addTrack("A");
+    p.addMidiTrack("B");
+    p.addTrack("C");
+    p.tracks()[0].setHeight(100);
+    p.tracks()[1].setHeight(200);
+    p.tracks()[2].setHeight(300);
+
+    UndoStack stack;
+    std::vector<int> oldHeights = { 100, 200, 300 };
+    stack.execute(std::make_unique<SetAllTracksHeightCommand>(p, oldHeights, 220));
+    for (auto& t : p.tracks())
+        QCOMPARE(t.height(), 220);
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].height(), 100);
+    QCOMPARE(p.tracks()[1].height(), 200);
+    QCOMPARE(p.tracks()[2].height(), 300);
+
+    stack.redo();
+    for (auto& t : p.tracks())
+        QCOMPARE(t.height(), 220);
+}
+
+
+void TestTrackCommands::reorderTracksCommand() {
+    Project p;
+    p.addTrack("A");
+    p.addMidiTrack("B");
+    p.addTrack("C");
+    p.addTrack("D");
+    QCOMPARE(p.tracks()[0].name(), QString("A"));
+    QCOMPARE(p.tracks()[3].name(), QString("D"));
+
+    UndoStack stack;
+    // Move track 0 ("A") to before position 2: A,B,C,D -> B,A,C,D.
+    stack.execute(std::make_unique<ReorderTracksCommand>(p,
+        std::vector<int>{1, 0, 2, 3}));
+    QCOMPARE(p.tracks().size(), size_t(4));
+    QCOMPARE(p.tracks()[0].name(), QString("B"));
+    QCOMPARE(p.tracks()[1].name(), QString("A"));
+    QCOMPARE(p.tracks()[2].name(), QString("C"));
+    QCOMPARE(p.tracks()[3].name(), QString("D"));
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].name(), QString("A"));
+    QCOMPARE(p.tracks()[1].name(), QString("B"));
+    QCOMPARE(p.tracks()[2].name(), QString("C"));
+    QCOMPARE(p.tracks()[3].name(), QString("D"));
+
+    stack.redo();
+    QCOMPARE(p.tracks()[0].name(), QString("B"));
+    QCOMPARE(p.tracks()[1].name(), QString("A"));
 }
 
 

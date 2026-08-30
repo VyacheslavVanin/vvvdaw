@@ -21,6 +21,7 @@
 #include <QDialog>
 #include <QWheelEvent>
 #include <QScrollBar>
+#include <QSplitter>
 #include <algorithm>
 #include <memory>
 #include <thread>
@@ -53,7 +54,9 @@
 #include "gui/BusColorBar.h"
 #include "gui/InstrumentPanelWidget.h"
 #include "gui/PluginListWidget.h"
+#include "gui/TrackRowWidget.h"
 #include "gui/PluginWindow.h"
+#include "gui/TrackRowWidget.h"
 #include "gui/PianoRollWindow.h"
 #include "gui/PianoRollWidget.h"
 #include "gui/ChannelRoutingDialog.h"
@@ -72,6 +75,14 @@ private slots:
     void rebuildAfterTrackChanges();
     void rebuildWithBusesAndInstruments();
     void addTrackViaSignal();
+    void trackRowsApplyStoredHeight();
+    void resizeTrackUpdatesHeightAndRow();
+    void resizeAllTracksViaRowSignals();
+    void panelCollapsesControlRows();
+    void minimumRowHeightFitsNameRow();
+    void trackPluginPanelWidthAppliesToRow();
+    void splitterSyncPersistsPanelWidth();
+    void reorderTracksViaCommand();
     void audioTrackOutComboListsBuses();
     void instrumentOutComboShowsMultiChannel();
     void channelRoutingDialogCreatesBuses();
@@ -206,6 +217,211 @@ void MainWindowTest::addTrackViaSignal() {
     QCoreApplication::processEvents();
     QCOMPARE(window.m_trackRows.size(), size_t(2));
     QCOMPARE(window.m_project.tracks().size(), size_t(2));
+}
+
+
+void MainWindowTest::trackRowsApplyStoredHeight() {
+    Project project;
+    project.addTrack("A");
+    project.addMidiTrack("B");
+    project.tracks()[0].setHeight(200);
+    project.tracks()[1].setHeight(90);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+
+    QVERIFY(window.m_trackRows[0].row);
+    QVERIFY(window.m_trackRows[1].row);
+    QCOMPARE(window.m_trackRows[0].row->rowHeight(), 200);
+    QCOMPARE(window.m_trackRows[1].row->rowHeight(), 90);
+}
+
+
+void MainWindowTest::resizeTrackUpdatesHeightAndRow() {
+    Project project;
+    project.addTrack("A");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(1));
+    const int original = window.m_project.tracks()[0].height();
+
+    window.applyTrackHeight(0, 300);
+    QCOMPARE(window.m_project.tracks()[0].height(), 300);
+    QCOMPARE(window.m_trackRows[0].row->rowHeight(), 300);
+
+    // The signal handler pushes a height command; undo restores the original.
+    window.pushCommand(std::make_unique<SetTrackHeightCommand>(
+        window.m_project, 0, original, 300));
+    window.performUndo();
+    QCOMPARE(window.m_project.tracks()[0].height(), original);
+    QCOMPARE(window.m_trackRows[0].row->rowHeight(), original);
+}
+
+
+void MainWindowTest::resizeAllTracksViaRowSignals() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(3));
+
+    TrackRowWidget* row = window.m_trackRows[0].row;
+    QVERIFY(row);
+
+    // Shift-drag resize: every track takes the same height.
+    emit row->resizeStarted(0, vvvdaw::DefaultTrackHeight);
+    emit row->resizeDragged(0, 240, true);
+    emit row->resizeFinished(0, vvvdaw::DefaultTrackHeight, 240, true);
+
+    for (const auto& t : window.m_project.tracks())
+        QCOMPARE(t.height(), 240);
+    for (auto& r : window.m_trackRows)
+        QCOMPARE(r.row->rowHeight(), 240);
+
+    window.performUndo();
+    QCoreApplication::processEvents();
+    for (const auto& t : window.m_project.tracks())
+        QCOMPARE(t.height(), vvvdaw::DefaultTrackHeight);
+}
+
+
+void MainWindowTest::panelCollapsesControlRows() {
+    Project project;
+    project.addTrack("A", 2);
+    project.addMidiTrack("B");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+
+    TrackPanelWidget* audio = window.m_trackRows[0].panel;
+    TrackPanelWidget* midi = window.m_trackRows[1].panel;
+
+    // Audio has three control rows; MIDI only the out row.
+    QCOMPARE(audio->visibleControlRowCount(), 3);
+    QCOMPARE(midi->visibleControlRowCount(), 1);
+
+    // Collapse to only the name row.
+    audio->applyContentHeight(audio->nameRowHeight());
+    midi->applyContentHeight(midi->nameRowHeight());
+    QCOMPARE(audio->visibleControlRowCount(), 0);
+    QCOMPARE(midi->visibleControlRowCount(), 0);
+
+    // Expanding back shows them again.
+    audio->applyContentHeight(audio->fullContentHeight());
+    midi->applyContentHeight(midi->fullContentHeight());
+    QCOMPARE(audio->visibleControlRowCount(), 3);
+    QCOMPARE(midi->visibleControlRowCount(), 1);
+}
+
+
+void MainWindowTest::minimumRowHeightFitsNameRow() {
+    Project project;
+    project.addTrack("A", 2);
+    project.addMidiTrack("B");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+
+    for (size_t i = 0; i < window.m_trackRows.size(); ++i) {
+        TrackRowWidget* row = window.m_trackRows[i].row;
+        TrackPanelWidget* panel = window.m_trackRows[i].panel;
+        QVERIFY(row);
+        QVERIFY(panel);
+
+        // The minimum row height must fit the whole name row (buttons included),
+        // so it accounts for the panel's vertical margins + the resize handle.
+        QCOMPARE(row->minimumRowHeight(),
+                 panel->minimumContentHeight() + vvvdaw::TrackResizeHandleHeight);
+        QVERIFY(panel->minimumContentHeight() > panel->nameRowHeight());
+
+        // At the minimum the panel stays fully collapsed (name row only).
+        row->applyHeight(row->minimumRowHeight());
+        QCOMPARE(panel->visibleControlRowCount(), 0);
+    }
+}
+
+
+void MainWindowTest::trackPluginPanelWidthAppliesToRow() {
+    Project project;
+    project.addTrack("A", 2);
+    project.tracks()[0].setPluginPanelWidth(320);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(1));
+    QVERIFY(window.m_trackRows[0].innerSplitter);
+    window.show();
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_trackRows[0].innerSplitter->sizes().value(0), 320);
+}
+
+
+void MainWindowTest::splitterSyncPersistsPanelWidth() {
+    Project project;
+    project.addTrack("A", 2);
+    project.addMidiTrack("B");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+
+    QVERIFY(window.m_trackRows[0].innerSplitter);
+    QVERIFY(window.m_trackRows[1].innerSplitter);
+    window.show();
+    QCoreApplication::processEvents();
+
+    window.m_trackRows[0].innerSplitter->setSizes({280, 920});
+    const int actual = window.m_trackRows[0].innerSplitter->sizes().value(0);
+    window.syncPluginListSplitters(0);
+
+    // Dragging one effects panel keeps all tracks in sync and persists the
+    // width into the model so it can be saved with the project.
+    QCOMPARE(window.m_project.tracks()[0].pluginPanelWidth(), actual);
+    QCOMPARE(window.m_project.tracks()[1].pluginPanelWidth(), actual);
+}
+
+
+void MainWindowTest::reorderTracksViaCommand() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+    project.addTrack("D");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(4));
+
+    // Move track 0 ("A") to before position 2.
+    window.executeCommand(std::make_unique<ReorderTracksCommand>(window.m_project,
+        std::vector<int>{1, 0, 2, 3}));
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_project.tracks()[0].name(), QString("B"));
+    QCOMPARE(window.m_project.tracks()[1].name(), QString("A"));
+    QCOMPARE(window.m_trackRows.size(), size_t(4));
+    QCOMPARE(window.m_trackRows[0].panel->track()->name(), QString("B"));
+    QCOMPARE(window.m_trackRows[1].panel->track()->name(), QString("A"));
+
+    window.performUndo();
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_project.tracks()[0].name(), QString("A"));
+    QCOMPARE(window.m_project.tracks()[3].name(), QString("D"));
+    QCOMPARE(window.m_trackRows[0].panel->track()->name(), QString("A"));
 }
 
 

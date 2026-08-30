@@ -76,6 +76,8 @@ QJsonObject Track::toJson(const QString& projectDir) const {
     tObj["volume"] = m_volume;
     tObj["muted"] = m_muted;
     tObj["solo"] = m_solo;
+    tObj["height"] = m_height;
+    tObj["pluginPanelWidth"] = m_pluginPanelWidth;
 
     if (m_type == Type::Midi) {
         tObj["midiOutputDeviceId"] = m_midiOutputDeviceId;
@@ -113,6 +115,8 @@ void Track::fromJson(const QJsonObject& tObj, const QString& projectDir, PluginM
     m_volume = static_cast<float>(tObj["volume"].toDouble(vvvdaw::DefaultVolume));
     m_muted = tObj["muted"].toBool(false);
     m_solo = tObj["solo"].toBool(false);
+    m_height = tObj["height"].toInt(vvvdaw::DefaultTrackHeight);
+    m_pluginPanelWidth = tObj["pluginPanelWidth"].toInt(vvvdaw::DefaultPluginPanelWidth);
 
     if (m_type == Type::Midi) {
         m_midiOutputDeviceId = tObj["midiOutputDeviceId"].toInt(-1);

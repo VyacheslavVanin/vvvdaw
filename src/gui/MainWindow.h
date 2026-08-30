@@ -23,6 +23,7 @@ class MeasureRuler;
 class TempoWidget;
 class TrackPanelWidget;
 class TrackViewWidget;
+class TrackRowWidget;
 class BusPanelWidget;
 class InstrumentPanelWidget;
 class PianoRollWindow;
@@ -32,6 +33,7 @@ class PluginChain;
 class PluginListWidget;
 class QSplitter;
 class QVBoxLayout;
+class QFrame;
 struct DeviceInfo;
 
 class MainWindow : public QMainWindow {
@@ -104,11 +106,13 @@ private:
     // rebuildTracks() steps
     void teardownTrackRows();
     void buildTrackRow(int trackIndex, bool odd,
-                       const std::vector<DeviceInfo>& devices,
                        const std::vector<std::pair<int, QString>>& midiOutList,
                        const std::vector<QString>& instrumentNames);
     void syncAfterRebuild();
     void syncSnapUnit();
+    // Wire the per-row resize / reorder signals (extracted so buildTrackRow
+    // stays below the cyclomatic-complexity limit).
+    void wireTrackRowGestures(TrackRowWidget* row);
 
     // Small helpers shared by the setup/rebuild methods (deduplicated).
     QWidget* makePanelGrip(QWidget* parent);
@@ -122,11 +126,17 @@ private:
                             QPoint globalPos);
     void finishEventDrag(int srcIdx, int64_t eventId, int64_t oldStart, int64_t newStart,
                          QPoint globalPos, bool wasDuplicate);
-    void collectDeviceLists(std::vector<DeviceInfo>& devices,
-                            std::vector<std::pair<int, QString>>& midiOutList,
+    void collectDeviceLists(std::vector<std::pair<int, QString>>& midiOutList,
                             std::vector<QString>& instrumentNames);
     // Shared post-mutation refresh used by executeCommand / undo / redo.
     void refreshAfterProjectMutation();
+
+    // Track row resize / reorder.
+    int trackInsertionIndexAt(const QPoint& globalPos) const;
+    void updateTrackInsertionLine(int insertionIndex);
+    void hideTrackInsertionLine();
+    int maxTrackRowMinHeight() const;
+    void applyTrackHeight(int index, int height);
 
     bool eventFilter(QObject* obj, QEvent* event) override;
 
@@ -155,6 +165,7 @@ private:
     int m_gripStartHeight = 0;
 
     struct TrackRow {
+        TrackRowWidget* row = nullptr;
         TrackPanelWidget* panel = nullptr;
         PluginListWidget* pluginList = nullptr;
         TrackViewWidget* view = nullptr;
@@ -162,11 +173,15 @@ private:
     };
     std::vector<TrackRow> m_trackRows;
 
+    // Track row resize / reorder state.
+    QFrame* m_trackInsertionLine = nullptr;
+    std::vector<int> m_resizeStartHeights;
+    int m_trackReorderSource = -1;
+
     std::vector<PluginWindow*> m_pluginWindows;
     std::vector<PianoRollWindow*> m_pianoRollWindows;
     std::vector<QSplitter*> m_trackSplitters;
     bool m_syncingSplitters = false;
-    int m_savedPluginListWidth = 200;
 
     double m_zoom = vvvdaw::DefaultZoom;
     int64_t m_scrollOffset = 0;

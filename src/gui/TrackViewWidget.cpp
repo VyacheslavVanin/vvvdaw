@@ -20,7 +20,7 @@ TrackViewWidget::TrackViewWidget(Track* track, Project* project, QWidget* parent
     , m_track(track)
     , m_project(project)
 {
-    setMinimumHeight(60);
+    setMinimumHeight(20);
     setMouseTracking(true);
     setFocusPolicy(Qt::ClickFocus);
 }

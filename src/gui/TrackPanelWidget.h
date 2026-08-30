@@ -11,7 +11,6 @@
 
 class Track;
 struct AudioBus;
-struct DeviceInfo;
 
 class TrackPanelWidget : public QWidget {
     Q_OBJECT
@@ -24,9 +23,23 @@ public:
     void setAlternateRow(bool alternate);
 
     void updateBusList(const std::vector<AudioBus>& buses);
-    void updateInputDeviceList(const std::vector<DeviceInfo>& devices);
     void updateMidiOutputs(const std::vector<std::pair<int, QString>>& devices,
                            const std::vector<QString>& instrumentNames);
+
+    // Height of the always-visible (name + buttons) region. The minimum a track
+    // row can shrink down to.
+    int nameRowHeight() const { return m_nameRowHeight; }
+    // Minimum content height the panel needs to render the name row without
+    // clipping (includes the panel's vertical margins).
+    int minimumContentHeight() const;
+    // Natural height with every type-specific control row visible.
+    int fullContentHeight() const { return m_fullContentHeight; }
+    // Show/hide the bottom control rows so the panel fits `contentHeight` with
+    // the remaining content pinned to the top.
+    void applyContentHeight(int contentHeight);
+    // Number of type-specific control rows currently visible (0 when fully
+    // collapsed to the name row).
+    int visibleControlRowCount() const;
 
 signals:
     void armToggled(bool oldValue, bool newValue);
@@ -36,7 +49,6 @@ signals:
     void panChanged(float oldValue, float newValue);
     void volumeChanged(float oldValue, float newValue);
     void outputBusChanged(int oldIndex, int newIndex);
-    void inputDeviceChanged(int deviceId);
     void midiOutputChanged(int deviceId, const QString& deviceName, int instrumentIndex);
     void deleteRequested();
     void addTrackRequested(int channels);
@@ -50,6 +62,10 @@ protected:
 
 private:
     void applyTrackType();
+    void rebuildOptionalRows();
+    // Natural height with the first `count` optional rows visible.
+    int contentHeightWith(int optionalCount) const;
+    void setOptionalVisible(int count);
 
     Track* m_track = nullptr;
     QLineEdit* m_nameEdit = nullptr;
@@ -61,8 +77,16 @@ private:
     QSlider* m_panSlider = nullptr;
     QSlider* m_volumeSlider = nullptr;
     QComboBox* m_outputBusCombo = nullptr;
-    QComboBox* m_inputDeviceCombo = nullptr;
-    QWidget* m_panRow = nullptr;
-    QWidget* m_volRow = nullptr;
-    QWidget* m_inRow = nullptr;
+
+    QWidget* m_nameRowWidget = nullptr;
+    QWidget* m_panRowWidget = nullptr;
+    QWidget* m_volRowWidget = nullptr;
+    QWidget* m_outRowWidget = nullptr;
+    // Optional control rows that can be collapsed when the row is short
+    // (bottom-first order: out, level, pan).
+    std::vector<QWidget*> m_optionalRows;
+    std::vector<int> m_optionalRowHeights;
+
+    int m_nameRowHeight = 0;
+    int m_fullContentHeight = 0;
 };

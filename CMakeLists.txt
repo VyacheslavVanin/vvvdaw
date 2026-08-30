@@ -129,6 +129,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/MainWindowWindows.cpp
     src/gui/TransportPanel.cpp
     src/gui/TrackPanelWidget.cpp
+    src/gui/TrackRowWidget.cpp
     src/gui/PanSlider.cpp
     src/gui/BusPanelWidget.cpp
     src/gui/BusSendsWidget.cpp

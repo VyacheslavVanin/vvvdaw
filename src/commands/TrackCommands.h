@@ -4,6 +4,7 @@
 #include "SetValueCommand.h"
 #include <QString>
 #include <QJsonObject>
+#include <vector>
 
 class Project;
 class PluginManager;
@@ -50,6 +51,38 @@ using SetTrackMonitorCommand = vvvcmd::SetValueCommand<
     Track, bool, 15, false, false, &Track::setMonitoring>;
 using SetTrackArmCommand = vvvcmd::SetValueCommand<
     Track, bool, 16, false, false, &Track::setRecordArmed>;
+using SetTrackHeightCommand = vvvcmd::SetValueCommand<
+    Track, int, 18, false, false, &Track::setHeight>;
+
+// Apply one height to every track (the Shift-drag "resize all" gesture).
+// Undo restores each track's previous height.
+class SetAllTracksHeightCommand : public UndoCommand {
+public:
+    SetAllTracksHeightCommand(Project& project, std::vector<int> oldHeights, int newHeight);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 130; }
+private:
+    Project& m_project;
+    std::vector<int> m_oldHeights;
+    int m_newHeight;
+};
+
+// Move the tracks vector to a new ordering. `newOrder` is a permutation of
+// 0..n-1 where position `i` in the new order is the track that was at
+// `newOrder[i]` before the move. The inverse order is derived for undo.
+class ReorderTracksCommand : public UndoCommand {
+public:
+    ReorderTracksCommand(Project& project, std::vector<int> newOrder);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 131; }
+private:
+    void applyOrder(const std::vector<int>& order);
+    Project& m_project;
+    std::vector<int> m_oldOrder;
+    std::vector<int> m_newOrder;
+};
 
 class SetTrackMidiOutputCommand : public UndoCommand {
 public:

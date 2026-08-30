@@ -300,12 +300,17 @@ void MainWindow::syncPluginListSplitters(int senderIndex) {
     if (senderIndex >= 0 && senderIndex < static_cast<int>(m_trackSplitters.size())) {
         auto* sender = m_trackSplitters[senderIndex];
         QList<int> sizes = sender->sizes();
-        int pluginWidth = sizes.value(0, 200);
+        int pluginWidth = sizes.value(0, vvvdaw::DefaultPluginPanelWidth);
 
         for (auto* spl : m_trackSplitters) {
             if (spl != sender) {
                 spl->setSizes({pluginWidth, 1000});
             }
+        }
+        // Persist the (shared) panel width so it survives a project reload.
+        const int n = static_cast<int>(m_project.tracks().size());
+        for (int i = 0; i < static_cast<int>(m_trackSplitters.size()) && i < n; ++i) {
+            m_project.tracks()[i].setPluginPanelWidth(pluginWidth);
         }
         updateRulerSpacers(200 + pluginWidth);
     }

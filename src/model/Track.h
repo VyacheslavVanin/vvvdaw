@@ -26,6 +26,13 @@ public:
     int inputDeviceId() const { return m_inputDeviceId; }
     void setInputDeviceId(int id) { m_inputDeviceId = id; }
 
+    int height() const { return m_height; }
+    void setHeight(int h) { m_height = h; }
+
+    // Width of the track's effects (plugin list) panel, in pixels.
+    int pluginPanelWidth() const { return m_pluginPanelWidth; }
+    void setPluginPanelWidth(int w) { m_pluginPanelWidth = w; }
+
     int channels() const { return m_channels; }
     void setChannels(int ch) { m_channels = ch; }
 
@@ -99,6 +106,8 @@ private:
     int m_inputChannel = 0;
     int m_outputBusIndex = 0;
     int m_channels = 2;
+    int m_height = vvvdaw::DefaultTrackHeight;
+    int m_pluginPanelWidth = vvvdaw::DefaultPluginPanelWidth;
 
     int m_midiOutputDeviceId = -1;
     QString m_midiOutputDeviceName;

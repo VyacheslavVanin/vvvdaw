@@ -412,14 +412,12 @@ void MainWindow::setupInstrumentPanel(QVBoxLayout* layout) {
 
 
 void MainWindow::refreshBusCombos() {
-    std::vector<DeviceInfo> devices;
     std::vector<std::pair<int, QString>> midiOutList;
     std::vector<QString> instrumentNames;
-    collectDeviceLists(devices, midiOutList, instrumentNames);
+    collectDeviceLists(midiOutList, instrumentNames);
     for (auto& row : m_trackRows) {
         if (row.panel) {
             row.panel->updateBusList(m_project.buses());
-            row.panel->updateInputDeviceList(devices);
             row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         }
     }
@@ -448,10 +446,8 @@ void MainWindow::addPluginToChain(PluginChain& chain, const QString& type, const
         if (added->addedPlugin()) openPluginEditor(added->addedPlugin());
 }
 
-void MainWindow::collectDeviceLists(std::vector<DeviceInfo>& devices,
-                                    std::vector<std::pair<int, QString>>& midiOutList,
+void MainWindow::collectDeviceLists(std::vector<std::pair<int, QString>>& midiOutList,
                                     std::vector<QString>& instrumentNames) {
-    devices = AudioEngine::enumerateInputDevices();
     auto midiDevices = AudioEngine::enumerateMidiOutputDevices();
     midiOutList.clear();
     for (const auto& dev : midiDevices)

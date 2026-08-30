@@ -4,7 +4,6 @@
 #include "plugin/PluginInstance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
-#include "audio/DeviceInfo.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMenu>
@@ -14,6 +13,11 @@
 namespace {
 int midiComboEncodeDevice(int deviceId) { return deviceId + 1; }
 int midiComboEncodeInstrument(int index) { return -(index + 1); }
+
+// Vertical margins of the panel layout plus the spacing between rows (used to
+// compute how many control rows fit into a given content height).
+constexpr int kPanelMarginV = 2 + 2;
+constexpr int kRowSpacing = 1;
 }
 
 TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
@@ -24,10 +28,15 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(3, 2, 3, 2);
-    layout->setSpacing(1);
+    layout->setSpacing(kRowSpacing);
+    layout->setAlignment(Qt::AlignTop);
 
-    auto* topRow = new QHBoxLayout;
-    m_nameEdit = new QLineEdit(track ? track->name() : "Track", this);
+    m_nameRowWidget = new QWidget(this);
+    m_nameRowWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto* topRow = new QHBoxLayout(m_nameRowWidget);
+    topRow->setContentsMargins(0, 0, 0, 0);
+    topRow->setSpacing(2);
+    m_nameEdit = new QLineEdit(track ? track->name() : "Track", m_nameRowWidget);
     m_nameEdit->setReadOnly(true);
     m_nameEdit->setStyleSheet(
         "QLineEdit { background: transparent; border: none; font-weight: bold; font-size: 11px; color: #ccc; }"
@@ -48,7 +57,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     });
     topRow->addWidget(m_nameEdit, 1);
 
-    m_channelsBadge = new QLabel(this);
+    m_channelsBadge = new QLabel(m_nameRowWidget);
     m_channelsBadge->setFixedWidth(16);
     m_channelsBadge->setAlignment(Qt::AlignCenter);
     m_channelsBadge->setStyleSheet(
@@ -58,7 +67,7 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     topRow->addWidget(m_channelsBadge);
 
     auto makeBtn = [&](const QString& text, const QString& style) {
-        auto* btn = new QPushButton(text, this);
+        auto* btn = new QPushButton(text, m_nameRowWidget);
         btn->setFixedSize(20, 16);
         btn->setCheckable(true);
         btn->setStyleSheet(style);
@@ -97,26 +106,28 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         ));
     m_monitorButton->setToolTip("Input Monitoring");
 
-    layout->addLayout(topRow);
+    layout->addWidget(m_nameRowWidget);
 
-    auto* panRowWidget = new QWidget(this);
-    m_panRow = panRowWidget;
-    auto* panRow = new QHBoxLayout(panRowWidget);
-    panRow->setContentsMargins(0, 0, 0, 0);
-    auto* panLabel = new QLabel("pan:", panRowWidget);
-    panLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    panRow->addWidget(panLabel);
+    auto makeRow = [&](const QString& label) {
+        auto* rowWidget = new QWidget(this);
+        rowWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        auto* row = new QHBoxLayout(rowWidget);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(2);
+        auto* lbl = new QLabel(label, rowWidget);
+        lbl->setStyleSheet("font-size: 10px; color: #aaa;");
+        row->addWidget(lbl);
+        return std::make_pair(rowWidget, row);
+    };
+
+    auto [panRowWidget, panRow] = makeRow("pan:");
+    m_panRowWidget = panRowWidget;
     m_panSlider = new PanSlider(panRowWidget);
     panRow->addWidget(m_panSlider, 1);
     layout->addWidget(panRowWidget);
 
-    auto* volRowWidget = new QWidget(this);
-    m_volRow = volRowWidget;
-    auto* volRow = new QHBoxLayout(volRowWidget);
-    volRow->setContentsMargins(0, 0, 0, 0);
-    auto* volLabel = new QLabel("level:", volRowWidget);
-    volLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    volRow->addWidget(volLabel);
+    auto [volRowWidget, volRow] = makeRow("level:");
+    m_volRowWidget = volRowWidget;
     m_volumeSlider = new QSlider(Qt::Horizontal, volRowWidget);
     m_volumeSlider->setRange(0, 100);
     m_volumeSlider->setValue(80);
@@ -130,34 +141,16 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
     volRow->addWidget(m_volumeSlider, 1);
     layout->addWidget(volRowWidget);
 
-    auto* inRowWidget = new QWidget(this);
-    m_inRow = inRowWidget;
-    auto* inRow = new QHBoxLayout(inRowWidget);
-    inRow->setContentsMargins(0, 0, 0, 0);
-    auto* inLabel = new QLabel("in: ", inRowWidget);
-    inLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    inRow->addWidget(inLabel);
-    m_inputDeviceCombo = new QComboBox(inRowWidget);
-    m_inputDeviceCombo->setStyleSheet(
-        "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
-        "QComboBox::drop-down { border: none; width: 14px; }"
-        "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
-    );
-    inRow->addWidget(m_inputDeviceCombo, 1);
-    layout->addWidget(inRowWidget);
-
-    auto* outRow = new QHBoxLayout;
-    auto* outLabel = new QLabel("out:", this);
-    outLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    outRow->addWidget(outLabel);
-    m_outputBusCombo = new QComboBox(this);
+    auto [outRowWidget, outRow] = makeRow("out:");
+    m_outRowWidget = outRowWidget;
+    m_outputBusCombo = new QComboBox(outRowWidget);
     m_outputBusCombo->setStyleSheet(
         "QComboBox { background: #333; color: #ccc; border: 1px solid #555; font-size: 10px; padding: 1px 4px; }"
         "QComboBox::drop-down { border: none; width: 14px; }"
         "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
     );
     outRow->addWidget(m_outputBusCombo, 1);
-    layout->addLayout(outRow);
+    layout->addWidget(outRowWidget);
 
     connect(m_armButton, &QPushButton::toggled, this, [this](bool checked) {
         if (m_track) {
@@ -235,27 +228,73 @@ TrackPanelWidget::TrackPanelWidget(Track* track, QWidget* parent)
         m_track->setOutputBusIndex(index);
         emit outputBusChanged(oldIndex, index);
     });
-    connect(m_inputDeviceCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
-        if (m_track) {
-            emit beforeModify();
-            int deviceId = m_inputDeviceCombo->currentData().toInt();
-            m_track->setInputDeviceId(deviceId);
-            emit inputDeviceChanged(deviceId);
-        }
-    });
 
+    layout->activate();
     applyTrackType();
+    m_nameRowHeight = qMax(1, m_nameRowWidget->sizeHint().height());
+    m_fullContentHeight = contentHeightWith(static_cast<int>(m_optionalRows.size()));
+}
+
+void TrackPanelWidget::rebuildOptionalRows() {
+    m_optionalRows.clear();
+    m_optionalRowHeights.clear();
+    bool isMidi = m_track && m_track->type() == Track::Type::Midi;
+    if (!isMidi) {
+        m_optionalRows.push_back(m_panRowWidget);
+        m_optionalRows.push_back(m_volRowWidget);
+        m_optionalRows.push_back(m_outRowWidget);
+    } else {
+        m_optionalRows.push_back(m_outRowWidget);
+    }
+    for (QWidget* row : m_optionalRows)
+        m_optionalRowHeights.push_back(qMax(1, row->sizeHint().height()));
+}
+
+int TrackPanelWidget::contentHeightWith(int optionalCount) const {
+    int h = kPanelMarginV + m_nameRowHeight;
+    for (int i = 0; i < optionalCount && i < static_cast<int>(m_optionalRows.size()); ++i) {
+        h += m_optionalRowHeights[static_cast<size_t>(i)] + kRowSpacing;
+    }
+    return h;
+}
+
+int TrackPanelWidget::minimumContentHeight() const {
+    return contentHeightWith(0);
+}
+
+void TrackPanelWidget::setOptionalVisible(int count) {
+    for (int i = 0; i < static_cast<int>(m_optionalRows.size()); ++i) {
+        m_optionalRows[static_cast<size_t>(i)]->setVisible(i < count);
+    }
+}
+
+void TrackPanelWidget::applyContentHeight(int contentHeight) {
+    int count = static_cast<int>(m_optionalRows.size());
+    while (count > 0 && contentHeightWith(count) > contentHeight) {
+        --count;
+    }
+    setOptionalVisible(count);
+}
+
+int TrackPanelWidget::visibleControlRowCount() const {
+    int visible = 0;
+    for (QWidget* row : m_optionalRows) {
+        if (!row->isHidden())
+            ++visible;
+    }
+    return visible;
 }
 
 void TrackPanelWidget::applyTrackType() {
     bool isMidi = m_track && m_track->type() == Track::Type::Midi;
-    m_panRow->setVisible(!isMidi);
-    m_volRow->setVisible(!isMidi);
-    m_inRow->setVisible(!isMidi);
     m_monitorButton->setVisible(!isMidi);
     m_armButton->setVisible(true);
+    m_panRowWidget->setVisible(!isMidi);
+    m_volRowWidget->setVisible(!isMidi);
+    m_outRowWidget->setVisible(true);
     m_channelsBadge->setText(isMidi ? "MIDI" : (m_track && m_track->channels() == 1 ? "M" : "S"));
     m_channelsBadge->setFixedWidth(isMidi ? 30 : 16);
+    rebuildOptionalRows();
 }
 
 void TrackPanelWidget::updateFromTrack() {
@@ -284,12 +323,14 @@ void TrackPanelWidget::updateFromTrack() {
                 break;
             }
         }
+        m_fullContentHeight = contentHeightWith(static_cast<int>(m_optionalRows.size()));
         return;
     }
 
     int busIdx = m_track->outputBusIndex();
     if (busIdx >= 0 && busIdx < m_outputBusCombo->count())
         m_outputBusCombo->setCurrentIndex(busIdx);
+    m_fullContentHeight = contentHeightWith(static_cast<int>(m_optionalRows.size()));
 }
 
 void TrackPanelWidget::updateMidiOutputs(const std::vector<std::pair<int, QString>>& devices,
@@ -334,24 +375,6 @@ void TrackPanelWidget::updateBusList(const std::vector<AudioBus>& buses) {
         if (idx >= 0 && idx < m_outputBusCombo->count())
             m_outputBusCombo->setCurrentIndex(idx);
     }
-}
-
-void TrackPanelWidget::updateInputDeviceList(const std::vector<DeviceInfo>& devices) {
-    QSignalBlocker blocker(m_inputDeviceCombo);
-    m_inputDeviceCombo->clear();
-    m_inputDeviceCombo->addItem("None");
-    m_inputDeviceCombo->setItemData(0, -1);
-    int comboIdx = 1;
-    int currentDeviceId = m_track ? m_track->inputDeviceId() : -1;
-    int selectIdx = 0;
-    for (const auto& dev : devices) {
-        m_inputDeviceCombo->addItem(dev.name);
-        m_inputDeviceCombo->setItemData(comboIdx, dev.id);
-        if (dev.id == currentDeviceId)
-            selectIdx = comboIdx;
-        ++comboIdx;
-    }
-    m_inputDeviceCombo->setCurrentIndex(selectIdx);
 }
 
 void TrackPanelWidget::setAlternateRow(bool alternate) {

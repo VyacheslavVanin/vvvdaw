@@ -20,6 +20,8 @@ private slots:
     void instrumentSerialization();
     void instrumentRoutingSerialization();
     void trackSerialization();
+    void trackHeight();
+    void trackPluginPanelWidth();
     void midiChannel();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
@@ -110,6 +112,42 @@ void TestTrack::trackSerialization() {
     QCOMPARE(rm.midiEvents().size(), size_t(1));
     QVERIFY(rm.midiEvents()[0].clip());
     QCOMPARE(rm.midiEvents()[0].clip()->notes().size(), size_t(1));
+}
+
+
+void TestTrack::trackHeight() {
+    Track t("A", 2);
+    QCOMPARE(t.height(), vvvdaw::DefaultTrackHeight);
+
+    t.setHeight(220);
+    Track rt;
+    rt.fromJson(t.toJson());
+    QCOMPARE(rt.height(), 220);
+
+    // A legacy track without the height field keeps the default value.
+    QJsonObject legacy = t.toJson();
+    legacy.remove("height");
+    Track legacyTrack;
+    legacyTrack.fromJson(legacy);
+    QCOMPARE(legacyTrack.height(), vvvdaw::DefaultTrackHeight);
+}
+
+
+void TestTrack::trackPluginPanelWidth() {
+    Track t("A", 2);
+    QCOMPARE(t.pluginPanelWidth(), vvvdaw::DefaultPluginPanelWidth);
+
+    t.setPluginPanelWidth(340);
+    Track rt;
+    rt.fromJson(t.toJson());
+    QCOMPARE(rt.pluginPanelWidth(), 340);
+
+    // A legacy track without the field keeps the default value.
+    QJsonObject legacy = t.toJson();
+    legacy.remove("pluginPanelWidth");
+    Track legacyTrack;
+    legacyTrack.fromJson(legacy);
+    QCOMPARE(legacyTrack.pluginPanelWidth(), vvvdaw::DefaultPluginPanelWidth);
 }
 
 

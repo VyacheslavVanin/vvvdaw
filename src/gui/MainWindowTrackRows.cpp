@@ -5,6 +5,7 @@
 #include "MeasureRuler.h"
 #include "TempoWidget.h"
 #include "TrackPanelWidget.h"
+#include "TrackRowWidget.h"
 #include "TrackViewWidget.h"
 #include "BusPanelWidget.h"
 #include "InstrumentPanelWidget.h"
@@ -23,14 +24,12 @@
 #include "commands/PluginCommands.h"
 #include "commands/SnapshotCommand.h"
 #include "model/Project.h"
-#include "model/Track.h"
 #include "model/AudioBus.h"
 #include "model/AudioEvent.h"
 #include "model/AudioClip.h"
 #include "model/Instrument.h"
 #include "model/TemplateStore.h"
 #include "audio/AudioEngine.h"
-#include "audio/DeviceInfo.h"
 #include "core/Settings.h"
 #include "plugin/PluginInstance.h"
 #include "plugin/PluginChain.h"
@@ -42,7 +41,6 @@ using vvvdaw::TransportState;
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QHBoxLayout>
 #include <QInputDialog>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -51,22 +49,38 @@ using vvvdaw::TransportState;
 #include <QSplitter>
 #include <QShortcut>
 #include <QTimer>
-#include <QVBoxLayout>
 #include <QWidget>
+#include <QFrame>
 #include <QJsonArray>
 #include <cmath>
+#include <numeric>
+
+namespace {
+// Move the track at `src` so it sits right before the position `dst` in the
+// ordering (`dst` is a 0..n index into the original list).
+std::vector<int> moveTrackOrder(const std::vector<int>& order, int src, int dst) {
+    std::vector<int> out;
+    out.reserve(order.size());
+    for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+        if (i != src) out.push_back(order[i]);
+    }
+    int insertPos = (src < dst) ? dst - 1 : dst;
+    insertPos = qBound(0, insertPos, static_cast<int>(out.size()));
+    out.insert(out.begin() + insertPos, order[src]);
+    return out;
+}
+}
 
 void MainWindow::rebuildTracks() {
     teardownTrackRows();
 
-    std::vector<DeviceInfo> devices;
     std::vector<std::pair<int, QString>> midiOutList;
     std::vector<QString> instrumentNames;
-    collectDeviceLists(devices, midiOutList, instrumentNames);
+    collectDeviceLists(midiOutList, instrumentNames);
 
     for (int i = 0; i < static_cast<int>(m_project.tracks().size()); ++i) {
         bool odd = (i % 2) != 0;
-        buildTrackRow(i, odd, devices, midiOutList, instrumentNames);
+        buildTrackRow(i, odd, midiOutList, instrumentNames);
     }
 
     syncAfterRebuild();
@@ -110,27 +124,6 @@ bool MainWindow::moveEventToTrack(int srcIdx, int dstIdx, int64_t eventId, int64
 
 
 void MainWindow::teardownTrackRows() {
-    if (!m_trackSplitters.empty())
-        m_savedPluginListWidth = m_trackSplitters.front()->sizes().value(0, 200);
-
-    for (auto& row : m_trackRows) {
-        if (row.panel) {
-            row.panel->hide();
-            row.panel->deleteLater();
-        }
-        if (row.pluginList) {
-            row.pluginList->hide();
-            row.pluginList->deleteLater();
-        }
-        if (row.view) {
-            row.view->hide();
-            row.view->deleteLater();
-        }
-        if (row.innerSplitter) {
-            row.innerSplitter->hide();
-            row.innerSplitter->deleteLater();
-        }
-    }
     m_trackRows.clear();
     m_trackSplitters.clear();
 
@@ -141,31 +134,32 @@ void MainWindow::teardownTrackRows() {
         }
         delete item;
     }
-
+    hideTrackInsertionLine();
 }
 
 
 void MainWindow::buildTrackRow(int trackIndex, bool odd,
-                               const std::vector<DeviceInfo>& devices,
                                const std::vector<std::pair<int, QString>>& midiOutList,
                                const std::vector<QString>& instrumentNames) {
     Track& track = m_project.tracks()[trackIndex];
     TrackRow row;
-        row.panel = new TrackPanelWidget(&track, m_trackContainer);
+        row.row = new TrackRowWidget(m_trackContainer);
+        row.row->setTrackIndex(trackIndex);
+
+        row.panel = new TrackPanelWidget(&track, row.row);
         row.panel->setAlternateRow(odd);
         row.panel->updateBusList(m_project.buses());
-        row.panel->updateInputDeviceList(devices);
         row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         row.panel->updateFromTrack();
 
-        row.pluginList = new PluginListWidget(m_trackContainer);
+        row.pluginList = new PluginListWidget(row.row);
         row.pluginList->setTrack(&track);
         row.pluginList->setHeaderLabel("Effects:");
         row.pluginList->setPluginManager(&m_pluginManager);
         row.pluginList->setAudioParams(m_engine.sampleRate(), m_engine.bufferSize());
         row.pluginList->rebuild();
 
-        row.view = new TrackViewWidget(&track, &m_project, m_trackContainer);
+        row.view = new TrackViewWidget(&track, &m_project, row.row);
         row.view->setAlternateRow(odd);
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
@@ -380,23 +374,16 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
             m_horizontalScroll->blockSignals(false);
         });
 
-        row.innerSplitter = new QSplitter(Qt::Horizontal, m_trackContainer);
+        row.innerSplitter = new QSplitter(Qt::Horizontal, row.row);
         row.innerSplitter->setContentsMargins(0, 0, 0, 0);
         row.innerSplitter->addWidget(row.pluginList);
         row.innerSplitter->addWidget(row.view);
         row.innerSplitter->setStretchFactor(0, 0);
         row.innerSplitter->setStretchFactor(1, 1);
-        row.innerSplitter->setSizes({m_savedPluginListWidth, 1000 - m_savedPluginListWidth});
+        row.innerSplitter->setSizes({track.pluginPanelWidth(), 1000 - track.pluginPanelWidth()});
 
         int splitterIndex = static_cast<int>(m_trackSplitters.size());
         m_trackSplitters.push_back(row.innerSplitter);
-
-        auto* hbox = new QHBoxLayout;
-        hbox->setContentsMargins(0, 0, 0, 0);
-        hbox->setSpacing(0);
-        hbox->addWidget(row.panel);
-        hbox->addWidget(row.innerSplitter, 1);
-        m_trackLayout->addLayout(hbox);
 
         connect(row.innerSplitter, &QSplitter::splitterMoved, this,
                 [this, splitterIndex](int pos, int index) {
@@ -405,7 +392,133 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
             syncPluginListSplitters(splitterIndex);
         });
 
+        row.row->assemble(row.panel, row.innerSplitter);
+        row.row->applyHeight(track.height());
+
+        m_trackLayout->addWidget(row.row);
+
         m_trackRows.push_back(row);
+        wireTrackRowGestures(row.row);
+}
+
+void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
+        connect(row, &TrackRowWidget::resizeStarted, this, [this](int, int) {
+            m_resizeStartHeights.clear();
+            for (const auto& t : m_project.tracks())
+                m_resizeStartHeights.push_back(t.height());
+        });
+
+        connect(row, &TrackRowWidget::resizeDragged, this,
+                [this](int index, int newHeight, bool all) {
+            if (all) {
+                int common = qBound(maxTrackRowMinHeight(), newHeight, vvvdaw::MaxTrackHeight);
+                for (int i = 0; i < static_cast<int>(m_trackRows.size()); ++i) {
+                    if (i < static_cast<int>(m_project.tracks().size()))
+                        m_project.tracks()[i].setHeight(common);
+                    if (m_trackRows[i].row)
+                        m_trackRows[i].row->applyHeight(common);
+                }
+            } else {
+                applyTrackHeight(index, newHeight);
+            }
+        });
+
+        connect(row, &TrackRowWidget::resizeFinished, this,
+                [this](int index, int oldHeight, int newHeight, bool all) {
+            if (all) {
+                std::vector<int> oldHeights = m_resizeStartHeights;
+                if (oldHeights.empty())
+                    for (const auto& t : m_project.tracks()) oldHeights.push_back(t.height());
+                pushCommand(std::make_unique<SetAllTracksHeightCommand>(m_project, oldHeights, newHeight));
+            } else {
+                int oldH = oldHeight;
+                if (index >= 0 && index < static_cast<int>(m_resizeStartHeights.size()))
+                    oldH = m_resizeStartHeights[index];
+                int curH = (index >= 0 && index < static_cast<int>(m_project.tracks().size()))
+                               ? m_project.tracks()[index].height() : oldH;
+                if (oldH == curH) return;
+                pushCommand(std::make_unique<SetTrackHeightCommand>(m_project, index, oldH, curH));
+            }
+        });
+
+        connect(row, &TrackRowWidget::reorderDragStarted, this,
+                [this](int index) { m_trackReorderSource = index; });
+
+        connect(row, &TrackRowWidget::reorderDragMoved, this,
+                [this](int, QPoint globalPos) {
+            updateTrackInsertionLine(trackInsertionIndexAt(globalPos));
+        });
+
+        connect(row, &TrackRowWidget::reorderDragFinished, this,
+                [this](int index, QPoint globalPos) {
+            hideTrackInsertionLine();
+            const int n = static_cast<int>(m_project.tracks().size());
+            const int src = m_trackReorderSource;
+            m_trackReorderSource = -1;
+            if (n < 2 || src < 0 || src >= n) return;
+            const int dst = trackInsertionIndexAt(globalPos);
+            std::vector<int> oldOrder(static_cast<size_t>(n));
+            std::iota(oldOrder.begin(), oldOrder.end(), 0);
+            std::vector<int> newOrder = moveTrackOrder(oldOrder, src, dst);
+            if (newOrder == oldOrder) return;
+            executeCommand(std::make_unique<ReorderTracksCommand>(m_project, newOrder));
+        });
+}
+
+int MainWindow::trackInsertionIndexAt(const QPoint& globalPos) const {
+    QPoint local = m_trackContainer->mapFromGlobal(globalPos);
+    int index = 0;
+    for (const auto& row : m_trackRows) {
+        if (row.row && local.y() > row.row->geometry().center().y())
+            ++index;
+    }
+    return qBound(0, index, static_cast<int>(m_trackRows.size()));
+}
+
+void MainWindow::updateTrackInsertionLine(int insertionIndex) {
+    if (!m_trackInsertionLine) {
+        m_trackInsertionLine = new QFrame(m_trackContainer);
+        m_trackInsertionLine->setObjectName("trackInsertionLine");
+        m_trackInsertionLine->setFixedHeight(2);
+        m_trackInsertionLine->setStyleSheet("QFrame { background: #4488cc; border: none; }");
+    }
+    const int n = static_cast<int>(m_trackRows.size());
+    if (n == 0) {
+        m_trackInsertionLine->hide();
+        return;
+    }
+    if (insertionIndex < 0) insertionIndex = 0;
+    if (insertionIndex > n) insertionIndex = n;
+    int y = 0;
+    if (insertionIndex < n && m_trackRows[insertionIndex].row) {
+        y = m_trackRows[insertionIndex].row->geometry().top() - 1;
+    } else if (m_trackRows.back().row) {
+        y = m_trackRows.back().row->geometry().bottom() - 1;
+    }
+    m_trackInsertionLine->setGeometry(0, qMax(0, y), qMax(1, m_trackContainer->width()), 2);
+    m_trackInsertionLine->show();
+    m_trackInsertionLine->raise();
+}
+
+void MainWindow::hideTrackInsertionLine() {
+    if (m_trackInsertionLine)
+        m_trackInsertionLine->hide();
+}
+
+int MainWindow::maxTrackRowMinHeight() const {
+    int maxMin = vvvdaw::TrackResizeHandleHeight + 1;
+    for (const auto& row : m_trackRows) {
+        if (row.row)
+            maxMin = qMax(maxMin, row.row->minimumRowHeight());
+    }
+    return maxMin;
+}
+
+void MainWindow::applyTrackHeight(int index, int height) {
+    if (index < 0 || index >= static_cast<int>(m_project.tracks().size())) return;
+    m_project.tracks()[index].setHeight(height);
+    if (index < static_cast<int>(m_trackRows.size()) && m_trackRows[index].row)
+        m_trackRows[index].row->applyHeight(height);
 }
 
 
@@ -455,6 +568,10 @@ void MainWindow::syncAfterRebuild() {
     m_engine.setPrecountEnabled(m_project.precountEnabled());
 
     syncSnapUnit();
+
+    // Align the ruler spacers with the (shared) effects-panel width.
+    if (!m_project.tracks().empty())
+        updateRulerSpacers(200 + m_project.tracks().front().pluginPanelWidth());
 
     if (m_busPanel->isVisible())
         m_busPanel->rebuild();

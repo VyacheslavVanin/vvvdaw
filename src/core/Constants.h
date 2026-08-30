@@ -43,6 +43,14 @@ inline constexpr int TickIntervalSamples = 48000;
 // Audio
 inline constexpr float MonitoringVolumeFactor = 0.7f;
 
+// Track rows: explicit height control and the bottom resize handle.
+// The minimum height is computed at runtime (name row + handle) by the panel;
+// these are the default / bounds for the per-track height.
+inline constexpr int DefaultTrackHeight = 160;
+inline constexpr int MaxTrackHeight = 600;
+inline constexpr int TrackResizeHandleHeight = 6;
+inline constexpr int DefaultPluginPanelWidth = 200;
+
 // Default crossfade length applied to the junction between two adjacent
 // audio events, in milliseconds.
 inline constexpr int DefaultCrossfadeMs = 5;
