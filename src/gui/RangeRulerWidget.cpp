@@ -4,6 +4,8 @@
 #include <QPaintEvent>
 #include <QMouseEvent>
 #include <QMenu>
+#include <QPoint>
+#include <algorithm>
 #include <cmath>
 
 RangeRulerWidget::RangeRulerWidget(int fixedHeight, QWidget* parent)
@@ -11,6 +13,10 @@ RangeRulerWidget::RangeRulerWidget(int fixedHeight, QWidget* parent)
 {
     setFixedHeight(fixedHeight);
     setMouseTracking(true);
+    // Creation and removal are handled directly in the mouse handlers (right
+    // drag = select+create menu, plain right click = remove menu), so the
+    // platform context menu must not race with them.
+    setContextMenuPolicy(Qt::NoContextMenu);
 }
 
 RangeRulerWidget::DragHandle RangeRulerWidget::handleAtPos(int x) const {
@@ -27,28 +33,49 @@ RangeRulerWidget::DragHandle RangeRulerWidget::handleAtPos(int x) const {
 }
 
 void RangeRulerWidget::mousePressEvent(QMouseEvent* event) {
+    const int x = static_cast<int>(event->position().x());
+    if (event->button() == Qt::RightButton) {
+        beginRightButtonSelect(x);
+        return;
+    }
     if (event->button() == Qt::LeftButton && m_pixelsPerSample > 0) {
-        DragHandle handle = handleAtPos(static_cast<int>(event->position().x()));
+        DragHandle handle = handleAtPos(x);
         if (handle != DragHandle::None) {
-            m_dragging = true;
-            m_dragHandle = handle;
-            m_dragStartMouseX = static_cast<int>(event->position().x());
-            int64_t* target = nullptr;
-            if (handle == DragHandle::LoopStart) target = &m_loopStart;
-            else if (handle == DragHandle::LoopEnd) target = &m_loopEnd;
-            else if (handle == DragHandle::RRStart) target = &m_rrStart;
-            else if (handle == DragHandle::RREnd) target = &m_rrEnd;
-            if (target) m_dragStartValue = *target;
+            beginHandleDrag(handle, x);
             return;
         }
-        emit playheadClicked(sampleAtX(static_cast<int>(event->position().x())));
+        emit playheadClicked(sampleAtX(x));
     }
     QWidget::mousePressEvent(event);
 }
 
+void RangeRulerWidget::beginRightButtonSelect(int x) {
+    m_rightPressed = true;
+    m_selecting = false;
+    m_selectStartX = x;
+    m_selectEndX = x;
+}
+
+void RangeRulerWidget::beginHandleDrag(DragHandle handle, int mouseX) {
+    m_dragging = true;
+    m_dragHandle = handle;
+    m_dragStartMouseX = mouseX;
+    int64_t* target = nullptr;
+    if (handle == DragHandle::LoopStart) target = &m_loopStart;
+    else if (handle == DragHandle::LoopEnd) target = &m_loopEnd;
+    else if (handle == DragHandle::RRStart) target = &m_rrStart;
+    else if (handle == DragHandle::RREnd) target = &m_rrEnd;
+    if (target) m_dragStartValue = *target;
+}
+
 void RangeRulerWidget::mouseMoveEvent(QMouseEvent* event) {
+    const int x = static_cast<int>(event->position().x());
+    if (m_rightPressed) {
+        handleRightButtonDrag(x);
+        return;
+    }
     if (m_dragging) {
-        int dx = static_cast<int>(event->position().x()) - m_dragStartMouseX;
+        int dx = x - m_dragStartMouseX;
         int64_t delta = static_cast<int64_t>(dx / m_pixelsPerSample);
         if (delta == 0) return;
         int64_t newVal = m_dragStartValue + delta;
@@ -77,77 +104,119 @@ void RangeRulerWidget::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
     // Cursor feedback for handles
-    DragHandle h = handleAtPos(static_cast<int>(event->position().x()));
+    DragHandle h = handleAtPos(x);
     setCursor(h != DragHandle::None ? Qt::SplitHCursor : Qt::ArrowCursor);
 }
 
+void RangeRulerWidget::handleRightButtonDrag(int x) {
+    if (!m_selecting && std::abs(x - m_selectStartX) < 2) return;
+    m_selecting = true;
+    m_selectEndX = x;
+    update();
+}
+
 void RangeRulerWidget::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::RightButton && m_rightPressed) {
+        m_rightPressed = false;
+        handleRightButtonRelease(event->globalPosition().toPoint());
+        return;
+    }
     if (event->button() == Qt::LeftButton && m_dragging) {
-        m_dragging = false;
-        DragHandle h = m_dragHandle;
-        m_dragHandle = DragHandle::None;
-        setCursor(Qt::ArrowCursor);
-        // Emit change signal
-        if (h == DragHandle::LoopStart || h == DragHandle::LoopEnd) {
-            if (m_loopStart >= 0 && m_loopEnd > m_loopStart)
-                emit loopChanged(m_loopStart, m_loopEnd);
-            else
-                emit loopRemoved();
-        } else if (h == DragHandle::RRStart || h == DragHandle::RREnd) {
-            if (m_rrStart >= 0 && m_rrEnd > m_rrStart)
-                emit recordRegionChanged(m_rrStart, m_rrEnd);
-            else
-                emit recordRegionRemoved();
-        }
+        finishHandleDrag();
         return;
     }
     QWidget::mouseReleaseEvent(event);
 }
 
-void RangeRulerWidget::contextMenuEvent(QContextMenuEvent* event) {
-    QMenu menu(this);
-    int64_t sample = sampleAtX(static_cast<int>(event->pos().x()));
-
-    auto addRangeAction = [&](bool active, int64_t& start, int64_t& end,
-                              const QString& setLabel, const QString& removeLabel,
-                              auto clearFn, auto createdFn, auto removedFn)
-    {
-        if (active) {
-            QAction* act = menu.addAction(removeLabel);
-            connect(act, &QAction::triggered, this, [this, clearFn, removedFn] {
-                (this->*clearFn)();
-                (this->*removedFn)();
-            });
-        } else {
-            QAction* act = menu.addAction(setLabel);
-            connect(act, &QAction::triggered, this, [this, sample, &start, &end, createdFn] {
-                start = sample;
-                end = sample + static_cast<int64_t>(m_snapUnit * 4);
-                if (m_snapToGrid)
-                    end = TimeUtils::snapSample(end, m_snapUnit);
-                update();
-                (this->*createdFn)(start, end);
-            });
+void RangeRulerWidget::handleRightButtonRelease(const QPoint& globalPos) {
+    const bool wasSelecting = m_selecting;
+    m_selecting = false;
+    update();
+    if (wasSelecting) {
+        const int x1 = std::min(m_selectStartX, m_selectEndX);
+        const int x2 = std::max(m_selectStartX, m_selectEndX);
+        const int64_t start = sampleAtX(x1);
+        const int64_t end = sampleAtX(x2);
+        if (end > start) {
+            popupCreateMenu(globalPos, start, end);
+            return;
         }
-    };
+    }
+    popupRemoveMenu(globalPos);
+}
 
-    addRangeAction(m_loopStart >= 0 && m_loopEnd > m_loopStart,
-                   m_loopStart, m_loopEnd,
-                   "Set Loop Here", "Remove Loop",
-                   &RangeRulerWidget::clearLoop,
-                   &RangeRulerWidget::loopCreated,
-                   &RangeRulerWidget::loopRemoved);
+void RangeRulerWidget::finishHandleDrag() {
+    m_dragging = false;
+    const DragHandle h = m_dragHandle;
+    m_dragHandle = DragHandle::None;
+    setCursor(Qt::ArrowCursor);
+    if (h == DragHandle::LoopStart || h == DragHandle::LoopEnd) {
+        if (m_loopStart >= 0 && m_loopEnd > m_loopStart)
+            emit loopChanged(m_loopStart, m_loopEnd);
+        else
+            emit loopRemoved();
+    } else if (h == DragHandle::RRStart || h == DragHandle::RREnd) {
+        if (m_rrStart >= 0 && m_rrEnd > m_rrStart)
+            emit recordRegionChanged(m_rrStart, m_rrEnd);
+        else
+            emit recordRegionRemoved();
+    }
+}
 
-    menu.addSeparator();
+void RangeRulerWidget::popupCreateMenu(const QPoint& globalPos, int64_t start, int64_t end) {
+    QMenu* menu = buildCreateMenu(start, end);
+    menu->exec(globalPos);
+    delete menu;
+}
 
-    addRangeAction(m_rrStart >= 0 && m_rrEnd > m_rrStart,
-                   m_rrStart, m_rrEnd,
-                   "Set Record Region Here", "Remove Record Region",
-                   &RangeRulerWidget::clearRecordRegion,
-                   &RangeRulerWidget::recordRegionCreated,
-                   &RangeRulerWidget::recordRegionRemoved);
+QMenu* RangeRulerWidget::buildCreateMenu(int64_t start, int64_t end) {
+    QMenu* menu = new QMenu(this);
+    QAction* loop = menu->addAction("Create Loop");
+    QAction* rr = menu->addAction("Create Record Region");
+    QAction* both = menu->addAction("Create Loop and Record Region");
+    connect(loop, &QAction::triggered, this, [this, start, end] { createLoopFromRange(start, end); });
+    connect(rr, &QAction::triggered, this, [this, start, end] { createRecordRegionFromRange(start, end); });
+    connect(both, &QAction::triggered, this, [this, start, end] {
+        createLoopFromRange(start, end);
+        createRecordRegionFromRange(start, end);
+    });
+    return menu;
+}
 
-    menu.exec(event->globalPos());
+void RangeRulerWidget::popupRemoveMenu(const QPoint& globalPos) {
+    QMenu* menu = buildRemoveMenu();
+    if (!menu->actions().isEmpty())
+        menu->exec(globalPos);
+    delete menu;
+}
+
+QMenu* RangeRulerWidget::buildRemoveMenu() {
+    QMenu* menu = new QMenu(this);
+    if (m_loopStart >= 0 && m_loopEnd > m_loopStart) {
+        QAction* act = menu->addAction("Remove Loop");
+        connect(act, &QAction::triggered, this, [this] { clearLoop(); emit loopRemoved(); });
+    }
+    if (m_rrStart >= 0 && m_rrEnd > m_rrStart) {
+        QAction* act = menu->addAction("Remove Record Region");
+        connect(act, &QAction::triggered, this, [this] { clearRecordRegion(); emit recordRegionRemoved(); });
+    }
+    return menu;
+}
+
+void RangeRulerWidget::createLoopFromRange(int64_t start, int64_t end) {
+    if (end <= start) return;
+    m_loopStart = start;
+    m_loopEnd = end;
+    update();
+    emit loopChanged(start, end);
+}
+
+void RangeRulerWidget::createRecordRegionFromRange(int64_t start, int64_t end) {
+    if (end <= start) return;
+    m_rrStart = start;
+    m_rrEnd = end;
+    update();
+    emit recordRegionChanged(start, end);
 }
 
 void RangeRulerWidget::paintEvent(QPaintEvent* /*event*/) {
@@ -171,6 +240,10 @@ void RangeRulerWidget::paintEvent(QPaintEvent* /*event*/) {
                   "L");
     }
 
+    // Live right-drag selection preview
+    if (m_selecting)
+        drawSelectionPreview(painter);
+
     paintTicks(painter, startSample, endSample);
 
     // Playhead marker
@@ -185,6 +258,19 @@ void RangeRulerWidget::paintEvent(QPaintEvent* /*event*/) {
             painter.setPen(Qt::NoPen);
             painter.drawPolygon(triangle);
         }
+    }
+}
+
+void RangeRulerWidget::drawSelectionPreview(QPainter& painter) {
+    const int x1 = std::clamp(m_selectStartX, 0, width());
+    const int x2 = std::clamp(m_selectEndX, 0, width());
+    const int selStart = std::min(x1, x2);
+    const int selEnd = std::max(x1, x2);
+    painter.fillRect(selStart, 0, selEnd - selStart, height(), QColor(90, 130, 255, 70));
+    painter.setPen(QPen(QColor(120, 160, 255, 200), 1));
+    if (selEnd - selStart > 1) {
+        painter.drawLine(selStart, 0, selStart, height());
+        painter.drawLine(selEnd, 0, selEnd, height());
     }
 }
 

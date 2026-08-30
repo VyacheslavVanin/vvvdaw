@@ -1,12 +1,14 @@
 #pragma once
 #include <QWidget>
 #include <QColor>
+#include <QPoint>
 #include <algorithm>
 #include <cstdint>
 #include "core/Constants.h"
 #include "core/TimeUtils.h"
 
 class QPainter;
+class QMenu;
 
 // Common base for the time-based rulers (TimelineRuler / MeasureRuler): owns
 // scroll/zoom/snap state, the loop + record-region drag handles, the context
@@ -44,6 +46,11 @@ public:
     int64_t recordRegionStart() const { return m_rrStart; }
     int64_t recordRegionEnd() const { return m_rrEnd; }
 
+    // Selection created by dragging with the right mouse button. The selected
+    // range is updated live (m_selectStartX/m_selectEndX) and committed when the
+    // user picks "Create Loop" / "Create Record Region" from the release menu.
+    bool isSelecting() const { return m_selecting; }
+
 signals:
     void playheadClicked(int64_t sample);
     void loopCreated(int64_t start, int64_t end);
@@ -58,7 +65,6 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
-    void contextMenuEvent(QContextMenuEvent* event) override;
 
     virtual QColor backgroundColor() const { return QColor("#2a2a2a"); }
     virtual void paintTicks(QPainter& painter, int64_t startSample, int64_t endSample) = 0;
@@ -73,6 +79,18 @@ protected:
     int sampleToX(int64_t sample) const {
         return static_cast<int>((sample - m_scrollOffset) * m_pixelsPerSample);
     }
+
+    // Release the right-mouse-button drag. The default implementation builds a
+    // menu ("Create Loop" / "Create Record Region") and execs it; tests override
+    // it to avoid blocking on the modal menu.
+    virtual void popupCreateMenu(const QPoint& globalPos, int64_t start, int64_t end);
+    // Plain right-click (no drag) with existing ranges: offers "Remove ...".
+    virtual void popupRemoveMenu(const QPoint& globalPos);
+
+    // The two menu builders, split out so tests can trigger the connected
+    // actions without exec()ing a modal menu. They are not virtual.
+    QMenu* buildCreateMenu(int64_t start, int64_t end);
+    QMenu* buildRemoveMenu();
 
     int64_t m_scrollOffset = 0;
     double m_pixelsPerSample = vvvdaw::DefaultZoom;
@@ -93,9 +111,28 @@ private:
     void drawRange(QPainter& painter, int64_t rangeStart, int64_t rangeEnd,
                    const QColor& fill, const QColor& border, const QColor& handleColor,
                    const QString& label);
+    void drawSelectionPreview(QPainter& painter);
+
+    // Right-button drag-to-select helpers (creation / removal).
+    void beginRightButtonSelect(int x);
+    void handleRightButtonDrag(int x);
+    void handleRightButtonRelease(const QPoint& globalPos);
+
+    // Left-button range-handle drag helpers.
+    void beginHandleDrag(DragHandle handle, int mouseX);
+    void finishHandleDrag();
+
+    void createLoopFromRange(int64_t start, int64_t end);
+    void createRecordRegionFromRange(int64_t start, int64_t end);
 
     DragHandle m_dragHandle = DragHandle::None;
     int m_dragStartMouseX = 0;
     int64_t m_dragStartValue = 0;
     bool m_dragging = false;
+
+    // Right-button drag-to-select state (live preview during the drag).
+    bool m_rightPressed = false;
+    bool m_selecting = false;
+    int m_selectStartX = 0;
+    int m_selectEndX = 0;
 };

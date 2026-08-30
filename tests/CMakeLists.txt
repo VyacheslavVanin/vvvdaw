@@ -52,7 +52,7 @@ set_tests_properties(test_lv2 PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 
 # --- GUI (split per area) ---
 
-foreach(gui_test IN ITEMS mainwindow trackview waveform buspanel plugins pianoroll)
+foreach(gui_test IN ITEMS mainwindow trackview waveform buspanel plugins pianoroll ruler)
     vvvdaw_add_test(test_gui_${gui_test} test_gui/test_gui_${gui_test}.cpp ../resources.qrc)
     target_link_libraries(vvvdaw_test_gui_${gui_test} PRIVATE
         vvvdaw_gui vvvdaw_audio vvvdaw_model vvvdaw_core)
