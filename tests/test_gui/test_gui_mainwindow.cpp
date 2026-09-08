@@ -6,6 +6,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QTableWidget>
@@ -110,6 +111,8 @@ private slots:
     void trackColorBarAssignsAndResets();
     void trackColorTintsPanelTimelineAndEvents();
     void trackColorPaletteUsesTrackScheme();
+    void trackRowTintKeepsPanelSubtle();
+    void newTrackInheritsPanelAndHeight();
 private:
     GuiTestEnv m_env;
 };
@@ -1206,8 +1209,12 @@ void MainWindowTest::trackColorTintsPanelTimelineAndEvents() {
 
     const QColor tint = QColor("#ff0000");
 
-    // Panel background: exactly the picked color.
-    QCOMPARE(window.m_trackRows[0].panel->palette().color(QPalette::Window), tint);
+    // Panel background: a light blend of the track color over the base gray
+    // (text readability is kept — the row is not painted with the raw color).
+    const QColor panelExpected = Project::blendColors(
+        QColor("#2a2a2a"), tint, vvvdaw::TrackRowTintStrength);
+    QCOMPARE(window.m_trackRows[0].panel->palette().color(QPalette::Window),
+             panelExpected);
 
     // Timeline: the base gray with only a faint hint of the track color,
     // sampled right of the event (grid lines are vertical and can land
@@ -1228,6 +1235,20 @@ void MainWindowTest::trackColorTintsPanelTimelineAndEvents() {
     // 0..48000 (x 0..48 at the default zoom); x=20 avoids the grid lines and
     // the left border.
     QCOMPARE(img.pixelColor(20, img.height() / 2), tint);
+
+    // The bottom resize handle takes the colors of the row above it: the
+    // panel's blended color on the panel column, the timeline color on the
+    // timeline column — no dark default stripe remains.
+    QWidget* handle = window.m_trackRows[0].row->findChild<QWidget*>("trackResizeHandle");
+    QVERIFY(handle);
+    QImage rowImg = window.m_trackRows[0].row->grab().toImage();
+    const int hy = rowImg.height() - vvvdaw::TrackResizeHandleHeight + 2;
+    const QColor handlePanelExpected = Project::blendColors(
+        QColor("#2a2a2a"), tint, vvvdaw::TrackRowTintStrength);
+    const QColor handleExpected = Project::blendColors(
+        QColor("#2a2a2a"), tint, vvvdaw::TrackTimelineTintStrength);
+    QCOMPARE(rowImg.pixelColor(100, hy), handlePanelExpected);   // panel column
+    QCOMPARE(rowImg.pixelColor(rowImg.width() - 50, hy), handleExpected); // timeline
 }
 
 
@@ -1256,6 +1277,85 @@ void MainWindowTest::trackColorPaletteUsesTrackScheme() {
     BusColorPaletteDialog busDialog(QColor("#2e2e2e"), nullptr);
     QCOMPARE(busDialog.selectedColor().hsvSaturation(), vvvdaw::AutoStripSaturation);
     QCOMPARE(busDialog.selectedColor().value(), vvvdaw::AutoStripValue);
+}
+
+
+void MainWindowTest::trackRowTintKeepsPanelSubtle() {
+    Project project;
+    project.addTrack("A");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    // A bright yellow row: the panel only takes a light blend of the color
+    // (not the raw color), so the fixed light text stays readable.
+    auto bars = window.findChildren<TrackColorBar*>("trackColorBar");
+    QCOMPARE(bars.size(), 1);
+    bars[0]->setColorPickerForTesting([](const QColor&) { return QColor("#ffff00"); });
+    bars[0]->pickColor();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(project.trackColor(0), QColor("#ffff00"));
+
+    TrackPanelWidget* panel = window.m_trackRows[0].panel;
+    const QColor expected = Project::blendColors(
+        QColor("#2a2a2a"), QColor("#ffff00"), vvvdaw::TrackRowTintStrength);
+    QCOMPARE(panel->palette().color(QPalette::Window), expected);
+    QVERIFY(expected != QColor("#ffff00")); // subtle, not the raw color
+
+    // The text color is unchanged: the light theme color for name and labels.
+    QLineEdit* nameEdit = panel->findChild<QLineEdit*>();
+    QVERIFY(nameEdit);
+    QVERIFY(nameEdit->styleSheet().contains("#ccc"));
+    QLabel* panLabel = nullptr;
+    for (QLabel* lbl : panel->findChildren<QLabel*>())
+        if (lbl->text() == "pan:") panLabel = lbl;
+    QVERIFY(panLabel);
+    QVERIFY(panLabel->styleSheet().contains("#aaa"));
+
+    // The exact color is reserved for the event backgrounds.
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    QCOMPARE(view->rowTint(), QColor("#ffff00"));
+}
+
+
+void MainWindowTest::newTrackInheritsPanelAndHeight() {
+    Project project;
+    project.addTrack("A");
+    project.tracks()[0].setPluginPanelWidth(320);
+    project.tracks()[0].setHeight(260);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    // Adding a track (as the context menu does) rebuilds the rows: the new
+    // track inherits the effects-panel width and the bottom row's height.
+    window.executeCommand(std::make_unique<AddTrackCommand>(
+        project, static_cast<int>(project.tracks().size()), 2));
+    QCOMPARE(project.tracks().size(), size_t(2));
+    QCOMPARE(project.tracks()[1].pluginPanelWidth(), 320);
+    QCOMPARE(project.tracks()[1].height(), 260);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(window.m_trackRows.size(), size_t(2));
+    // The exact pixel size depends on the window width; both rows share it.
+    QCOMPARE(window.m_trackRows[1].innerSplitter->sizes().value(0),
+             window.m_trackRows[0].innerSplitter->sizes().value(0));
+    QVERIFY(window.m_trackRows[1].innerSplitter->sizes().value(0) > 0);
+    QCOMPARE(window.m_trackRows[1].row->rowHeight(), 260);
+
+    // A collapsed (hidden) panel stays hidden on the new row.
+    project.tracks().back().setPluginPanelWidth(0);
+    window.executeCommand(std::make_unique<AddTrackCommand>(
+        project, static_cast<int>(project.tracks().size()), 2));
+    QCOMPARE(project.tracks()[2].pluginPanelWidth(), 0);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(window.m_trackRows.size(), size_t(3));
+    QCOMPARE(window.m_trackRows[2].innerSplitter->sizes().value(0), 0);
 }
 
 

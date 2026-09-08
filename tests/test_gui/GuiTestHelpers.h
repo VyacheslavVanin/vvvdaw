@@ -61,6 +61,26 @@ bool regionHasCrossfade(const QImage& img, int x0, int x1, int y0, int y1) {
     return false;
 }
 
+// True if any pixel in the rectangle matches the color exactly.
+bool regionHasColor(const QImage& img, int x0, int x1, int y0, int y1,
+                    const QColor& color) {
+    for (int x = x0; x <= x1; ++x)
+        for (int y = y0; y <= y1; ++y)
+            if (img.pixelColor(x, y) == color)
+                return true;
+    return false;
+}
+
+// True if no pixel in the rectangle matches the color exactly.
+bool regionHasNoColor(const QImage& img, int x0, int x1, int y0, int y1,
+                      const QColor& color) {
+    for (int x = x0; x <= x1; ++x)
+        for (int y = y0; y <= y1; ++y)
+            if (img.pixelColor(x, y) == color)
+                return false;
+    return true;
+}
+
 // Minimal instrument plugin stub with a configurable output channel count,
 // used to exercise the channel routing UI without loading a real plugin.
 class StubSynth : public PluginInstance {

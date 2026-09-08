@@ -405,6 +405,9 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 
         row.row->assemble(row.panel, row.innerSplitter);
         row.row->applyHeight(track.height());
+        // The resize handle takes the row's colors (panel / timeline columns)
+        // so no dark stripe shows between the track rows.
+        row.row->setHandleColors(m_project.trackColor(trackIndex), odd);
 
         m_trackLayout->addWidget(row.row);
 

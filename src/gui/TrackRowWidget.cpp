@@ -1,6 +1,8 @@
 #include "TrackRowWidget.h"
 #include "TrackPanelWidget.h"
 #include "TrackColorBar.h"
+#include "model/Project.h"
+#include <QPainter>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -9,6 +11,40 @@
 
 namespace {
 constexpr int kReorderThresholdPx = 8;
+}
+
+TrackResizeHandle::TrackResizeHandle(QWidget* parent)
+    : QWidget(parent)
+{
+    setFixedHeight(vvvdaw::TrackResizeHandleHeight);
+    setCursor(Qt::SizeVerCursor);
+    setObjectName("trackResizeHandle");
+}
+
+void TrackResizeHandle::setSegmentColors(const QColor& left, const QColor& right,
+                                         int splitX) {
+    m_left = left;
+    m_right = right;
+    m_splitX = splitX;
+    update();
+}
+
+void TrackResizeHandle::paintEvent(QPaintEvent* /*event*/) {
+    QPainter p(this);
+    const QColor left = m_hover ? m_left.lighter(115) : m_left;
+    const QColor right = m_hover ? m_right.lighter(115) : m_right;
+    p.fillRect(0, 0, m_splitX, height(), left);
+    p.fillRect(m_splitX, 0, width() - m_splitX, height(), right);
+}
+
+void TrackResizeHandle::enterEvent(QEnterEvent* /*event*/) {
+    m_hover = true;
+    update();
+}
+
+void TrackResizeHandle::leaveEvent(QEvent* /*event*/) {
+    m_hover = false;
+    update();
 }
 
 TrackRowWidget::TrackRowWidget(QWidget* parent)
@@ -23,15 +59,25 @@ TrackRowWidget::TrackRowWidget(QWidget* parent)
     m_content->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(m_content, 1);
 
-    m_handle = new QWidget(this);
-    m_handle->setFixedHeight(vvvdaw::TrackResizeHandleHeight);
-    m_handle->setCursor(Qt::SizeVerCursor);
-    m_handle->setStyleSheet(
-        "background-color: #555; border-top: 1px solid #666;"
-        ":hover { background-color: #777; }");
+    m_handle = new TrackResizeHandle(this);
     layout->addWidget(m_handle);
 
     setMinimumHeight(vvvdaw::TrackResizeHandleHeight);
+}
+
+void TrackRowWidget::setHandleColors(const QColor& tint, bool alternateRow) {
+    const QColor base = alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a");
+    QColor left = base;
+    QColor right = base;
+    if (tint.isValid()) {
+        // Match the two columns of the row above: the panel's blended color
+        // and the timeline's faintly tinted background.
+        left = Project::blendColors(base, tint, vvvdaw::TrackRowTintStrength);
+        right = Project::blendColors(base, tint, vvvdaw::TrackTimelineTintStrength);
+    }
+    const int split = (m_colorBar ? m_colorBar->width() : 0)
+                    + (m_panel ? m_panel->width() : 0);
+    m_handle->setSegmentColors(left, right, split);
 }
 
 void TrackRowWidget::assemble(TrackPanelWidget* panel, QSplitter* splitter) {

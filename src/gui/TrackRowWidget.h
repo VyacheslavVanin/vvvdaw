@@ -1,11 +1,34 @@
 #pragma once
 #include <QWidget>
+#include <QColor>
 #include "core/Constants.h"
 
 class TrackPanelWidget;
 class TrackColorBar;
 class QSplitter;
 class QVBoxLayout;
+
+// The bottom resize handle of a track row. It is painted in the colors of the
+// row above it — the panel column and the timeline column — so it blends with
+// the row instead of reading as a dark stripe between tracks. Hover lightens
+// it slightly; the SizeVer cursor signals the resize affordance.
+class TrackResizeHandle : public QWidget {
+public:
+    explicit TrackResizeHandle(QWidget* parent = nullptr);
+
+    void setSegmentColors(const QColor& left, const QColor& right, int splitX);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
+    void leaveEvent(QEvent* event) override;
+
+private:
+    QColor m_left;
+    QColor m_right;
+    int m_splitX = 0;
+    bool m_hover = false;
+};
 
 // A single track row container: the left panel + the plugin/view splitter,
 // plus a bottom resize handle. It owns the mouse gestures for resizing
@@ -28,6 +51,11 @@ public:
     // Optional thin vertical color strip placed to the left of the panel.
     // Set it before assemble(); it is inserted as the leftmost cell.
     void setColorBar(TrackColorBar* bar) { m_colorBar = bar; }
+
+    // Paint the bottom resize handle in the row's colors (panel column /
+    // timeline column) so it blends with the row above it instead of reading
+    // as a dark stripe. `tint` is the track's effective display color.
+    void setHandleColors(const QColor& tint, bool alternateRow);
 
     int rowHeight() const { return m_rowHeight; }
     int minimumRowHeight() const;
@@ -53,7 +81,7 @@ private:
     TrackColorBar* m_colorBar = nullptr;
     QSplitter* m_splitter = nullptr;
     QWidget* m_content = nullptr;
-    QWidget* m_handle = nullptr;
+    TrackResizeHandle* m_handle = nullptr;
     int m_trackIndex = -1;
     int m_rowHeight = vvvdaw::DefaultTrackHeight;
 

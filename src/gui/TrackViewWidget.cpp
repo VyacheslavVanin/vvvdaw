@@ -1,4 +1,5 @@
 #include "TrackViewWidget.h"
+#include "TextColor.h"
 #include "core/TimeUtils.h"
 #include "WaveformPainter.h"
 #include "model/Track.h"
@@ -330,18 +331,21 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
 
     QRect eventRect(visL, 2, visR - visL, trackHeight - 4);
 
-    bool isHovered = (index == m_hoverEventIndex);
     bool isDragged = (index == m_dragEventIndex && m_dragging);
     bool isSelected = eventIsSelected(index);
     if (isDragged && !m_dragSourceVisible) return;
 
-    // Event background: the track's effective color as-is (hover/selected
-    // stay in the same hue, just lighter); a neutral dark when unset.
+    // Event background: the track's effective color as-is (selection keeps a
+    // lighter tone); a neutral dark when unset. No hover highlight.
     QColor bgColor = m_rowTint.isValid()
-        ? (isSelected ? m_rowTint.lighter(140)
-           : (isHovered ? m_rowTint.lighter(120) : m_rowTint))
-        : (isSelected ? QColor("#3a3a3a")
-           : (isHovered ? QColor("#2a2a2a") : QColor("#202020")));
+        ? (isSelected ? m_rowTint.lighter(140) : m_rowTint)
+        : (isSelected ? QColor("#3a3a3a") : QColor("#202020"));
+    // Content (waveform / MIDI notes) uses one color per track, derived from
+    // the base event color: the selection differs via the lighter background,
+    // so selected and unselected events must not disagree on content color.
+    const QColor baseBg = m_rowTint.isValid() ? m_rowTint : QColor("#202020");
+    const QColor waveColor = contentColorFor(baseBg, WaveformPainter::defaultColor());
+    const QColor midiColor = contentColorFor(baseBg, QColor("#7fb4e0"));
     QColor borderColor = isDragged ? QColor("#ffcc00")
                        : (isSelected ? QColor("#ffaa00")
                        : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff")));
@@ -353,7 +357,7 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
         if (clip) {
             int th = eventRect.height() - 2;
             renderMidiPreview(painter, clip, eventStart(index), eventOffset(index),
-                              eventDuration(index), eventRect.y() + 1, th);
+                              eventDuration(index), eventRect.y() + 1, th, midiColor);
         }
     } else {
         int th = eventRect.height() - 2;
@@ -362,7 +366,7 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
                         ev.startSample(), ev.durationSample(),
                         static_cast<size_t>(ev.offsetSample()),
                         static_cast<size_t>(ev.sourceFrames()),
-                        eventRect.y() + 1, th);
+                        eventRect.y() + 1, th, waveColor);
     }
 
     drawEventBorderOutline(painter, left64, right64, borderColor, isDragged, isSelected,
@@ -446,14 +450,16 @@ void TrackViewWidget::drawDragPreview(QPainter& painter, int trackHeight) {
         renderMidiPreview(painter, clip, m_dragPreview.startSample,
                           m_dragPreview.midiEvent->offsetSample(),
                           m_dragPreview.midiEvent->durationSample(),
-                          eventRect.y() + 1, th);
+                          eventRect.y() + 1, th,
+                          contentColorFor(dragBg, QColor("#7fb4e0")));
     } else {
         auto clip = m_dragPreview.audioEvent->clip();
         renderThumbnail(painter, clip, m_dragPreview.startSample,
                         m_dragPreview.audioEvent->durationSample(),
                         static_cast<size_t>(m_dragPreview.audioEvent->offsetSample()),
                         static_cast<size_t>(m_dragPreview.audioEvent->sourceFrames()),
-                        eventRect.y() + 1, th);
+                        eventRect.y() + 1, th,
+                        contentColorFor(dragBg, WaveformPainter::defaultColor()));
     }
 
     drawEventBorderOutline(painter, left64, right64, QColor("#ffcc00"), true, true,
@@ -578,7 +584,8 @@ void TrackViewWidget::drawDragTooltip(QPainter& painter) {
 
 void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
                                         int64_t eventStartSample, int64_t offsetSample,
-                                        int64_t durationSample, int y, int h) {
+                                        int64_t durationSample, int y, int h,
+                                        const QColor& contentColor) {
     if (!clip || clip->notes().empty() || durationSample <= 0) return;
     if (m_samplesPerTick <= 0) return;
 
@@ -607,6 +614,7 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
         || cache.visibleStart != tlFrom
         || cache.offsetSample != offsetSample || cache.durationSample != durationSample
         || cache.samplesPerTick != spt
+        || cache.contentColor != contentColor
         || cache.image.width() != iw || cache.image.height() != h) {
         cache.image = QImage(iw, h, QImage::Format_ARGB32_Premultiplied);
         cache.image.fill(Qt::transparent);
@@ -615,10 +623,11 @@ void TrackViewWidget::renderMidiPreview(QPainter& painter, const std::shared_ptr
         cache.offsetSample = offsetSample;
         cache.durationSample = durationSample;
         cache.samplesPerTick = spt;
+        cache.contentColor = contentColor;
 
         QPainter p(&cache.image);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor("#7fb4e0"));
+        p.setBrush(contentColor);
 
         constexpr double kMinPitch = 36.0;
         constexpr double kMaxPitch = 84.0;
@@ -934,12 +943,9 @@ void TrackViewWidget::mouseMoveEvent(QMouseEvent* event) {
         emit dragInProgress(eventIdAt(m_dragEventIndex), newStart, event->globalPosition().toPoint());
         update();
     } else {
-        // Hover state
+        // Cursor feedback over events (edge handles vs. drag).
         int idx = -1;
         bool hit = (eventAtX(mouseX, idx) >= 0);
-        if (idx != m_hoverEventIndex) {
-            m_hoverEventIndex = idx;
-        }
         if (hit) {
             EdgeDrag edge = edgeAtX(mouseX, idx);
             if (edge != EdgeDrag::None)
@@ -1060,7 +1066,7 @@ void TrackViewWidget::deleteSelectedEvent() {
 void TrackViewWidget::renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
                                        int64_t eventStartSample, int64_t eventDuration,
                                        size_t offsetFrame, size_t sourceFrames,
-                                       int y, int h) {
+                                       int y, int h, const QColor& contentColor) {
     if (!clip || !clip->isValid() || h <= 0)
         return;
 
@@ -1102,15 +1108,17 @@ void TrackViewWidget::renderThumbnail(QPainter& painter, const std::shared_ptr<A
         || cache.visibleFrames != visible
         || cache.width != iw || cache.height != h
         || cache.devicePixelRatio != dpr
-        || cache.pixelsPerSample != pps) {
+        || cache.pixelsPerSample != pps
+        || cache.contentColor != contentColor) {
         cache.thumbnail = renderAudioWindow(clip, clipFrom, clipTo, iw, h, dpr, pps,
-                                            WaveformPainter::defaultColor());
+                                            contentColor);
         cache.clipOffset = static_cast<int64_t>(clipFrom);
         cache.visibleFrames = visible;
         cache.width = iw;
         cache.height = h;
         cache.devicePixelRatio = dpr;
         cache.pixelsPerSample = pps;
+        cache.contentColor = contentColor;
         if (m_thumbnailCache.size() > 128)
             m_thumbnailCache.clear();
     }

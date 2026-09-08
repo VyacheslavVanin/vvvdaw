@@ -21,6 +21,7 @@ class TestTrackCommands : public QObject {
     Q_OBJECT
 private slots:
     void addTrackCommand();
+    void addTrackInheritsPanelWidthAndHeight();
     void removeTrackCommand();
     void setTrackVolumeCommand();
     void setTrackPanCommand();
@@ -40,6 +41,9 @@ void TestTrackCommands::addTrackCommand() {
     QCOMPARE(p.tracks().size(), size_t(1));
     QCOMPARE(p.tracks()[0].type(), Track::Type::Audio);
     QCOMPARE(p.tracks()[0].channels(), 2);
+    // The first track on an empty project keeps the model defaults.
+    QCOMPARE(p.tracks()[0].pluginPanelWidth(), vvvdaw::DefaultPluginPanelWidth);
+    QCOMPARE(p.tracks()[0].height(), vvvdaw::DefaultTrackHeight);
 
     stack.execute(std::make_unique<AddTrackCommand>(p, 1, Track::Type::Midi));
     QCOMPARE(p.tracks().size(), size_t(2));
@@ -49,6 +53,33 @@ void TestTrackCommands::addTrackCommand() {
     QCOMPARE(p.tracks().size(), size_t(1));
     stack.undo();
     QCOMPARE(p.tracks().size(), size_t(0));
+}
+
+void TestTrackCommands::addTrackInheritsPanelWidthAndHeight() {
+    Project p;
+    p.addTrack("A");
+    p.tracks()[0].setPluginPanelWidth(320);
+    p.tracks()[0].setHeight(260);
+
+    UndoStack stack;
+    stack.execute(std::make_unique<AddTrackCommand>(p, 1, 2));
+    QCOMPARE(p.tracks()[1].pluginPanelWidth(), 320);
+    QCOMPARE(p.tracks()[1].height(), 260);
+
+    // Redo re-derives the inherited values from the (unchanged) bottom track.
+    stack.undo();
+    QCOMPARE(p.tracks().size(), size_t(1));
+    stack.redo();
+    QCOMPARE(p.tracks().size(), size_t(2));
+    QCOMPARE(p.tracks()[1].pluginPanelWidth(), 320);
+    QCOMPARE(p.tracks()[1].height(), 260);
+
+    // A collapsed (hidden) effects panel on the bottom track stays hidden on
+    // the new track.
+    p.tracks()[1].setPluginPanelWidth(0);
+    stack.execute(std::make_unique<AddTrackCommand>(p, 2, Track::Type::Midi));
+    QCOMPARE(p.tracks()[2].pluginPanelWidth(), 0);
+    QCOMPARE(p.tracks()[2].height(), 260);
 }
 
 

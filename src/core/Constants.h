@@ -55,9 +55,10 @@ inline constexpr int AutoStripValue = 92;
 inline constexpr int AutoTrackSaturation = 180;
 inline constexpr int AutoTrackValue = 200;
 
-// Track color tinting: the panel and event backgrounds use the track's
-// effective color directly; the empty timeline background stays near the base
-// gray with only a faint hint of the track color.
+// Track color tinting: the panel and the empty timeline background only take
+// a light blend of the track color over the base gray; the exact color is
+// used as-is for the event backgrounds.
+inline constexpr float TrackRowTintStrength = 0.35f;
 inline constexpr float TrackTimelineTintStrength = 0.1f;
 
 // Audio

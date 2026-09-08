@@ -147,7 +147,9 @@ void MainWindow::setupUi() {
     scrollArea->viewport()->setPalette(viewportPal);
     m_trackLayout = new QVBoxLayout(m_trackContainer);
     m_trackLayout->setContentsMargins(0, 0, 0, 0);
-    m_trackLayout->setSpacing(2);
+    // Rows sit flush: the per-row resize handle (painted in the timeline's
+    // color) separates them, without gray gaps in between.
+    m_trackLayout->setSpacing(0);
     scrollArea->setWidget(m_trackContainer);
 
     layout->addWidget(scrollArea, 1);

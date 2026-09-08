@@ -78,6 +78,7 @@ private slots:
     void ctrlWheelZoomAnchorsCursorFrame();
     void audioEventBorderStaysAtTrueEdgeDuringDeepZoom();
     void midiEventBorderStaysAtTrueEdgeDuringDeepZoom();
+    void eventContentIsDarkOnBrightTrackColors();
     void trackViewMouseCursorTracksAndClears();
     void trackViewContextMenuCutSplitsEvent();
     void trackViewContextMenuCutAndSnapAlignsToGrid();
@@ -531,7 +532,9 @@ void TrackViewTest::audioEventBorderStaysAtTrueEdgeDuringDeepZoom() {
 
     const int rightX = static_cast<int>((4096 - scroll) * 4); // 360
     // The waveform of the visible tail is present up to the true right edge.
-    QVERIFY(regionHasWaveform(img, 0, rightX - 1, 3, 78));
+    // The default (track 0) auto tint is a vivid red, so the waveform content
+    // is drawn dark.
+    QVERIFY(regionHasColor(img, 0, rightX - 1, 3, 78, QColor(26, 26, 26)));
     // The border is drawn at the true right edge (top border row y=2).
     QVERIFY(regionHasWaveform(img, rightX - 1, rightX + 1, 2, 2));
     // Nothing of the event extends past its true right edge.
@@ -864,6 +867,93 @@ void TrackViewTest::midiEdgeTrimUndoRestoresEdges() {
     QCOMPARE(track.midiEvents()[0].durationSample(), int64_t(48000));
     QCOMPARE(track.midiEvents()[0].startSample(), int64_t(0));
     QCOMPARE(track.midiEvents()[0].offsetSample(), int64_t(0));
+}
+
+
+void TrackViewTest::eventContentIsDarkOnBrightTrackColors() {
+    // On a bright track color (the event background) the audio waveform and
+    // the MIDI note fills must be drawn dark to stay visible; the light
+    // defaults are used on dark backgrounds.
+    Project project;
+    project.addTrack("A");
+    project.addMidiTrack("M");
+    project.tracks()[0].setColor(QColor("#ffff00")); // bright yellow
+    project.tracks()[1].setColor(QColor("#ffff00"));
+
+    std::vector<float> samples;
+    for (int i = 0; i < 4096; ++i)
+        samples.push_back((i % 2 == 0) ? 0.7f : -0.7f);
+    auto audioClip = std::make_shared<AudioClip>(std::move(samples), 48000, 1);
+    AudioEvent ev;
+    ev.setClip(audioClip);
+    ev.setStartSample(0);
+    ev.setOffsetSample(0);
+    ev.setDurationSample(audioClip->frameCount());
+    ev.setSourceFrames(audioClip->frameCount());
+    project.tracks()[0].addEvent(ev);
+
+    auto midiClip = std::make_shared<MidiClip>();
+    midiClip->addNote(60, 100, 0, 960); // pitch 60 -> middle of the preview
+    MidiEvent mev;
+    mev.setClip(midiClip);
+    mev.setStartSample(0);
+    mev.setDurationSample(48000);
+    project.tracks()[1].addMidiEvent(mev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    const QColor dark(26, 26, 26); // #1a1a1a
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    view->setZoom(vvvdaw::SampleViewPixelsPerSample); // 4 px per sample
+    QCoreApplication::processEvents();
+    QImage audioImg = view->grab().toImage();
+    // The dark waveform is present and no light-blue waveform remains inside
+    // the event (the #88ccff borders are excluded by the region).
+    QVERIFY(regionHasColor(audioImg, 0, 399, 3, 78, dark));
+    QVERIFY(regionIsBackground(audioImg, 8, 396, 3, 77));
+
+    TrackViewWidget* midiView = window.m_trackRows[1].view;
+    midiView->resize(400, 80);
+    midiView->setZoom(vvvdaw::SampleViewPixelsPerSample);
+    QCoreApplication::processEvents();
+    QImage midiImg = midiView->grab().toImage();
+    QVERIFY(regionHasColor(midiImg, 0, 399, 3, 78, dark));
+    QVERIFY(regionIsBackground(midiImg, 8, 396, 3, 77));
+
+    // On a dark track color the light default content color is kept.
+    project.tracks()[0].setColor(QColor("#000088"));
+    project.tracks()[1].setColor(QColor("#000088"));
+    for (size_t i = 0; i < window.m_trackRows.size(); ++i) {
+        window.m_trackRows[i].panel->setRowTint(project.trackColor(static_cast<int>(i)));
+        window.m_trackRows[i].view->setRowTint(project.trackColor(static_cast<int>(i)));
+    }
+    QCoreApplication::processEvents();
+    audioImg = view->grab().toImage();
+    midiImg = midiView->grab().toImage();
+    QVERIFY(regionHasWaveform(audioImg, 0, 399, 3, 78)); // #88ccff content
+    QVERIFY(regionHasColor(midiImg, 0, 399, 3, 78, QColor(127, 180, 224)));
+
+    // A vivid mid-brightness color: dark content (its luminance is above the
+    // crossover), and the selection's lighter background must not change it —
+    // unselected and selected events share one content color.
+    const QColor mid(200, 130, 0);
+    project.tracks()[0].setColor(mid);
+    window.m_trackRows[0].panel->setRowTint(mid);
+    view->setRowTint(mid);
+    QCoreApplication::processEvents();
+    audioImg = view->grab().toImage();
+    QVERIFY(regionHasColor(audioImg, 0, 399, 3, 78, dark)); // dark, unselected
+    QVERIFY(regionIsBackground(audioImg, 8, 396, 3, 77));
+    view->setSelection(0);
+    QCoreApplication::processEvents();
+    audioImg = view->grab().toImage();
+    QVERIFY(regionHasColor(audioImg, 0, 399, 3, 78, dark)); // same content, selected
+    view->clearSelection();
 }
 
 

@@ -50,6 +50,12 @@ public:
     void setColor(const QColor& color) { m_color = color; m_colorSet = true; }
     void clearColor() { m_colorSet = false; m_color = QColor(); }
 
+    // Stable auto-color hue (0..359), assigned at track creation and persisted
+    // with the track, so the automatic tint stays with the track across
+    // reorderings. -1 = not yet assigned (legacy data; Project fills it in).
+    int hue() const { return m_hue; }
+    void setHue(int hue) { m_hue = hue; }
+
     int midiOutputDeviceId() const { return m_midiOutputDeviceId; }
     void setMidiOutputDeviceId(int id) { m_midiOutputDeviceId = id; }
 
@@ -119,6 +125,7 @@ private:
 
     bool m_colorSet = false;
     QColor m_color;
+    int m_hue = -1;
 
     int m_midiOutputDeviceId = -1;
     QString m_midiOutputDeviceName;

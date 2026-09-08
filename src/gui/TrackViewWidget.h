@@ -118,7 +118,7 @@ private:
     void renderThumbnail(QPainter& painter, const std::shared_ptr<AudioClip>& clip,
                          int64_t eventStartSample, int64_t eventDuration,
                          size_t offsetFrame, size_t sourceFrames,
-                         int y, int h);
+                         int y, int h, const QColor& contentColor);
     QImage renderAudioWindow(const std::shared_ptr<AudioClip>& clip,
                              size_t clipFrom, size_t clipTo,
                              int width, int height, double dpr, double pps,
@@ -128,7 +128,8 @@ private:
                             size_t& winStart, std::vector<float>& samples);
     void renderMidiPreview(QPainter& painter, const std::shared_ptr<MidiClip>& clip,
                            int64_t eventStartSample, int64_t offsetSample,
-                           int64_t durationSample, int y, int h);
+                           int64_t durationSample, int y, int h,
+                           const QColor& contentColor);
     // Draw the event border + edge handles at the true sample positions (the
     // off-screen parts are clipped away), instead of a viewport-sized rect.
     void drawEventBorderOutline(QPainter& painter, int64_t left64, int64_t right64,
@@ -203,6 +204,7 @@ private:
         int height = -1;
         double devicePixelRatio = -1;
         double pixelsPerSample = -1;
+        QColor contentColor;
     };
     QMap<std::shared_ptr<AudioClip>, ClipCache> m_thumbnailCache;
 
@@ -222,6 +224,7 @@ private:
         int64_t offsetSample = 0;
         int64_t durationSample = 0;
         double samplesPerTick = 0.0;
+        QColor contentColor;
     };
     QMap<std::shared_ptr<MidiClip>, MidiThumbCache> m_midiThumbCache;
 
@@ -236,9 +239,6 @@ private:
     // movement toggles the event's selection instead.
     bool m_pendingDuplicateDrag = false;
     static constexpr int kDuplicateDragThresholdPx = 3;
-
-    // Hover
-    int m_hoverEventIndex = -1;
 
     // Mouse cursor line (thin vertical line at the current mouse X).
     int m_mouseX = -1;

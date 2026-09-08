@@ -81,6 +81,8 @@ QJsonObject Track::toJson(const QString& projectDir) const {
 
     if (m_colorSet)
         tObj["color"] = m_color.name(QColor::HexRgb);
+    if (m_hue >= 0)
+        tObj["hue"] = m_hue;
 
     if (m_type == Type::Midi) {
         tObj["midiOutputDeviceId"] = m_midiOutputDeviceId;
@@ -125,6 +127,11 @@ void Track::fromJson(const QJsonObject& tObj, const QString& projectDir, PluginM
         QColor color(tObj["color"].toString());
         if (color.isValid())
             setColor(color); // invalid/missing => stays unset
+    }
+    if (tObj.contains("hue")) {
+        int hue = tObj["hue"].toInt(-1);
+        if (hue >= 0)
+            m_hue = hue % 360;
     }
 
     if (m_type == Type::Midi) {

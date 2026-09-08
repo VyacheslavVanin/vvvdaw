@@ -332,11 +332,13 @@ void WaveformTest::waveformShowsIndividualSamplesWhenZoomed() {
     // sample 10 (+0.8) is the top vertex, sample 11 (-0.8) the bottom vertex,
     // and the connecting segment between them crosses the center line. The
     // upper-left corner between the two vertices stays empty (a plain line,
-    // not a filled bar).
-    QVERIFY(regionHasWaveform(img, 40, 40, 8, 14));   // peak at sample 10
-    QVERIFY(regionHasWaveform(img, 44, 44, 65, 75));  // trough at sample 11
-    QVERIFY(regionHasWaveform(img, 42, 42, 36, 44));  // connecting segment
-    QVERIFY(regionIsBackground(img, 42, 42, 8, 14));
+    // not a filled bar). The track's default auto tint is a vivid red, so the
+    // waveform content is drawn dark (#1a1a1a).
+    const QColor darkContent(26, 26, 26);
+    QVERIFY(regionHasColor(img, 40, 40, 8, 14, darkContent));   // peak at sample 10
+    QVERIFY(regionHasColor(img, 44, 44, 65, 75, darkContent));  // trough at sample 11
+    QVERIFY(regionHasColor(img, 42, 42, 36, 44, darkContent));  // connecting segment
+    QVERIFY(regionHasNoColor(img, 42, 42, 8, 14, darkContent));
 }
 
 
@@ -375,8 +377,9 @@ void WaveformTest::waveformPerSampleLineIsConnected() {
     // Two equal samples (+0.8 at x=4 and x=8) are joined by a horizontal
     // segment: the intermediate column (x=6) is colored near the top, while
     // the area below the flat line stays background.
-    QVERIFY(regionHasWaveform(img, 6, 6, 6, 14));   // horizontal connector
-    QVERIFY(regionIsBackground(img, 6, 6, 30, 70)); // nothing below the line
+    const QColor darkContent(26, 26, 26); // dark content on the vivid auto tint
+    QVERIFY(regionHasColor(img, 6, 6, 6, 14, darkContent));   // horizontal connector
+    QVERIFY(regionHasNoColor(img, 6, 6, 30, 70, darkContent)); // nothing below the line
 }
 
 
@@ -411,11 +414,12 @@ void WaveformTest::waveformEnvelopeSymmetricAroundCenter() {
     QImage img = view->grab().toImage();
 
     // The min/max envelope of an alternating ±0.8 signal fills both the upper
-    // and the lower half of the column around the center line.
+    // and the lower half of the column around the center line. Dark content
+    // on the vivid auto tint.
     QColor above = img.pixelColor(2, 10);
     QColor below = img.pixelColor(2, 64);
-    QVERIFY(above.blue() > 200);
-    QVERIFY(below.blue() > 200);
+    QVERIFY(above.red() < 60 && above.green() < 60 && above.blue() < 60);
+    QVERIFY(below.red() < 60 && below.green() < 60 && below.blue() < 60);
 }
 
 
@@ -472,10 +476,11 @@ void WaveformTest::waveformRendersStreamingClipWhenZoomed() {
     // At sample view the streaming clip is decoded from disk and drawn as a
     // connected polyline: sample 10 (+0.6) is the top vertex, sample 11
     // (-0.6) the bottom, and the segment between them crosses the center.
-    QVERIFY(regionHasWaveform(img, 40, 40, 15, 21));  // peak at sample 10
-    QVERIFY(regionHasWaveform(img, 44, 44, 56, 65));  // trough at sample 11
-    QVERIFY(regionHasWaveform(img, 42, 42, 36, 44));  // connecting segment
-    QVERIFY(regionIsBackground(img, 42, 42, 15, 21));
+    const QColor darkContent(26, 26, 26); // dark content on the vivid auto tint
+    QVERIFY(regionHasColor(img, 40, 40, 15, 21, darkContent));  // peak at sample 10
+    QVERIFY(regionHasColor(img, 44, 44, 56, 65, darkContent));  // trough at sample 11
+    QVERIFY(regionHasColor(img, 42, 42, 36, 44, darkContent));  // connecting segment
+    QVERIFY(regionHasNoColor(img, 42, 42, 15, 21, darkContent));
 }
 
 

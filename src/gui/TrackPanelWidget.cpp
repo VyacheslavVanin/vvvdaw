@@ -4,6 +4,7 @@
 #include "plugin/PluginInstance.h"
 #include "model/Track.h"
 #include "model/AudioBus.h"
+#include "model/Project.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMenu>
@@ -389,11 +390,14 @@ void TrackPanelWidget::setRowTint(const QColor& color) {
 
 void TrackPanelWidget::applyRowPalette() {
     setAutoFillBackground(true);
-    // The panel shows the track's effective color as-is (bright saturated
-    // auto tint, or exactly the user's picked color).
+    // The row only takes a light blend of the track's effective color over
+    // the base gray; the exact color is reserved for the event backgrounds.
+    QColor base = m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a");
+    QColor bg = m_rowTint.isValid()
+        ? Project::blendColors(base, m_rowTint, vvvdaw::TrackRowTintStrength)
+        : base;
     QPalette p = palette();
-    p.setColor(QPalette::Window, m_rowTint.isValid()
-        ? m_rowTint : (m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a")));
+    p.setColor(QPalette::Window, bg);
     setPalette(p);
 }
 

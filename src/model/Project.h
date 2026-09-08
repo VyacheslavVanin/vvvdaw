@@ -92,6 +92,18 @@ public:
     // Linear interpolation between two colors; `t` in [0,1], 1 = fully `b`.
     static QColor blendColors(const QColor& a, const QColor& b, float t);
 
+    // The smallest free auto-color hue in the stepped (i*47)%360 family, so a
+    // track's automatic tint is a property of the track, not of its position.
+    int nextFreeTrackHue() const;
+    // Assign hues to tracks that have none (legacy projects / direct loads).
+    void ensureTrackHues();
+
+private:
+    // Copy the bottom-most track's plugin-panel width and height into `track`
+    // (used when appending a new track).
+    void inheritExistingTrackAppearance(Track& track) const;
+
+public:
     int addInstrument(Instrument instrument);
     bool removeInstrument(int index);
 
