@@ -79,6 +79,9 @@ QJsonObject Track::toJson(const QString& projectDir) const {
     tObj["height"] = m_height;
     tObj["pluginPanelWidth"] = m_pluginPanelWidth;
 
+    if (m_colorSet)
+        tObj["color"] = m_color.name(QColor::HexRgb);
+
     if (m_type == Type::Midi) {
         tObj["midiOutputDeviceId"] = m_midiOutputDeviceId;
         if (!m_midiOutputDeviceName.isEmpty())
@@ -117,6 +120,12 @@ void Track::fromJson(const QJsonObject& tObj, const QString& projectDir, PluginM
     m_solo = tObj["solo"].toBool(false);
     m_height = tObj["height"].toInt(vvvdaw::DefaultTrackHeight);
     m_pluginPanelWidth = tObj["pluginPanelWidth"].toInt(vvvdaw::DefaultPluginPanelWidth);
+
+    if (tObj.contains("color")) {
+        QColor color(tObj["color"].toString());
+        if (color.isValid())
+            setColor(color); // invalid/missing => stays unset
+    }
 
     if (m_type == Type::Midi) {
         m_midiOutputDeviceId = tObj["midiOutputDeviceId"].toInt(-1);

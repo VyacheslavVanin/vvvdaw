@@ -265,7 +265,12 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
 
-    painter.fillRect(rect(), m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a"));
+    QColor bg = m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a");
+    // The empty timeline keeps its base gray with only a faint hint of the
+    // track color.
+    if (m_rowTint.isValid())
+        bg = Project::blendColors(bg, m_rowTint, vvvdaw::TrackTimelineTintStrength);
+    painter.fillRect(rect(), bg);
 
     if (!m_track) return;
 
@@ -330,8 +335,13 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
     bool isSelected = eventIsSelected(index);
     if (isDragged && !m_dragSourceVisible) return;
 
-    QColor bgColor = isSelected ? QColor("#334466")
-                   : (isHovered ? QColor("#224466") : QColor("#1a3344"));
+    // Event background: the track's effective color as-is (hover/selected
+    // stay in the same hue, just lighter); a neutral dark when unset.
+    QColor bgColor = m_rowTint.isValid()
+        ? (isSelected ? m_rowTint.lighter(140)
+           : (isHovered ? m_rowTint.lighter(120) : m_rowTint))
+        : (isSelected ? QColor("#3a3a3a")
+           : (isHovered ? QColor("#2a2a2a") : QColor("#202020")));
     QColor borderColor = isDragged ? QColor("#ffcc00")
                        : (isSelected ? QColor("#ffaa00")
                        : (m_track->isMuted() ? QColor("#666") : QColor("#88ccff")));
@@ -427,7 +437,8 @@ void TrackViewWidget::drawDragPreview(QPainter& painter, int trackHeight) {
     if (visR <= visL) return;
 
     QRect eventRect(visL, 2, visR - visL, trackHeight - 4);
-    painter.fillRect(eventRect, QColor("#1a3344"));
+    QColor dragBg = m_rowTint.isValid() ? m_rowTint : QColor("#202020");
+    painter.fillRect(eventRect, dragBg);
 
     int th = eventRect.height() - 2;
     if (m_dragPreview.midiEvent) {

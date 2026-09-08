@@ -49,6 +49,7 @@ void remapBusSendsAfterRemoval(AudioBus& bus, int removed) {
 }
 
 // Linear interpolation between two colors; `t` in [0,1], 1 = fully `b`.
+// (The public Project::blendColors forwards here so the GUI can reuse it.)
 QColor blendColor(const QColor& a, const QColor& b, float t) {
     return QColor(std::lround(a.red() + (b.red() - a.red()) * t),
                   std::lround(a.green() + (b.green() - a.green()) * t),
@@ -311,6 +312,32 @@ std::vector<int> Project::folderDescendants(int index) const {
 QColor Project::folderColorFor(int folderIndex) {
     return QColor::fromHsv((folderIndex * 47) % 360,
                            vvvdaw::AutoFolderSaturation, vvvdaw::AutoFolderValue);
+}
+
+QColor Project::blendColors(const QColor& a, const QColor& b, float t) {
+    return blendColor(a, b, t);
+}
+
+QColor Project::trackColor(int trackIndex) const {
+    const int n = static_cast<int>(m_tracks.size());
+    if (trackIndex < 0 || trackIndex >= n)
+        return QColor("#2a2a2a");
+
+    const Track& track = m_tracks[static_cast<size_t>(trackIndex)];
+    if (track.colorSet())
+        return track.color();
+
+    // Follow the output bus when it (or a folder ancestor) carries an
+    // assigned color; otherwise a bright stable per-track tint.
+    int cur = track.outputBusIndex();
+    const int busCount = static_cast<int>(m_buses.size());
+    while (cur >= 0 && cur < busCount) {
+        if (m_buses[static_cast<size_t>(cur)].colorSet())
+            return busColor(track.outputBusIndex());
+        cur = m_buses[static_cast<size_t>(cur)].outputBusIndex();
+    }
+    return QColor::fromHsv((trackIndex * 47) % 360,
+                           vvvdaw::AutoTrackSaturation, vvvdaw::AutoTrackValue);
 }
 
 QColor Project::busColor(int busIndex) const {

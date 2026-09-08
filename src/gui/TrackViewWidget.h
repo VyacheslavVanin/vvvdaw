@@ -55,6 +55,12 @@ public:
     void rangeSelect(int index);
     void clearSelection();
     void setAlternateRow(bool alternate) { m_alternateRow = alternate; update(); }
+    // Effective display color of the track (manual or inherited from the
+    // output bus). Blended over the row's base gray for the timeline and
+    // over a neutral dark for the event backgrounds.
+    void setRowTint(const QColor& color) { m_rowTint = color; update(); }
+    // Current effective tint (invalid when unset).
+    QColor rowTint() const { return m_rowTint; }
     void setDragPreview(const AudioEvent* event, int64_t startSample);
     void setMidiDragPreview(const MidiEvent* event, int64_t startSample);
     void clearDragPreview();
@@ -244,6 +250,7 @@ private:
 
     // Row appearance
     bool m_alternateRow = false;
+    QColor m_rowTint;
     bool m_dragSourceVisible = true;
 
     // Edge trim state

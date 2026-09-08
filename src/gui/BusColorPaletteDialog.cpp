@@ -8,18 +8,31 @@
 #include <QSettings>
 
 QList<QColor> BusColorPaletteDialog::suggestedColors() {
+    return suggestedColors(ColorScheme());
+}
+
+QList<QColor> BusColorPaletteDialog::suggestedColors(const ColorScheme& scheme) {
     QList<QColor> palette;
-    // The same stepped hue family as the automatic bus tint (Project::folderColorFor),
-    // but at the darker strip values so the swatches match what auto buses look like.
+    // The same stepped hue family as the automatic tints (Project::folderColorFor
+    // and the per-track tints), but at the scheme's S/V so the swatches match
+    // what the automatic colors look like.
     for (int i = 0; i < 9; ++i)
         palette.append(QColor::fromHsv((i * 47) % 360,
-                                       vvvdaw::AutoStripSaturation, vvvdaw::AutoStripValue));
+                                       scheme.autoSaturation, scheme.autoValue));
     return palette;
 }
 
 BusColorPaletteDialog::BusColorPaletteDialog(const QColor& initial, QWidget* parent)
-    : QDialog(parent) {
-    setWindowTitle("Choose bus color");
+    : BusColorPaletteDialog(initial, parent, ColorScheme())
+{
+}
+
+BusColorPaletteDialog::BusColorPaletteDialog(const QColor& initial, QWidget* parent,
+                                             const ColorScheme& scheme)
+    : QDialog(parent)
+    , m_scheme(scheme)
+{
+    setWindowTitle(m_scheme.title);
     setModal(true);
 
     auto* root = new QVBoxLayout(this);
@@ -44,12 +57,12 @@ BusColorPaletteDialog::BusColorPaletteDialog(const QColor& initial, QWidget* par
     root->addLayout(makeSliderRow("Sat", m_saturationSlider, 0, 255, m_saturationValueLabel));
     root->addLayout(makeSliderRow("Val", m_valueSlider, 0, 255, m_valueValueLabel));
 
-    // Reset saturation/value to the automatic bus tint values.
+    // Reset saturation/value to the automatic tint values of the scheme.
     auto* resetBtn = new QPushButton("Reset saturation/value to auto", this);
     resetBtn->setCursor(Qt::PointingHandCursor);
     connect(resetBtn, &QPushButton::clicked, this, [this] {
-        m_s = vvvdaw::AutoStripSaturation;
-        m_v = vvvdaw::AutoStripValue;
+        m_s = m_scheme.autoSaturation;
+        m_v = m_scheme.autoValue;
         m_saturationSlider->setValue(m_s);
         m_valueSlider->setValue(m_v);
     });
@@ -123,13 +136,14 @@ QColor BusColorPaletteDialog::currentColor() const {
 }
 
 void BusColorPaletteDialog::applyInitial(const QColor& color) {
-    const QColor start = color.isValid() ? color : suggestedColors().value(0, Qt::black);
+    const QColor start = color.isValid() ? color
+        : suggestedColors(m_scheme).value(0, Qt::black);
     const int hue = start.hsvHue();
     m_h = (hue < 0) ? 0 : hue;
-    // Saturation/value start at the automatic bus tint values, not at the
-    // (possibly desaturated/very dark) value of the current strip color.
-    m_s = vvvdaw::AutoStripSaturation;
-    m_v = vvvdaw::AutoStripValue;
+    // Saturation/value start at the scheme's automatic tint values, not at
+    // the (possibly desaturated/very dark) value of the current strip color.
+    m_s = m_scheme.autoSaturation;
+    m_v = m_scheme.autoValue;
     // Update each slider once (signals blocked) and refresh the preview.
     m_hueSlider->blockSignals(true);
     m_saturationSlider->blockSignals(true);
@@ -155,8 +169,9 @@ void BusColorPaletteDialog::updatePreview() {
 }
 
 void BusColorPaletteDialog::loadRecent() {
-    m_recent = suggestedColors();
-    const QStringList hexValues = QSettings().value("bus/colorRecent").toStringList();
+    m_recent = suggestedColors(m_scheme);
+    const QStringList hexValues =
+        QSettings().value(m_scheme.settingsKey).toStringList();
     for (const QString& hex : hexValues) {
         const QColor c(hex);
         if (c.isValid())
@@ -170,7 +185,7 @@ void BusColorPaletteDialog::saveRecent() {
     QStringList hexValues;
     for (const QColor& c : m_recent)
         hexValues << c.name();
-    QSettings().setValue("bus/colorRecent", hexValues);
+    QSettings().setValue(m_scheme.settingsKey, hexValues);
 }
 
 void BusColorPaletteDialog::recordRecent(const QColor& color) {

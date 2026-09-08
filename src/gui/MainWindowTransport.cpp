@@ -312,7 +312,7 @@ void MainWindow::syncPluginListSplitters(int senderIndex) {
         for (int i = 0; i < static_cast<int>(m_trackSplitters.size()) && i < n; ++i) {
             m_project.tracks()[i].setPluginPanelWidth(pluginWidth);
         }
-        updateRulerSpacers(200 + pluginWidth);
+        updateRulerSpacers(200 + vvvdaw::TrackColorBarWidth + pluginWidth);
     }
 
     m_syncingSplitters = false;

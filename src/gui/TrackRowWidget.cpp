@@ -1,5 +1,6 @@
 #include "TrackRowWidget.h"
 #include "TrackPanelWidget.h"
+#include "TrackColorBar.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -39,6 +40,8 @@ void TrackRowWidget::assemble(TrackPanelWidget* panel, QSplitter* splitter) {
     auto* hbox = new QHBoxLayout(m_content);
     hbox->setContentsMargins(0, 0, 0, 0);
     hbox->setSpacing(0);
+    if (m_colorBar)
+        hbox->addWidget(m_colorBar);
     hbox->addWidget(panel);
     hbox->addWidget(splitter, 1);
     applyHeight(m_rowHeight);

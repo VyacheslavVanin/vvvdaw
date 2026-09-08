@@ -30,6 +30,7 @@ private slots:
     void setTrackHeightCommand();
     void setAllTracksHeightCommand();
     void reorderTracksCommand();
+    void setTrackColorCommand();
 };
 
 void TestTrackCommands::addTrackCommand() {
@@ -220,6 +221,51 @@ void TestTrackCommands::reorderTracksCommand() {
     stack.redo();
     QCOMPARE(p.tracks()[0].name(), QString("B"));
     QCOMPARE(p.tracks()[1].name(), QString("A"));
+}
+
+
+void TestTrackCommands::setTrackColorCommand() {
+    Project p;
+    p.addTrack("A");
+
+    UndoStack stack;
+    // Assign a color on a previously unset track.
+    stack.execute(std::make_unique<SetTrackColorCommand>(
+        p, 0, QColor(), false, QColor("#ff0000"), true));
+    QVERIFY(p.tracks()[0].colorSet());
+    QCOMPARE(p.tracks()[0].color(), QColor("#ff0000"));
+
+    // Change the color; undo must restore the previous color, not just unset.
+    stack.execute(std::make_unique<SetTrackColorCommand>(
+        p, 0, QColor("#ff0000"), true, QColor("#00ff00"), true));
+    QCOMPARE(p.tracks()[0].color(), QColor("#00ff00"));
+
+    stack.undo();
+    QVERIFY(p.tracks()[0].colorSet());
+    QCOMPARE(p.tracks()[0].color(), QColor("#ff0000"));
+
+    // Clearing the color (follow the bus again) is undoable too.
+    stack.execute(std::make_unique<SetTrackColorCommand>(
+        p, 0, QColor("#ff0000"), true, QColor(), false));
+    QVERIFY(!p.tracks()[0].colorSet());
+
+    stack.undo();
+    QVERIFY(p.tracks()[0].colorSet());
+    QCOMPARE(p.tracks()[0].color(), QColor("#ff0000"));
+
+    // Two undos rewind to the initial unset state (the green assignment was
+    // discarded when the clear was pushed after an undo); redo re-applies the
+    // first color assignment.
+    stack.undo(); // undo the clear -> #ff0000
+    stack.undo(); // undo the first assignment -> unset
+    QVERIFY(!p.tracks()[0].colorSet());
+    stack.redo();
+    QVERIFY(p.tracks()[0].colorSet());
+    QCOMPARE(p.tracks()[0].color(), QColor("#ff0000"));
+
+    // Out-of-range index is a no-op, not a crash.
+    stack.execute(std::make_unique<SetTrackColorCommand>(
+        p, 7, QColor(), false, QColor("#123456"), true));
 }
 
 

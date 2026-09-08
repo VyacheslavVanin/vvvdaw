@@ -7,6 +7,7 @@
 #include "TrackPanelWidget.h"
 #include "TrackRowWidget.h"
 #include "TrackViewWidget.h"
+#include "TrackColorBar.h"
 #include "BusPanelWidget.h"
 #include "InstrumentPanelWidget.h"
 #include "PianoRollWindow.h"
@@ -148,6 +149,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 
         row.panel = new TrackPanelWidget(&track, row.row);
         row.panel->setAlternateRow(odd);
+        row.panel->setRowTint(m_project.trackColor(trackIndex));
         row.panel->updateBusList(m_project.buses());
         row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         row.panel->updateFromTrack();
@@ -161,6 +163,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 
         row.view = new TrackViewWidget(&track, &m_project, row.row);
         row.view->setAlternateRow(odd);
+        row.view->setRowTint(m_project.trackColor(trackIndex));
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
         row.view->setSnapToGrid(m_project.snapToGrid());
@@ -392,6 +395,14 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
             syncPluginListSplitters(splitterIndex);
         });
 
+        // Thin vertical color strip on the left edge of the row (inserted by
+        // assemble() as the leftmost cell).
+        row.colorBar = new TrackColorBar(row.row);
+        row.colorBar->setObjectName("trackColorBar");
+        row.colorBar->setColor(m_project.trackColor(trackIndex));
+        row.row->setColorBar(row.colorBar);
+        wireTrackColorBar(row.colorBar, trackIndex);
+
         row.row->assemble(row.panel, row.innerSplitter);
         row.row->applyHeight(track.height());
 
@@ -463,6 +474,20 @@ void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
             if (newOrder == oldOrder) return;
             executeCommand(std::make_unique<ReorderTracksCommand>(m_project, newOrder));
         });
+}
+
+void MainWindow::wireTrackColorBar(TrackColorBar* bar, int trackIndex) {
+    auto applyColor = [this, trackIndex](bool set, const QColor& color) {
+        Track* track = m_project.trackAt(trackIndex);
+        if (!track) return;
+        executeCommand(std::make_unique<SetTrackColorCommand>(
+            m_project, trackIndex, track->color(), track->colorSet(),
+            color, set));
+    };
+    connect(bar, &TrackColorBar::colorPicked, this,
+            [applyColor](const QColor& color) { applyColor(true, color); });
+    connect(bar, &TrackColorBar::resetToAutomatic, this,
+            [applyColor] { applyColor(false, QColor()); });
 }
 
 int MainWindow::trackInsertionIndexAt(const QPoint& globalPos) const {
@@ -569,9 +594,11 @@ void MainWindow::syncAfterRebuild() {
 
     syncSnapUnit();
 
-    // Align the ruler spacers with the (shared) effects-panel width.
+    // Align the ruler spacers with the (shared) effects-panel width, plus the
+    // track panel and its color strip.
     if (!m_project.tracks().empty())
-        updateRulerSpacers(200 + m_project.tracks().front().pluginPanelWidth());
+        updateRulerSpacers(200 + vvvdaw::TrackColorBarWidth
+                           + m_project.tracks().front().pluginPanelWidth());
 
     if (m_busPanel->isVisible())
         m_busPanel->rebuild();

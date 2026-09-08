@@ -24,6 +24,7 @@ class TempoWidget;
 class TrackPanelWidget;
 class TrackViewWidget;
 class TrackRowWidget;
+class TrackColorBar;
 class BusPanelWidget;
 class InstrumentPanelWidget;
 class PianoRollWindow;
@@ -113,6 +114,9 @@ private:
     // Wire the per-row resize / reorder signals (extracted so buildTrackRow
     // stays below the cyclomatic-complexity limit).
     void wireTrackRowGestures(TrackRowWidget* row);
+    // Wire the per-row color strip: pick → SetTrackColorCommand, reset →
+    // clear (track follows its output bus color).
+    void wireTrackColorBar(TrackColorBar* bar, int trackIndex);
 
     // Small helpers shared by the setup/rebuild methods (deduplicated).
     QWidget* makePanelGrip(QWidget* parent);
@@ -167,6 +171,7 @@ private:
     struct TrackRow {
         TrackRowWidget* row = nullptr;
         TrackPanelWidget* panel = nullptr;
+        TrackColorBar* colorBar = nullptr;
         PluginListWidget* pluginList = nullptr;
         TrackViewWidget* view = nullptr;
         QSplitter* innerSplitter = nullptr;

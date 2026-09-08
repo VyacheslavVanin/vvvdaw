@@ -83,8 +83,14 @@ public:
     // set; otherwise the nearest ancestor (folder) color propagated down the
     // routing tree; otherwise the automatic stable tint.
     QColor busColor(int busIndex) const;
+    // Effective display color of a track: its own manually assigned color when
+    // set; otherwise the effective color of its output bus; the fallback gray
+    // for out-of-range indices.
+    QColor trackColor(int trackIndex) const;
     // Stable per-folder tint, derived from the folder's bus index.
     static QColor folderColorFor(int folderIndex);
+    // Linear interpolation between two colors; `t` in [0,1], 1 = fully `b`.
+    static QColor blendColors(const QColor& a, const QColor& b, float t);
 
     int addInstrument(Instrument instrument);
     bool removeInstrument(int index);

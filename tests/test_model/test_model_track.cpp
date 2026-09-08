@@ -22,6 +22,8 @@ private slots:
     void trackSerialization();
     void trackHeight();
     void trackPluginPanelWidth();
+    void trackColor();
+    void trackColorInheritsFromBus();
     void midiChannel();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
@@ -148,6 +150,85 @@ void TestTrack::trackPluginPanelWidth() {
     Track legacyTrack;
     legacyTrack.fromJson(legacy);
     QCOMPARE(legacyTrack.pluginPanelWidth(), vvvdaw::DefaultPluginPanelWidth);
+}
+
+
+void TestTrack::trackColor() {
+    Track t("A", 2);
+    // Unset by default: colorSet() == false, color invalid.
+    QVERIFY(!t.colorSet());
+    QVERIFY(!t.color().isValid());
+
+    t.setColor(QColor("#12ab34"));
+    QVERIFY(t.colorSet());
+    QCOMPARE(t.color(), QColor("#12ab34"));
+
+    // Round trip preserves the color and the set flag.
+    Track rt;
+    rt.fromJson(t.toJson());
+    QVERIFY(rt.colorSet());
+    QCOMPARE(rt.color(), QColor("#12ab34"));
+
+    // A track without a color round-trips with colorSet() == false.
+    Track plain;
+    Track restoredPlain;
+    restoredPlain.fromJson(plain.toJson());
+    QVERIFY(!restoredPlain.colorSet());
+
+    // Legacy JSON without a "color" member stays unset.
+    QJsonObject legacy;
+    legacy["name"] = "Legacy";
+    Track legacyTrack;
+    legacyTrack.fromJson(legacy);
+    QVERIFY(!legacyTrack.colorSet());
+
+    // An invalid color string is ignored.
+    QJsonObject bad;
+    bad["name"] = "Bad";
+    bad["color"] = "not-a-color";
+    Track badTrack;
+    badTrack.fromJson(bad);
+    QVERIFY(!badTrack.colorSet());
+
+    // Clearing falls back to unset with an invalid color.
+    t.clearColor();
+    QVERIFY(!t.colorSet());
+    QVERIFY(!t.color().isValid());
+}
+
+
+void TestTrack::trackColorInheritsFromBus() {
+    Project p;
+    p.addTrack("A"); // track 0 -> bus 0 (Master)
+    p.addTrack("B"); // track 1
+
+    // Without a manual color and without a colored output bus the track gets
+    // a bright stable per-track tint (different hue per track index).
+    const QColor autoTint0 = QColor::fromHsv(
+        (0 * 47) % 360, vvvdaw::AutoTrackSaturation, vvvdaw::AutoTrackValue);
+    QCOMPARE(p.trackColor(0), autoTint0);
+    QVERIFY(p.trackColor(1) != autoTint0);
+
+    // A colored output bus propagates its color to the tracks.
+    p.busAt(0)->setColor(QColor("#ff8800"));
+    QCOMPARE(p.trackColor(0), QColor("#ff8800"));
+    QCOMPARE(p.trackColor(1), QColor("#ff8800"));
+
+    // A manual track color overrides the inherited bus color.
+    p.tracks()[0].setColor(QColor("#00ff00"));
+    QCOMPARE(p.trackColor(0), QColor("#00ff00"));
+
+    // Clearing the manual color falls back to the bus color again.
+    p.tracks()[0].clearColor();
+    QCOMPARE(p.trackColor(0), QColor("#ff8800"));
+
+    // A different bus color changes the track's effective color.
+    p.busAt(0)->setColor(QColor("#123456"));
+    QCOMPARE(p.trackColor(0), QColor("#123456"));
+
+    // Out-of-range track index yields the fallback gray.
+    QCOMPARE(p.trackColor(999), QColor("#2a2a2a"));
+    QCOMPARE(p.trackColor(-1), QColor("#2a2a2a"));
 }
 
 

@@ -56,7 +56,7 @@
 #include "gui/PluginListWidget.h"
 #include "gui/TrackRowWidget.h"
 #include "gui/PluginWindow.h"
-#include "gui/TrackRowWidget.h"
+#include "gui/TrackColorBar.h"
 #include "gui/PianoRollWindow.h"
 #include "gui/PianoRollWidget.h"
 #include "gui/ChannelRoutingDialog.h"
@@ -107,6 +107,9 @@ private slots:
     void settingsDialogLearnFlow();
     void executeCommandAcquiresProjectWriteLock();
     void undoRedoAcquireProjectWriteLock();
+    void trackColorBarAssignsAndResets();
+    void trackColorTintsPanelTimelineAndEvents();
+    void trackColorPaletteUsesTrackScheme();
 private:
     GuiTestEnv m_env;
 };
@@ -1120,6 +1123,139 @@ void MainWindowTest::undoRedoAcquireProjectWriteLock() {
 
     QVERIFY(dtMs >= 200);
     QCOMPARE(project.tracks()[0].volume(), 0.3f);
+}
+
+
+void MainWindowTest::trackColorBarAssignsAndResets() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto bars = window.findChildren<TrackColorBar*>("trackColorBar");
+    QCOMPARE(bars.size(), 2);
+    for (TrackColorBar* b : bars)
+        QVERIFY(b->width() >= 4 && b->width() <= 6); // ~5px wide strip
+    // Before any manual color the bars show the effective (inherited) color.
+    QCOMPARE(bars[0]->color(), project.trackColor(0));
+    QCOMPARE(bars[1]->color(), project.trackColor(1));
+
+    // Assign a color to track 0 via the (stubbed) picker.
+    bars[0]->setColorPickerForTesting([](const QColor&) { return QColor("#ff0044"); });
+    bars[0]->pickColor();
+    QVERIFY(project.tracks()[0].colorSet());
+    QCOMPARE(project.tracks()[0].color(), QColor("#ff0044"));
+
+    // The rebuild refreshed the bar to the new color; flush scheduled
+    // deletions of the old rows before re-fetching.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto refreshed = window.findChildren<TrackColorBar*>("trackColorBar");
+    QCOMPARE(refreshed.size(), 2);
+    QCOMPARE(refreshed[0]->color(), QColor("#ff0044"));
+
+    // Undo restores the unset (follow-the-bus) state.
+    window.performUndo();
+    QVERIFY(!project.tracks()[0].colorSet());
+
+    // Reset on a track with a manual color clears it (follow the bus again).
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto bars2 = window.findChildren<TrackColorBar*>("trackColorBar");
+    QCOMPARE(bars2.size(), 2);
+    project.tracks()[1].setColor(QColor("#00ff00"));
+    bars2[1]->resetToAutomaticColor();
+    QVERIFY(!project.tracks()[1].colorSet());
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto bars3 = window.findChildren<TrackColorBar*>("trackColorBar");
+    QCOMPARE(bars3[1]->color(), project.trackColor(1));
+}
+
+
+void MainWindowTest::trackColorTintsPanelTimelineAndEvents() {
+    Project project;
+    project.addMidiTrack("M1");
+    // A MIDI event whose clip has no notes renders only its background, so the
+    // tinted fill can be sampled directly.
+    auto clip = std::make_shared<MidiClip>();
+    MidiEvent ev;
+    ev.setClip(clip);
+    ev.setStartSample(0);
+    ev.setDurationSample(48000);
+    project.tracks()[0].addMidiEvent(ev);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto bars = window.findChildren<TrackColorBar*>("trackColorBar");
+    QCOMPARE(bars.size(), 1);
+    bars[0]->setColorPickerForTesting([](const QColor&) { return QColor("#ff0000"); });
+    bars[0]->pickColor();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(project.trackColor(0), QColor("#ff0000"));
+    QCOMPARE(window.m_trackRows[0].view->rowTint(), QColor("#ff0000"));
+
+    const QColor tint = QColor("#ff0000");
+
+    // Panel background: exactly the picked color.
+    QCOMPARE(window.m_trackRows[0].panel->palette().color(QPalette::Window), tint);
+
+    // Timeline: the base gray with only a faint hint of the track color,
+    // sampled right of the event (grid lines are vertical and can land
+    // anywhere, so scan for the expected background).
+    TrackViewWidget* view = window.m_trackRows[0].view;
+    view->resize(400, 80);
+    QCoreApplication::processEvents();
+    QImage img = view->grab().toImage();
+    const QColor rowExpected = Project::blendColors(
+        QColor("#2a2a2a"), tint, vvvdaw::TrackTimelineTintStrength);
+    bool foundRow = false;
+    for (int x = 100; x < img.width() && !foundRow; ++x)
+        for (int y = 5; y < img.height() - 5 && !foundRow; ++y)
+            if (img.pixelColor(x, y) == rowExpected) foundRow = true;
+    QVERIFY(foundRow);
+
+    // Event background: exactly the picked color. The event spans samples
+    // 0..48000 (x 0..48 at the default zoom); x=20 avoids the grid lines and
+    // the left border.
+    QCOMPARE(img.pixelColor(20, img.height() / 2), tint);
+}
+
+
+void MainWindowTest::trackColorPaletteUsesTrackScheme() {
+    // The suggested swatches are bright/saturated, matching the automatic
+    // per-track tints (not the muted bus strip values).
+    const QList<QColor> palette = BusColorPaletteDialog::suggestedColors(
+        TrackColorBar::paletteScheme());
+    QVERIFY(palette.size() >= 9);
+    for (const QColor& c : palette) {
+        QVERIFY(c.isValid());
+        QCOMPARE(c.hsvSaturation(), vvvdaw::AutoTrackSaturation);
+        QCOMPARE(c.value(), vvvdaw::AutoTrackValue);
+    }
+    QCOMPARE(palette.first(), QColor::fromHsv(0, vvvdaw::AutoTrackSaturation,
+                                              vvvdaw::AutoTrackValue));
+
+    // Opening on a gray color defaults S/V to the bright track values, not
+    // to the gray's (and not to the bus scheme's muted ones).
+    BusColorPaletteDialog dialog(QColor("#2e2e2e"), nullptr,
+                                 TrackColorBar::paletteScheme());
+    QCOMPARE(dialog.selectedColor().hsvSaturation(), vvvdaw::AutoTrackSaturation);
+    QCOMPARE(dialog.selectedColor().value(), vvvdaw::AutoTrackValue);
+
+    // The bus scheme defaults stay muted.
+    BusColorPaletteDialog busDialog(QColor("#2e2e2e"), nullptr);
+    QCOMPARE(busDialog.selectedColor().hsvSaturation(), vvvdaw::AutoStripSaturation);
+    QCOMPARE(busDialog.selectedColor().value(), vvvdaw::AutoStripValue);
 }
 
 

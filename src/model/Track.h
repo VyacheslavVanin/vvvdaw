@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include <QColor>
 #include <QJsonObject>
 #include <vector>
 #include <cstdint>
@@ -41,6 +42,13 @@ public:
 
     int outputBusIndex() const { return m_outputBusIndex; }
     void setOutputBusIndex(int idx) { m_outputBusIndex = idx; }
+
+    // User-assigned color. When unset (colorSet() == false) the track falls
+    // back to the effective color of its output bus.
+    bool colorSet() const { return m_colorSet; }
+    QColor color() const { return m_color; }
+    void setColor(const QColor& color) { m_color = color; m_colorSet = true; }
+    void clearColor() { m_colorSet = false; m_color = QColor(); }
 
     int midiOutputDeviceId() const { return m_midiOutputDeviceId; }
     void setMidiOutputDeviceId(int id) { m_midiOutputDeviceId = id; }
@@ -108,6 +116,9 @@ private:
     int m_channels = 2;
     int m_height = vvvdaw::DefaultTrackHeight;
     int m_pluginPanelWidth = vvvdaw::DefaultPluginPanelWidth;
+
+    bool m_colorSet = false;
+    QColor m_color;
 
     int m_midiOutputDeviceId = -1;
     QString m_midiOutputDeviceName;

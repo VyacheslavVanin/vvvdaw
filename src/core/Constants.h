@@ -49,6 +49,17 @@ inline constexpr int AutoFolderValue = 160;
 inline constexpr int AutoStripSaturation = 64;
 inline constexpr int AutoStripValue = 92;
 
+// Automatic track color scheme: without a manual color (and without a colored
+// output bus) each track gets a bright, saturated stable hue so rows are easy
+// to tell apart — brighter than the muted bus tints.
+inline constexpr int AutoTrackSaturation = 180;
+inline constexpr int AutoTrackValue = 200;
+
+// Track color tinting: the panel and event backgrounds use the track's
+// effective color directly; the empty timeline background stays near the base
+// gray with only a faint hint of the track color.
+inline constexpr float TrackTimelineTintStrength = 0.1f;
+
 // Audio
 inline constexpr float MonitoringVolumeFactor = 0.7f;
 
@@ -59,6 +70,8 @@ inline constexpr int DefaultTrackHeight = 160;
 inline constexpr int MaxTrackHeight = 600;
 inline constexpr int TrackResizeHandleHeight = 6;
 inline constexpr int DefaultPluginPanelWidth = 200;
+// Width of the thin vertical color strip on the left of a track row.
+inline constexpr int TrackColorBarWidth = 5;
 
 // Default crossfade length applied to the junction between two adjacent
 // audio events, in milliseconds.

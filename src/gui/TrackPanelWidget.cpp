@@ -378,9 +378,22 @@ void TrackPanelWidget::updateBusList(const std::vector<AudioBus>& buses) {
 }
 
 void TrackPanelWidget::setAlternateRow(bool alternate) {
+    m_alternateRow = alternate;
+    applyRowPalette();
+}
+
+void TrackPanelWidget::setRowTint(const QColor& color) {
+    m_rowTint = color;
+    applyRowPalette();
+}
+
+void TrackPanelWidget::applyRowPalette() {
     setAutoFillBackground(true);
+    // The panel shows the track's effective color as-is (bright saturated
+    // auto tint, or exactly the user's picked color).
     QPalette p = palette();
-    p.setColor(QPalette::Window, alternate ? QColor("#2f2f2f") : QColor("#2a2a2a"));
+    p.setColor(QPalette::Window, m_rowTint.isValid()
+        ? m_rowTint : (m_alternateRow ? QColor("#2f2f2f") : QColor("#2a2a2a")));
     setPalette(p);
 }
 

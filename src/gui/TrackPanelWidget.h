@@ -21,6 +21,9 @@ public:
     Track* track() const { return m_track; }
     void updateFromTrack();
     void setAlternateRow(bool alternate);
+    // Effective display color of the track (manual or inherited from the
+    // output bus). Blended over the row's base gray for the background.
+    void setRowTint(const QColor& color);
 
     void updateBusList(const std::vector<AudioBus>& buses);
     void updateMidiOutputs(const std::vector<std::pair<int, QString>>& devices,
@@ -62,6 +65,7 @@ protected:
 
 private:
     void applyTrackType();
+    void applyRowPalette();
     void rebuildOptionalRows();
     // Natural height with the first `count` optional rows visible.
     int contentHeightWith(int optionalCount) const;
@@ -89,4 +93,8 @@ private:
 
     int m_nameRowHeight = 0;
     int m_fullContentHeight = 0;
+
+    // Row appearance: zebra base + the track's effective color tint.
+    bool m_alternateRow = false;
+    QColor m_rowTint;
 };

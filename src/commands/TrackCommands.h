@@ -54,6 +54,48 @@ using SetTrackArmCommand = vvvcmd::SetValueCommand<
 using SetTrackHeightCommand = vvvcmd::SetValueCommand<
     Track, int, 18, false, false, &Track::setHeight>;
 
+// Assign (newSet == true) or clear (newSet == false) a track's user color.
+// Undo/redo restores the previous color state (color and the set flag).
+class SetTrackColorCommand : public UndoCommand {
+public:
+    SetTrackColorCommand(Project& project, int trackIndex,
+                         QColor oldColor, bool oldSet,
+                         QColor newColor, bool newSet)
+        : m_project(project), m_trackIndex(trackIndex)
+        , m_oldColor(oldColor), m_oldSet(oldSet)
+        , m_newColor(newColor), m_newSet(newSet) {}
+
+    void execute() override {
+        if (Track* track = m_project.trackAt(m_trackIndex)) {
+            if (m_newSet)
+                track->setColor(m_newColor);
+            else
+                track->clearColor();
+        }
+    }
+
+    void undo() override {
+        if (Track* track = m_project.trackAt(m_trackIndex)) {
+            if (m_oldSet)
+                track->setColor(m_oldColor);
+            else
+                track->clearColor();
+        }
+    }
+
+    int id() const override { return 19; }
+    // Color changes never touch plugin chains or the audio graph.
+    bool requiresPluginWindowsClose() const override { return false; }
+
+private:
+    Project& m_project;
+    int m_trackIndex;
+    QColor m_oldColor;
+    bool m_oldSet;
+    QColor m_newColor;
+    bool m_newSet;
+};
+
 // Apply one height to every track (the Shift-drag "resize all" gesture).
 // Undo restores each track's previous height.
 class SetAllTracksHeightCommand : public UndoCommand {

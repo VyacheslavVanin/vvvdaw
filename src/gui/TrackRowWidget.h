@@ -3,6 +3,7 @@
 #include "core/Constants.h"
 
 class TrackPanelWidget;
+class TrackColorBar;
 class QSplitter;
 class QVBoxLayout;
 
@@ -23,6 +24,10 @@ public:
     void assemble(TrackPanelWidget* panel, QSplitter* splitter);
 
     TrackPanelWidget* panel() const { return m_panel; }
+    TrackColorBar* colorBar() const { return m_colorBar; }
+    // Optional thin vertical color strip placed to the left of the panel.
+    // Set it before assemble(); it is inserted as the leftmost cell.
+    void setColorBar(TrackColorBar* bar) { m_colorBar = bar; }
 
     int rowHeight() const { return m_rowHeight; }
     int minimumRowHeight() const;
@@ -45,6 +50,7 @@ private:
     int clampHeight(int h) const;
 
     TrackPanelWidget* m_panel = nullptr;
+    TrackColorBar* m_colorBar = nullptr;
     QSplitter* m_splitter = nullptr;
     QWidget* m_content = nullptr;
     QWidget* m_handle = nullptr;
