@@ -261,6 +261,7 @@ void MainWindow::setupMenus() {
                 for (int j = 0; j < chain.count(); ++j)
                     plugins.push_back(chain.plugin(j));
                 closePluginWindowsFor(plugins);
+                remapSelectedTracksAfterRemove(idx);
                 executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
                 return;
             }
@@ -273,6 +274,7 @@ void MainWindow::setupMenus() {
                 for (int j = 0; j < chain.count(); ++j)
                     plugins.push_back(chain.plugin(j));
                 closePluginWindowsFor(plugins);
+                remapSelectedTracksAfterRemove(idx);
                 executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
                 return;
             }

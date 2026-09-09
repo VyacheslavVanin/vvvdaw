@@ -142,6 +142,34 @@ private:
     int maxTrackRowMinHeight() const;
     void applyTrackHeight(int index, int height);
     void applyAllTrackHeights(int index, QPoint globalPos);
+    void applySelectedTrackHeights(int index, QPoint globalPos);
+    void applyTrackResize(int index, int newHeight, QPoint globalPos);
+    int collectSelectedResizeRows(int index, std::vector<int>& indices,
+                                  std::vector<int>& startHeights,
+                                  int& fixedAbove) const;
+    void finishTrackResize(int index, int oldHeight, int newHeight);
+    void finishAllTracksResize();
+    void finishSelectedTracksResize();
+    void finishSingleTrackResize(int index, int oldHeight);
+    void finishTrackReorder(int index, QPoint globalPos);
+    void applyTrackColor(int trackIndex, bool set, const QColor& color);
+
+    // Resize mode for the active drag, resolved from the Shift modifier and
+    // the multi-track selection at press time.
+    enum class TrackResizeMode { Single, All, Selected };
+    void resolveTrackResizeMode(int index, bool all);
+
+    // Multi-track selection.
+    void handleTrackRowPressed(int index, Qt::KeyboardModifiers modifiers);
+    void handleTrackRowClicked(int index);
+    void applyTrackSelectionVisuals();
+    bool isTrackSelected(int index) const;
+    int selectedTrackCount() const { return static_cast<int>(m_selectedTracks.size()); }
+    void setSelectedTracks(std::vector<int> indices);
+    void validateSelectedTracks();
+    void remapSelectedTracksAfterReorder(const std::vector<int>& newOrder);
+    void remapSelectedTracksAfterInsert(int at, int count = 1);
+    void remapSelectedTracksAfterRemove(int index);
 
     bool eventFilter(QObject* obj, QEvent* event) override;
 
@@ -187,6 +215,15 @@ private:
     // the drag so the grabbed handle stays under the cursor.
     int m_resizeAllPressMouseY = 0;
     int m_resizeAllPressBottom = 0;
+    TrackResizeMode m_resizeMode = TrackResizeMode::Single;
+    // Multi-track selection: sorted unique track indices + the click anchor
+    // used by Shift+click range selection.
+    std::vector<int> m_selectedTracks;
+    int m_trackSelectionAnchor = -1;
+    // Plain press on a selected row keeps the group selection for drags; if
+    // the mouse is released without dragging (rowClicked) the selection
+    // collapses to this row.
+    int m_trackClickCollapseIndex = -1;
     int m_trackReorderSource = -1;
 
     std::vector<PluginWindow*> m_pluginWindows;

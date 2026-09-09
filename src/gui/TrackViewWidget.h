@@ -59,6 +59,9 @@ public:
     // output bus). Blended over the row's base gray for the timeline and
     // over a neutral dark for the event backgrounds.
     void setRowTint(const QColor& color) { m_rowTint = color; update(); }
+    // Multi-track selection highlight.
+    void setSelected(bool selected) { m_rowSelected = selected; update(); }
+    bool isSelected() const { return m_rowSelected; }
     // Current effective tint (invalid when unset).
     QColor rowTint() const { return m_rowTint; }
     void setDragPreview(const AudioEvent* event, int64_t startSample);
@@ -254,6 +257,7 @@ private:
     // Row appearance
     bool m_alternateRow = false;
     QColor m_rowTint;
+    bool m_rowSelected = false;
     bool m_dragSourceVisible = true;
 
     // Edge trim state

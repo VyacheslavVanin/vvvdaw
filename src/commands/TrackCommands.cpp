@@ -87,6 +87,68 @@ void SetAllTracksHeightCommand::undo() {
         m_project.tracks()[i].setHeight(m_oldHeights[i]);
 }
 
+// --- SetTracksHeightCommand ---
+
+SetTracksHeightCommand::SetTracksHeightCommand(Project& project,
+                                               std::vector<int> indices,
+                                               std::vector<int> oldHeights,
+                                               std::vector<int> newHeights)
+    : m_project(project), m_indices(std::move(indices))
+    , m_oldHeights(std::move(oldHeights)), m_newHeights(std::move(newHeights)) {}
+
+void SetTracksHeightCommand::execute() {
+    const size_t n = std::min({m_indices.size(), m_newHeights.size(),
+                               m_project.tracks().size()});
+    for (size_t i = 0; i < n; ++i) {
+        const int idx = m_indices[i];
+        if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) continue;
+        m_project.tracks()[idx].setHeight(m_newHeights[i]);
+    }
+}
+
+void SetTracksHeightCommand::undo() {
+    const size_t n = std::min({m_indices.size(), m_oldHeights.size(),
+                               m_project.tracks().size()});
+    for (size_t i = 0; i < n; ++i) {
+        const int idx = m_indices[i];
+        if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) continue;
+        m_project.tracks()[idx].setHeight(m_oldHeights[i]);
+    }
+}
+
+// --- SetTracksColorCommand ---
+
+SetTracksColorCommand::SetTracksColorCommand(Project& project,
+                                             std::vector<int> indices,
+                                             std::vector<QColor> oldColors,
+                                             std::vector<bool> oldSets,
+                                             QColor newColor, bool newSet)
+    : m_project(project), m_indices(std::move(indices))
+    , m_oldColors(std::move(oldColors)), m_oldSets(std::move(oldSets))
+    , m_newColor(newColor), m_newSet(newSet) {}
+
+void SetTracksColorCommand::execute() {
+    const size_t n = std::min({m_indices.size(), m_oldColors.size(), m_oldSets.size(),
+                               m_project.tracks().size()});
+    for (size_t i = 0; i < n; ++i) {
+        Track* track = m_project.trackAt(m_indices[i]);
+        if (!track) continue;
+        if (m_newSet) track->setColor(m_newColor);
+        else track->clearColor();
+    }
+}
+
+void SetTracksColorCommand::undo() {
+    const size_t n = std::min({m_indices.size(), m_oldColors.size(), m_oldSets.size(),
+                               m_project.tracks().size()});
+    for (size_t i = 0; i < n; ++i) {
+        Track* track = m_project.trackAt(m_indices[i]);
+        if (!track) continue;
+        if (m_oldSets[i]) track->setColor(m_oldColors[i]);
+        else track->clearColor();
+    }
+}
+
 // --- ReorderTracksCommand ---
 
 ReorderTracksCommand::ReorderTracksCommand(Project& project, std::vector<int> newOrder)

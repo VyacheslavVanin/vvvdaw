@@ -271,6 +271,8 @@ void TrackViewWidget::paintEvent(QPaintEvent* /*event*/) {
     // track color.
     if (m_rowTint.isValid())
         bg = Project::blendColors(bg, m_rowTint, vvvdaw::TrackTimelineTintStrength);
+    if (m_rowSelected)
+        bg = bg.lighter(140);
     painter.fillRect(rect(), bg);
 
     if (!m_track) return;

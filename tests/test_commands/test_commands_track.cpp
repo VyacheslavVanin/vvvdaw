@@ -31,6 +31,8 @@ private slots:
     void setTrackHeightCommand();
     void setAllTracksHeightCommand();
     void setAllTracksHeightCommandPerTrack();
+    void setTracksHeightCommand();
+    void setTracksColorCommand();
     void reorderTracksCommand();
     void setTrackColorCommand();
 };
@@ -258,6 +260,80 @@ void TestTrackCommands::setAllTracksHeightCommandPerTrack() {
     QCOMPARE(p.tracks()[0].height(), 90);
     QCOMPARE(p.tracks()[1].height(), 300);
     QCOMPARE(p.tracks()[2].height(), 450);
+}
+
+
+void TestTrackCommands::setTracksHeightCommand() {
+    // The Shift-drag "resize selection" gesture only touches the given tracks.
+    Project p;
+    p.addTrack("A");
+    p.addMidiTrack("B");
+    p.addTrack("C");
+    p.tracks()[0].setHeight(100);
+    p.tracks()[1].setHeight(200);
+    p.tracks()[2].setHeight(300);
+
+    UndoStack stack;
+    stack.execute(std::make_unique<SetTracksHeightCommand>(
+        p, std::vector<int>{ 0, 2 }, std::vector<int>{ 100, 300 },
+        std::vector<int>{ 150, 450 }));
+    QCOMPARE(p.tracks()[0].height(), 150);
+    QCOMPARE(p.tracks()[1].height(), 200);
+    QCOMPARE(p.tracks()[2].height(), 450);
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].height(), 100);
+    QCOMPARE(p.tracks()[1].height(), 200);
+    QCOMPARE(p.tracks()[2].height(), 300);
+
+    stack.redo();
+    QCOMPARE(p.tracks()[0].height(), 150);
+    QCOMPARE(p.tracks()[1].height(), 200);  // track 1 was never touched
+    QCOMPARE(p.tracks()[2].height(), 450);
+}
+
+
+void TestTrackCommands::setTracksColorCommand() {
+    // Assign one color to several tracks; undo restores each previous state.
+    Project p;
+    p.addTrack("A");
+    p.addMidiTrack("B");
+    p.addTrack("C");
+
+    UndoStack stack;
+    stack.execute(std::make_unique<SetTracksColorCommand>(
+        p, std::vector<int>{ 0, 2 },
+        std::vector<QColor>{ QColor(), QColor() },
+        std::vector<bool>{ false, false },
+        QColor(255, 0, 0), true));
+    QVERIFY(p.tracks()[0].colorSet());
+    QCOMPARE(p.tracks()[0].color(), QColor(255, 0, 0));
+    QVERIFY(!p.tracks()[1].colorSet());
+    QVERIFY(p.tracks()[2].colorSet());
+    QCOMPARE(p.tracks()[2].color(), QColor(255, 0, 0));
+
+    stack.undo();
+    QVERIFY(!p.tracks()[0].colorSet());
+    QVERIFY(!p.tracks()[2].colorSet());
+
+    stack.redo();
+    QVERIFY(p.tracks()[0].colorSet());
+    QVERIFY(p.tracks()[2].colorSet());
+
+    // Clearing (newSet == false) restores per-track previous states on undo:
+    // give track 0 a different color first, then clear the selection.
+    p.tracks()[0].setColor(QColor(10, 20, 30));
+    stack.execute(std::make_unique<SetTracksColorCommand>(
+        p, std::vector<int>{ 0, 2 },
+        std::vector<QColor>{ QColor(10, 20, 30), QColor(255, 0, 0) },
+        std::vector<bool>{ true, true },
+        QColor(), false));
+    QVERIFY(!p.tracks()[0].colorSet());
+    QVERIFY(!p.tracks()[2].colorSet());
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].color(), QColor(10, 20, 30));
+    QCOMPARE(p.tracks()[2].color(), QColor(255, 0, 0));
 }
 
 

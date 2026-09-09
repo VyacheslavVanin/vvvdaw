@@ -63,7 +63,14 @@ public:
     void applyHeight(int h);
 
 signals:
-    void resizeStarted(int trackIndex, int startHeight, QPoint globalPressPos);
+    // A press on the row background (panel side): MainWindow applies the
+    // Ctrl/Shift/plain click selection logic.
+    void rowPressed(int trackIndex, Qt::KeyboardModifiers modifiers);
+    // A click on the row background that released without starting a reorder
+    // drag: MainWindow collapses a kept group selection to this row.
+    void rowClicked(int trackIndex);
+    void resizeStarted(int trackIndex, int startHeight, QPoint globalPressPos,
+                       bool allTracks);
     void resizeDragged(int trackIndex, int newHeight, QPoint globalPos, bool allTracks);
     void resizeFinished(int trackIndex, int oldHeight, int newHeight, bool allTracks);
     void reorderDragStarted(int trackIndex);
@@ -104,3 +111,10 @@ private:
 // minimums are enforced by the callers).
 std::vector<int> scaleTrackHeights(const std::vector<int>& startHeights,
                                    int pressBottom, int targetBottom);
+
+// Move every index in `selected` (in their original relative order) so the
+// group sits right before the insertion position `dst` (a 0..n index into the
+// original ordering). Non-selected tracks keep their relative order.
+std::vector<int> moveSelectedTracksOrder(const std::vector<int>& order,
+                                         const std::vector<int>& selected,
+                                         int dst);

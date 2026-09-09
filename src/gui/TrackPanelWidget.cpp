@@ -396,6 +396,9 @@ void TrackPanelWidget::applyRowPalette() {
     QColor bg = m_rowTint.isValid()
         ? Project::blendColors(base, m_rowTint, vvvdaw::TrackRowTintStrength)
         : base;
+    // Multi-selection highlight, mirroring the bus panel strips.
+    if (m_selected)
+        bg = bg.lighter(140);
     QPalette p = palette();
     p.setColor(QPalette::Window, bg);
     setPalette(p);

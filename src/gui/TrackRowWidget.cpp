@@ -8,6 +8,7 @@
 #include <QSplitter>
 #include <QMouseEvent>
 #include <QApplication>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -29,6 +30,31 @@ std::vector<int> scaleTrackHeights(const std::vector<int>& startHeights,
             static_cast<long long>(vvvdaw::MaxTrackHeight))));
     }
     return scaled;
+}
+
+std::vector<int> moveSelectedTracksOrder(const std::vector<int>& order,
+                                         const std::vector<int>& selected,
+                                         int dst) {
+    std::vector<int> rest;
+    rest.reserve(order.size());
+    for (int idx : order) {
+        const bool selectedIdx = std::find(selected.begin(), selected.end(), idx)
+                                 != selected.end();
+        if (!selectedIdx)
+            rest.push_back(idx);
+    }
+    // Insertion slot among the remaining tracks: selected rows above the
+    // insertion line travel with the group, so they do not count.
+    int insertPos = 0;
+    for (int i = 0; i < dst && i < static_cast<int>(order.size()); ++i) {
+        const bool selectedIdx =
+            std::find(selected.begin(), selected.end(), order[i]) != selected.end();
+        if (!selectedIdx)
+            ++insertPos;
+    }
+    insertPos = qBound(0, insertPos, static_cast<int>(rest.size()));
+    rest.insert(rest.begin() + insertPos, selected.begin(), selected.end());
+    return rest;
 }
 
 TrackResizeHandle::TrackResizeHandle(QWidget* parent)
@@ -141,13 +167,15 @@ void TrackRowWidget::mousePressEvent(QMouseEvent* event) {
         m_resizeStartHeight = height();
         // The resize mode is captured at press: Shift held while grabbing the
         // handle resizes every track, otherwise only this row.
-        m_resizeAll = (QApplication::keyboardModifiers() & Qt::ShiftModifier) != 0;
+        m_resizeAll = (event->modifiers() & Qt::ShiftModifier) != 0;
         emit resizeStarted(m_trackIndex, m_resizeStartHeight,
-                           event->globalPosition().toPoint());
+                           event->globalPosition().toPoint(), m_resizeAll);
         return;
     }
-    // A press that propagated up from the panel background: begin a reorder
-    // drag once the cursor moves past a small threshold.
+    // A press that propagated up from the panel background: apply selection
+    // logic in MainWindow, then begin a reorder drag once the cursor moves
+    // past a small threshold.
+    emit rowPressed(m_trackIndex, event->modifiers());
     m_reorderCandidate = true;
     m_reorderDragging = false;
     m_reorderStartGlobal = event->globalPosition().toPoint();
@@ -185,6 +213,9 @@ void TrackRowWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (m_reorderDragging) {
         m_reorderDragging = false;
         emit reorderDragFinished(m_trackIndex, event->globalPosition().toPoint());
+    } else if (m_reorderCandidate && event->button() == Qt::LeftButton) {
+        // Click without drag: let MainWindow collapse a kept group selection.
+        emit rowClicked(m_trackIndex);
     }
     m_reorderCandidate = false;
     m_reorderDragging = false;

@@ -75,6 +75,7 @@ std::vector<int> moveTrackOrder(const std::vector<int>& order, int src, int dst)
 
 void MainWindow::rebuildTracks() {
     teardownTrackRows();
+    validateSelectedTracks();
 
     std::vector<std::pair<int, QString>> midiOutList;
     std::vector<QString> instrumentNames;
@@ -151,6 +152,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
         row.panel = new TrackPanelWidget(&track, row.row);
         row.panel->setAlternateRow(odd);
         row.panel->setRowTint(m_project.trackColor(trackIndex));
+        row.panel->setSelected(isTrackSelected(trackIndex));
         row.panel->updateBusList(m_project.buses());
         row.panel->updateMidiOutputs(midiOutList, instrumentNames);
         row.panel->updateFromTrack();
@@ -165,6 +167,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
         row.view = new TrackViewWidget(&track, &m_project, row.row);
         row.view->setAlternateRow(odd);
         row.view->setRowTint(m_project.trackColor(trackIndex));
+        row.view->setSelected(isTrackSelected(trackIndex));
         row.view->setZoom(m_zoom);
         row.view->setScrollOffset(m_scrollOffset);
         row.view->setSnapToGrid(m_project.snapToGrid());
@@ -219,6 +222,7 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
                 for (int j = 0; j < chain.count(); ++j)
                     plugins.push_back(chain.plugin(j));
                 closePluginWindowsFor(plugins);
+                remapSelectedTracksAfterRemove(idx);
                 executeCommand(std::make_unique<RemoveTrackCommand>(m_project, idx, &m_pluginManager));
             }
         });
@@ -427,8 +431,14 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 }
 
 void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
+        connect(row, &TrackRowWidget::rowPressed, this,
+                &MainWindow::handleTrackRowPressed);
+
+        connect(row, &TrackRowWidget::rowClicked, this,
+                &MainWindow::handleTrackRowClicked);
+
         connect(row, &TrackRowWidget::resizeStarted, this,
-                [this, row](int, int, QPoint globalPressPos) {
+                [this, row](int index, int, QPoint globalPressPos, bool all) {
             m_resizeStartHeights.clear();
             for (const auto& t : m_project.tracks())
                 m_resizeStartHeights.push_back(t.height());
@@ -436,41 +446,21 @@ void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
                 m_trackContainer->mapFromGlobal(globalPressPos).y();
             const QRect geo = row->geometry();
             m_resizeAllPressBottom = geo.y() + geo.height();
+            resolveTrackResizeMode(index, all);
         });
 
         connect(row, &TrackRowWidget::resizeDragged, this,
-                [this](int index, int newHeight, QPoint globalPos, bool all) {
-            if (all)
-                applyAllTrackHeights(index, globalPos);
-            else
-                applyTrackHeight(index, newHeight);
-        });
+                &MainWindow::applyTrackResize);
 
         connect(row, &TrackRowWidget::resizeFinished, this,
-                [this](int index, int oldHeight, int newHeight, bool all) {
-            if (all) {
-                std::vector<int> oldHeights = m_resizeStartHeights;
-                if (oldHeights.empty())
-                    for (const auto& t : m_project.tracks()) oldHeights.push_back(t.height());
-                std::vector<int> newHeights;
-                newHeights.reserve(m_project.tracks().size());
-                for (const auto& t : m_project.tracks()) newHeights.push_back(t.height());
-                if (oldHeights == newHeights) return;
-                pushCommand(std::make_unique<SetAllTracksHeightCommand>(
-                    m_project, oldHeights, newHeights));
-            } else {
-                int oldH = oldHeight;
-                if (index >= 0 && index < static_cast<int>(m_resizeStartHeights.size()))
-                    oldH = m_resizeStartHeights[index];
-                int curH = (index >= 0 && index < static_cast<int>(m_project.tracks().size()))
-                               ? m_project.tracks()[index].height() : oldH;
-                if (oldH == curH) return;
-                pushCommand(std::make_unique<SetTrackHeightCommand>(m_project, index, oldH, curH));
-            }
-        });
+                &MainWindow::finishTrackResize);
 
         connect(row, &TrackRowWidget::reorderDragStarted, this,
-                [this](int index) { m_trackReorderSource = index; });
+                [this](int index) {
+            // A drag cancels the pending click-collapse kept from the press.
+            m_trackClickCollapseIndex = -1;
+            m_trackReorderSource = index;
+        });
 
         connect(row, &TrackRowWidget::reorderDragMoved, this,
                 [this](int, QPoint globalPos) {
@@ -478,33 +468,143 @@ void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
         });
 
         connect(row, &TrackRowWidget::reorderDragFinished, this,
-                [this](int index, QPoint globalPos) {
-            hideTrackInsertionLine();
-            const int n = static_cast<int>(m_project.tracks().size());
-            const int src = m_trackReorderSource;
-            m_trackReorderSource = -1;
-            if (n < 2 || src < 0 || src >= n) return;
-            const int dst = trackInsertionIndexAt(globalPos);
-            std::vector<int> oldOrder(static_cast<size_t>(n));
-            std::iota(oldOrder.begin(), oldOrder.end(), 0);
-            std::vector<int> newOrder = moveTrackOrder(oldOrder, src, dst);
-            if (newOrder == oldOrder) return;
-            executeCommand(std::make_unique<ReorderTracksCommand>(m_project, newOrder));
-        });
+                &MainWindow::finishTrackReorder);
+}
+
+void MainWindow::handleTrackRowPressed(int index, Qt::KeyboardModifiers modifiers) {
+    const int n = static_cast<int>(m_project.tracks().size());
+    if (index < 0 || index >= n) return;
+    m_trackClickCollapseIndex = -1;
+    // A plain press on an already selected row inside a group keeps the
+    // selection so drag gestures operate on the group; the pending collapse
+    // fires only if the mouse is released without dragging (rowClicked).
+    if (!(modifiers & (Qt::ControlModifier | Qt::ShiftModifier))
+        && selectedTrackCount() > 1 && isTrackSelected(index)) {
+        m_trackClickCollapseIndex = index;
+        return;
+    }
+    std::vector<int> next;
+    if (modifiers & Qt::ControlModifier) {
+        next = m_selectedTracks;
+        auto it = std::find(next.begin(), next.end(), index);
+        if (it != next.end()) next.erase(it);
+        else {
+            next.push_back(index);
+            std::sort(next.begin(), next.end());
+        }
+    } else if ((modifiers & Qt::ShiftModifier) && m_trackSelectionAnchor >= 0
+               && m_trackSelectionAnchor < n) {
+        const int lo = std::min(m_trackSelectionAnchor, index);
+        const int hi = std::max(m_trackSelectionAnchor, index);
+        next.reserve(static_cast<size_t>(hi - lo + 1));
+        for (int i = lo; i <= hi; ++i) next.push_back(i);
+    } else {
+        next = { index };
+    }
+    m_trackSelectionAnchor = index;
+    setSelectedTracks(std::move(next));
+}
+
+void MainWindow::handleTrackRowClicked(int index) {
+    if (m_trackClickCollapseIndex < 0) return;
+    m_trackClickCollapseIndex = -1;
+    m_trackSelectionAnchor = index;
+    setSelectedTracks({ index });
+}
+
+void MainWindow::setSelectedTracks(std::vector<int> indices) {
+    m_selectedTracks = std::move(indices);
+    validateSelectedTracks();
+    applyTrackSelectionVisuals();
+}
+
+void MainWindow::validateSelectedTracks() {
+    const int n = static_cast<int>(m_project.tracks().size());
+    m_selectedTracks.erase(
+        std::remove_if(m_selectedTracks.begin(), m_selectedTracks.end(),
+                       [n](int i) { return i < 0 || i >= n; }),
+        m_selectedTracks.end());
+    std::sort(m_selectedTracks.begin(), m_selectedTracks.end());
+    m_selectedTracks.erase(
+        std::unique(m_selectedTracks.begin(), m_selectedTracks.end()),
+        m_selectedTracks.end());
+    if (m_trackSelectionAnchor >= n) m_trackSelectionAnchor = -1;
+}
+
+void MainWindow::applyTrackSelectionVisuals() {
+    const size_t n = std::min(m_trackRows.size(), m_project.tracks().size());
+    for (size_t i = 0; i < n; ++i) {
+        if (!m_trackRows[i].row) continue;
+        const bool selected = isTrackSelected(static_cast<int>(i));
+        if (m_trackRows[i].panel)
+            m_trackRows[i].panel->setSelected(selected);
+        if (m_trackRows[i].view)
+            m_trackRows[i].view->setSelected(selected);
+    }
+}
+
+bool MainWindow::isTrackSelected(int index) const {
+    return std::binary_search(m_selectedTracks.begin(), m_selectedTracks.end(), index);
+}
+
+void MainWindow::remapSelectedTracksAfterReorder(const std::vector<int>& newOrder) {
+    std::vector<int> remapped;
+    remapped.reserve(m_selectedTracks.size());
+    for (int newPos = 0; newPos < static_cast<int>(newOrder.size()); ++newPos) {
+        if (isTrackSelected(newOrder[newPos]))
+            remapped.push_back(newPos);
+    }
+    m_selectedTracks = std::move(remapped);
+}
+
+void MainWindow::remapSelectedTracksAfterInsert(int at, int count) {
+    for (int& idx : m_selectedTracks)
+        if (idx >= at) idx += count;
+    validateSelectedTracks();
+    applyTrackSelectionVisuals();
+}
+
+void MainWindow::remapSelectedTracksAfterRemove(int index) {
+    auto it = std::find(m_selectedTracks.begin(), m_selectedTracks.end(), index);
+    if (it != m_selectedTracks.end())
+        m_selectedTracks.erase(it);
+    for (int& idx : m_selectedTracks)
+        if (idx > index) --idx;
+    validateSelectedTracks();
+    applyTrackSelectionVisuals();
 }
 
 void MainWindow::wireTrackColorBar(TrackColorBar* bar, int trackIndex) {
-    auto applyColor = [this, trackIndex](bool set, const QColor& color) {
-        Track* track = m_project.trackAt(trackIndex);
-        if (!track) return;
-        executeCommand(std::make_unique<SetTrackColorCommand>(
-            m_project, trackIndex, track->color(), track->colorSet(),
-            color, set));
-    };
     connect(bar, &TrackColorBar::colorPicked, this,
-            [applyColor](const QColor& color) { applyColor(true, color); });
+            [this, trackIndex](const QColor& color) {
+                applyTrackColor(trackIndex, true, color);
+            });
     connect(bar, &TrackColorBar::resetToAutomatic, this,
-            [applyColor] { applyColor(false, QColor()); });
+            [this, trackIndex] { applyTrackColor(trackIndex, false, QColor()); });
+}
+
+void MainWindow::applyTrackColor(int trackIndex, bool set, const QColor& color) {
+    Track* track = m_project.trackAt(trackIndex);
+    if (!track) return;
+    // With an active multi-selection, a color picked on one of the selected
+    // tracks applies to all of them.
+    if (selectedTrackCount() > 1 && isTrackSelected(trackIndex)) {
+        std::vector<int> indices;
+        std::vector<QColor> oldColors;
+        std::vector<bool> oldSets;
+        for (int i : m_selectedTracks) {
+            const Track* t = m_project.trackAt(i);
+            if (!t) continue;
+            indices.push_back(i);
+            oldColors.push_back(t->color());
+            oldSets.push_back(t->colorSet());
+        }
+        executeCommand(std::make_unique<SetTracksColorCommand>(
+            m_project, indices, oldColors, oldSets, color, set));
+        return;
+    }
+    executeCommand(std::make_unique<SetTrackColorCommand>(
+        m_project, trackIndex, track->color(), track->colorSet(), color, set));
 }
 
 int MainWindow::trackInsertionIndexAt(const QPoint& globalPos) const {
@@ -585,6 +685,153 @@ void MainWindow::applyAllTrackHeights(int index, QPoint globalPos) {
         if (m_trackRows[i].row)
             m_trackRows[i].row->applyHeight(h);
     }
+}
+
+void MainWindow::resolveTrackResizeMode(int index, bool all) {
+    m_resizeMode = TrackResizeMode::Single;
+    if (!all) return;
+    m_resizeMode = TrackResizeMode::All;
+    if (selectedTrackCount() > 1 && isTrackSelected(index))
+        m_resizeMode = TrackResizeMode::Selected;
+}
+
+void MainWindow::applyTrackResize(int index, int newHeight, QPoint globalPos) {
+    if (m_resizeMode == TrackResizeMode::Selected) {
+        applySelectedTrackHeights(index, globalPos);
+        return;
+    }
+    if (m_resizeMode == TrackResizeMode::All) {
+        applyAllTrackHeights(index, globalPos);
+        return;
+    }
+    applyTrackHeight(index, newHeight);
+}
+
+int MainWindow::collectSelectedResizeRows(int index, std::vector<int>& indices,
+                                          std::vector<int>& startHeights,
+                                          int& fixedAbove) const {
+    int pressBottom = 0;
+    fixedAbove = 0;
+    const int count = static_cast<int>(m_resizeStartHeights.size());
+    for (int i = 0; i < count; ++i) {
+        if (!isTrackSelected(i)) {
+            // Non-selected rows above the dragged one keep their heights, so
+            // their contribution is subtracted from the target bottom edge.
+            if (i < index)
+                fixedAbove += m_resizeStartHeights[i];
+            continue;
+        }
+        indices.push_back(i);
+        startHeights.push_back(m_resizeStartHeights[i]);
+        if (i <= index)
+            pressBottom += m_resizeStartHeights[i];
+    }
+    return pressBottom;
+}
+
+void MainWindow::applySelectedTrackHeights(int index, QPoint globalPos) {
+    if (index < 0 || index >= static_cast<int>(m_resizeStartHeights.size())) return;
+    if (m_resizeAllPressBottom <= 0) return;
+    // Anchor: the press-time bottom edge of the dragged row relative to the
+    // rows selected above it. Solve s from
+    //   s * sum(selected heights up to and incl. the dragged row)
+    //     + sum(non-selected heights above it) = target bottom edge,
+    // and apply the single factor s to every selected row. Non-selected rows
+    // never move, so the grabbed row's bottom edge tracks the cursor exactly.
+    std::vector<int> indices;
+    std::vector<int> startHeights;
+    int fixedAbove = 0;
+    const int pressBottom = collectSelectedResizeRows(index, indices, startHeights,
+                                                      fixedAbove);
+    if (pressBottom <= 0) return;
+    const int mouseY = m_trackContainer->mapFromGlobal(globalPos).y();
+    const int targetBottom = mouseY + (m_resizeAllPressBottom - m_resizeAllPressMouseY);
+    const std::vector<int> scaled = scaleTrackHeights(
+        startHeights, pressBottom, targetBottom - fixedAbove);
+    const size_t n = std::min({scaled.size(), indices.size(), m_trackRows.size()});
+    for (size_t k = 0; k < n; ++k) {
+        const int i = indices[k];
+        int h = scaled[k];
+        if (m_trackRows[i].row)
+            h = qMax(h, m_trackRows[i].row->minimumRowHeight());
+        m_project.tracks()[i].setHeight(h);
+        if (m_trackRows[i].row)
+            m_trackRows[i].row->applyHeight(h);
+    }
+}
+
+void MainWindow::finishTrackResize(int index, int oldHeight, int newHeight) {
+    switch (m_resizeMode) {
+    case TrackResizeMode::All:
+        finishAllTracksResize();
+        return;
+    case TrackResizeMode::Selected:
+        finishSelectedTracksResize();
+        return;
+    case TrackResizeMode::Single:
+        finishSingleTrackResize(index, oldHeight);
+        return;
+    }
+}
+
+void MainWindow::finishAllTracksResize() {
+    std::vector<int> oldHeights = m_resizeStartHeights;
+    if (oldHeights.empty())
+        for (const auto& t : m_project.tracks()) oldHeights.push_back(t.height());
+    std::vector<int> newHeights;
+    newHeights.reserve(m_project.tracks().size());
+    for (const auto& t : m_project.tracks()) newHeights.push_back(t.height());
+    if (oldHeights == newHeights) return;
+    pushCommand(std::make_unique<SetAllTracksHeightCommand>(
+        m_project, oldHeights, newHeights));
+}
+
+void MainWindow::finishSelectedTracksResize() {
+    std::vector<int> indices;
+    std::vector<int> oldHeights;
+    const int count = static_cast<int>(m_resizeStartHeights.size());
+    for (int i = 0; i < count; ++i) {
+        if (!isTrackSelected(i)) continue;
+        indices.push_back(i);
+        oldHeights.push_back(m_resizeStartHeights[i]);
+    }
+    if (indices.empty()) return;
+    std::vector<int> newHeights;
+    newHeights.reserve(indices.size());
+    for (int i : indices)
+        newHeights.push_back(m_project.tracks()[i].height());
+    if (oldHeights == newHeights) return;
+    pushCommand(std::make_unique<SetTracksHeightCommand>(
+        m_project, indices, oldHeights, newHeights));
+}
+
+void MainWindow::finishSingleTrackResize(int index, int oldHeight) {
+    if (index >= 0 && index < static_cast<int>(m_resizeStartHeights.size()))
+        oldHeight = m_resizeStartHeights[index];
+    const int curH = (index >= 0 && index < static_cast<int>(m_project.tracks().size()))
+                     ? m_project.tracks()[index].height() : oldHeight;
+    if (oldHeight == curH) return;
+    pushCommand(std::make_unique<SetTrackHeightCommand>(m_project, index, oldHeight, curH));
+}
+
+void MainWindow::finishTrackReorder(int index, QPoint globalPos) {
+    hideTrackInsertionLine();
+    const int n = static_cast<int>(m_project.tracks().size());
+    const int src = m_trackReorderSource;
+    m_trackReorderSource = -1;
+    if (n < 2 || src < 0 || src >= n) return;
+    const int dst = trackInsertionIndexAt(globalPos);
+    std::vector<int> oldOrder(static_cast<size_t>(n));
+    std::iota(oldOrder.begin(), oldOrder.end(), 0);
+    // Multi-selection drag: the whole group travels to the insertion point in
+    // its original relative order.
+    const bool groupDrag = selectedTrackCount() > 1 && isTrackSelected(src);
+    std::vector<int> newOrder = groupDrag
+        ? moveSelectedTracksOrder(oldOrder, m_selectedTracks, dst)
+        : moveTrackOrder(oldOrder, src, dst);
+    if (newOrder == oldOrder) return;
+    remapSelectedTracksAfterReorder(newOrder);
+    executeCommand(std::make_unique<ReorderTracksCommand>(m_project, newOrder));
 }
 
 

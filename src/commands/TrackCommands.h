@@ -112,6 +112,45 @@ private:
     std::vector<int> m_newHeights;
 };
 
+// Apply new heights to a subset of tracks (the Shift-drag "resize selection"
+// gesture). Undo restores each touched track's previous height.
+class SetTracksHeightCommand : public UndoCommand {
+public:
+    SetTracksHeightCommand(Project& project, std::vector<int> indices,
+                           std::vector<int> oldHeights, std::vector<int> newHeights);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 133; }
+    bool requiresPluginWindowsClose() const override { return false; }
+private:
+    Project& m_project;
+    std::vector<int> m_indices;
+    std::vector<int> m_oldHeights;
+    std::vector<int> m_newHeights;
+};
+
+// Assign (newSet == true) or clear (newSet == false) one color on several
+// tracks at once (the multi-track selection color gesture). Undo restores
+// each track's previous color state.
+class SetTracksColorCommand : public UndoCommand {
+public:
+    SetTracksColorCommand(Project& project, std::vector<int> indices,
+                          std::vector<QColor> oldColors, std::vector<bool> oldSets,
+                          QColor newColor, bool newSet);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 132; }
+    // Color changes never touch plugin chains or the audio graph.
+    bool requiresPluginWindowsClose() const override { return false; }
+private:
+    Project& m_project;
+    std::vector<int> m_indices;
+    std::vector<QColor> m_oldColors;
+    std::vector<bool> m_oldSets;
+    QColor m_newColor;
+    bool m_newSet;
+};
+
 // Move the tracks vector to a new ordering. `newOrder` is a permutation of
 // 0..n-1 where position `i` in the new order is the track that was at
 // `newOrder[i]` before the move. The inverse order is derived for undo.

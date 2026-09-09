@@ -21,6 +21,9 @@ public:
     Track* track() const { return m_track; }
     void updateFromTrack();
     void setAlternateRow(bool alternate);
+    // Multi-track selection highlight. Blended on top of the row palette.
+    void setSelected(bool selected) { m_selected = selected; applyRowPalette(); }
+    bool isSelected() const { return m_selected; }
     // Effective display color of the track (manual or inherited from the
     // output bus). Blended over the row's base gray for the background.
     void setRowTint(const QColor& color);
@@ -97,4 +100,5 @@ private:
     // Row appearance: zebra base + the track's effective color tint.
     bool m_alternateRow = false;
     QColor m_rowTint;
+    bool m_selected = false;
 };

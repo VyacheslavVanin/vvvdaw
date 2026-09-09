@@ -14,6 +14,7 @@
 #include <QSignalSpy>
 #include <QTimer>
 #include <QContextMenuEvent>
+#include <QMouseEvent>
 #include <QMimeData>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -80,6 +81,12 @@ private slots:
     void resizeTrackUpdatesHeightAndRow();
     void resizeAllTracksViaRowSignals();
     void scaleTrackHeightsMath();
+    void trackRowSelectionClicks();
+    void trackSelectionColorBatch();
+    void trackSelectionResize();
+    void trackSelectionResizeWithGaps();
+    void trackSelectionReorderGroup();
+    void moveSelectedTracksOrderMath();
     void panelCollapsesControlRows();
     void minimumRowHeightFitsNameRow();
     void trackPluginPanelWidthAppliesToRow();
@@ -296,7 +303,7 @@ void MainWindowTest::resizeAllTracksViaRowSignals() {
     // y=240: the grabbed handle follows the cursor and the scale factor is
     // 240/160 = 1.5 → heights (240, 300, 360).
     const QPoint pressGlobal = window.m_trackContainer->mapToGlobal(QPoint(10, 160));
-    emit row->resizeStarted(0, 160, pressGlobal);
+    emit row->resizeStarted(0, 160, pressGlobal, true);
     const QPoint dragGlobal = window.m_trackContainer->mapToGlobal(QPoint(10, 240));
     emit row->resizeDragged(0, 240, dragGlobal, true);
 
@@ -342,6 +349,290 @@ void MainWindowTest::scaleTrackHeightsMath() {
     QCOMPARE(out.size(), size_t(2));
     QCOMPARE(out[0], 100);
     QCOMPARE(out[1], 200);
+}
+
+
+void MainWindowTest::moveSelectedTracksOrderMath() {
+    // Middle rows: the group keeps its relative order, the rest keep theirs.
+    std::vector<int> out = moveSelectedTracksOrder({0, 1, 2, 3, 4}, {1, 3}, 4);
+    QVERIFY(out == std::vector<int>({0, 2, 1, 3, 4}));
+    // Group moves to the top.
+    out = moveSelectedTracksOrder({0, 1, 2, 3, 4}, {0, 2}, 0);
+    QVERIFY(out == std::vector<int>({0, 2, 1, 3, 4}));
+    // Group moved within the middle of the list.
+    out = moveSelectedTracksOrder({0, 1, 2, 3, 4}, {3}, 1);
+    QVERIFY(out == std::vector<int>({0, 3, 1, 2, 4}));
+    // Empty selection changes nothing.
+    out = moveSelectedTracksOrder({0, 1, 2}, {}, 1);
+    QVERIFY(out == std::vector<int>({0, 1, 2}));
+    // Selecting everything changes nothing.
+    out = moveSelectedTracksOrder({0, 1, 2}, {0, 1, 2}, 1);
+    QVERIFY(out == std::vector<int>({0, 1, 2}));
+    // Single track dragged above its position.
+    out = moveSelectedTracksOrder({0, 1, 2, 3}, {2}, 0);
+    QVERIFY(out == std::vector<int>({2, 0, 1, 3}));
+}
+
+
+void MainWindowTest::trackRowSelectionClicks() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+    project.addTrack("D");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    QCOMPARE(window.m_trackRows.size(), size_t(4));
+
+    // A plain click selects just that row and highlights it.
+    emit window.m_trackRows[1].row->rowPressed(1, Qt::NoModifier);
+    QCOMPARE(window.selectedTrackCount(), 1);
+    QVERIFY(window.isTrackSelected(1));
+    QVERIFY(window.m_trackRows[1].panel->isSelected());
+    QVERIFY(window.m_trackRows[1].view->isSelected());
+    QVERIFY(!window.m_trackRows[0].panel->isSelected());
+
+    // Ctrl+click adds to the selection, Ctrl+click again removes.
+    emit window.m_trackRows[0].row->rowPressed(0, Qt::ControlModifier);
+    QVERIFY(window.isTrackSelected(0) && window.isTrackSelected(1));
+    emit window.m_trackRows[0].row->rowPressed(0, Qt::ControlModifier);
+    QCOMPARE(window.selectedTrackCount(), 1);
+    QVERIFY(!window.isTrackSelected(0));
+
+    // Shift+click selects the range from the click anchor (the last Ctrl+click
+    // set the anchor to row 0).
+    emit window.m_trackRows[2].row->rowPressed(2, Qt::ShiftModifier);
+    QCOMPARE(window.selectedTrackCount(), 3);
+    QVERIFY(window.isTrackSelected(0) && window.isTrackSelected(1)
+            && window.isTrackSelected(2));
+
+    // A plain click on a NON-selected row collapses the selection to it.
+    emit window.m_trackRows[3].row->rowPressed(3, Qt::NoModifier);
+    QCOMPARE(window.selectedTrackCount(), 1);
+    QVERIFY(window.isTrackSelected(3));
+
+    // A plain press on a row that is already part of a group selection keeps
+    // the selection while the button is down (so drags operate on the group),
+    // but the click — release without drag — collapses to that row.
+    emit window.m_trackRows[0].row->rowPressed(0, Qt::ControlModifier);
+    QCOMPARE(window.selectedTrackCount(), 2);
+    emit window.m_trackRows[0].row->rowPressed(0, Qt::NoModifier);
+    QCOMPARE(window.selectedTrackCount(), 2);
+    QVERIFY(window.isTrackSelected(0) && window.isTrackSelected(3));
+    emit window.m_trackRows[0].row->rowClicked(0);
+    QCOMPARE(window.selectedTrackCount(), 1);
+    QVERIFY(window.isTrackSelected(0));
+
+    // Starting a drag cancels the pending collapse: releasing after a drag
+    // leaves the group selection intact.
+    emit window.m_trackRows[3].row->rowPressed(3, Qt::ControlModifier);
+    QCOMPARE(window.selectedTrackCount(), 2);
+    emit window.m_trackRows[3].row->rowPressed(3, Qt::NoModifier);
+    QCOMPARE(window.selectedTrackCount(), 2);
+    emit window.m_trackRows[3].row->reorderDragStarted(3);
+    emit window.m_trackRows[3].row->rowClicked(3);
+    QCOMPARE(window.selectedTrackCount(), 2);
+    QVERIFY(window.isTrackSelected(0) && window.isTrackSelected(3));
+}
+
+
+void MainWindowTest::trackSelectionColorBatch() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.setSelectedTracks({0, 2});
+
+    // A color picked on one selected track applies to the whole selection.
+    emit window.m_trackRows[0].colorBar->colorPicked(QColor(255, 0, 0));
+    QVERIFY(window.m_project.tracks()[0].colorSet());
+    QCOMPARE(window.m_project.tracks()[0].color(), QColor(255, 0, 0));
+    QVERIFY(window.m_project.tracks()[2].colorSet());
+    QCOMPARE(window.m_project.tracks()[2].color(), QColor(255, 0, 0));
+    QVERIFY(!window.m_project.tracks()[1].colorSet());
+
+    window.performUndo();
+    QVERIFY(!window.m_project.tracks()[0].colorSet());
+    QVERIFY(!window.m_project.tracks()[2].colorSet());
+
+    // The "use output bus color" reset clears the whole selection.
+    window.setSelectedTracks({0, 2});
+    emit window.m_trackRows[2].colorBar->colorPicked(QColor(0, 255, 0));
+    QVERIFY(window.m_project.tracks()[0].colorSet());
+    emit window.m_trackRows[0].colorBar->resetToAutomatic();
+    QVERIFY(!window.m_project.tracks()[0].colorSet());
+    QVERIFY(!window.m_project.tracks()[2].colorSet());
+
+    // Picking on a track outside the selection applies to that track only.
+    window.setSelectedTracks({0, 2});
+    emit window.m_trackRows[1].colorBar->colorPicked(QColor(0, 0, 255));
+    QVERIFY(window.m_project.tracks()[1].colorSet());
+    QCOMPARE(window.m_project.tracks()[1].color(), QColor(0, 0, 255));
+    QVERIFY(!window.m_project.tracks()[0].colorSet());
+    QVERIFY(!window.m_project.tracks()[2].colorSet());
+}
+
+
+void MainWindowTest::trackSelectionResize() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.applyTrackHeight(0, 160);
+    window.applyTrackHeight(1, 200);
+    window.applyTrackHeight(2, 240);
+
+    window.show();
+    window.resize(1000, 900);
+    QCoreApplication::processEvents();
+
+    TrackRowWidget* row0 = window.m_trackRows[0].row;
+    TrackRowWidget* row2 = window.m_trackRows[2].row;
+    QVERIFY(row0 && row2);
+
+    // Ctrl+click rows 0 and 2 (panel background press path).
+    QMouseEvent pressCtrl0(QEvent::MouseButtonPress, QPointF(10, 10),
+                           row0->mapToGlobal(QPoint(10, 10)),
+                           Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+    QApplication::sendEvent(row0, &pressCtrl0);
+    QMouseEvent pressCtrl2(QEvent::MouseButtonPress, QPointF(10, 10),
+                           row2->mapToGlobal(QPoint(10, 10)),
+                           Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+    QApplication::sendEvent(row2, &pressCtrl2);
+    QCOMPARE(window.selectedTrackCount(), 2);
+
+    // Shift+press on row 0's resize handle: only the selection resizes.
+    // The handle occupies the bottom 6 px of the row.
+    const int pressY = row0->height() - 2;
+    QMouseEvent pressShift(QEvent::MouseButtonPress, QPointF(10, pressY),
+                           row0->mapToGlobal(QPoint(10, pressY)),
+                           Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+    QApplication::sendEvent(row0, &pressShift);
+
+    // Drag the cursor so the grabbed bottom edge lands at container y=240
+    // (press height 160 → scale 1.5). The grab offset (2 px above the edge)
+    // is preserved during the drag.
+    const int geoBottom = row0->geometry().y() + row0->geometry().height();
+    const QPoint dragGlobal = window.m_trackContainer->mapToGlobal(
+        QPoint(10, 240 - (geoBottom - pressY)));
+    emit row0->resizeDragged(0, 240, dragGlobal, true);
+
+    QCOMPARE(window.m_project.tracks()[0].height(), 240);
+    QCOMPARE(window.m_project.tracks()[1].height(), 200);
+    QCOMPARE(window.m_project.tracks()[2].height(), 360);
+    QCOMPARE(window.m_trackRows[0].row->rowHeight(), 240);
+    QCOMPARE(window.m_trackRows[2].row->rowHeight(), 360);
+
+    emit row0->resizeFinished(0, 160, 240, true);
+    window.performUndo();
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_project.tracks()[0].height(), 160);
+    QCOMPARE(window.m_project.tracks()[1].height(), 200);
+    QCOMPARE(window.m_project.tracks()[2].height(), 240);
+}
+
+
+void MainWindowTest::trackSelectionResizeWithGaps() {
+    // Selection {1,2} with a non-selected row above: the scale factor must
+    // account for the fixed rows so the grabbed edge tracks the cursor and
+    // no ×2 jump happens on the first move event.
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.applyTrackHeight(0, 160);
+    window.applyTrackHeight(1, 200);
+    window.applyTrackHeight(2, 240);
+    window.setSelectedTracks({1, 2});
+
+    window.show();
+    window.resize(1000, 1000);
+    QCoreApplication::processEvents();
+
+    TrackRowWidget* row2 = window.m_trackRows[2].row;
+    QVERIFY(row2);
+
+    // Press 2 px above the bottom edge of row 2 (height 240) and drag so the
+    // grabbed edge lands at container y=710: fixed row 0 (160) + scale 1.25 of
+    // the selected rows (440 → 550) = 710.
+    const int pressY = row2->height() - 2;
+    const QPoint pressGlobal = row2->mapToGlobal(QPoint(10, pressY));
+    emit row2->resizeStarted(2, 240, pressGlobal, true);
+
+    const int geoBottom = row2->geometry().y() + row2->geometry().height();
+    const QPoint dragGlobal = window.m_trackContainer->mapToGlobal(
+        QPoint(10, 710 - (geoBottom - (window.m_trackContainer->mapFromGlobal(pressGlobal).y()))));
+    emit row2->resizeDragged(2, 240, dragGlobal, true);
+
+    QCOMPARE(window.m_project.tracks()[0].height(), 160);  // not selected
+    QCOMPARE(window.m_project.tracks()[1].height(), 250);
+    QCOMPARE(window.m_project.tracks()[2].height(), 300);
+    QCOMPARE(window.m_trackRows[1].row->rowHeight(), 250);
+    QCOMPARE(window.m_trackRows[2].row->rowHeight(), 300);
+
+    emit row2->resizeFinished(2, 240, 300, true);
+    window.performUndo();
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_project.tracks()[0].height(), 160);
+    QCOMPARE(window.m_project.tracks()[1].height(), 200);
+    QCOMPARE(window.m_project.tracks()[2].height(), 240);
+}
+
+
+void MainWindowTest::trackSelectionReorderGroup() {
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.setSelectedTracks({0, 2});
+
+    window.show();
+    window.resize(1000, 900);
+    QCoreApplication::processEvents();
+
+    TrackRowWidget* row0 = window.m_trackRows[0].row;
+    QVERIFY(row0);
+
+    // Drop the group below row 1: A and C travel together after B, keeping
+    // their relative order.
+    const int dropY = window.m_trackRows[1].row->geometry().center().y() + 5;
+    const QPoint dropGlobal = window.m_trackContainer->mapToGlobal(QPoint(10, dropY));
+    emit row0->reorderDragStarted(0);
+    emit row0->reorderDragFinished(0, dropGlobal);
+
+    QCOMPARE(window.m_project.tracks()[0].name(), QString("B"));
+    QCOMPARE(window.m_project.tracks()[1].name(), QString("A"));
+    QCOMPARE(window.m_project.tracks()[2].name(), QString("C"));
+
+    // The selection follows the moved tracks: A,C are now at indices 1,2.
+    QVERIFY(window.isTrackSelected(1));
+    QVERIFY(window.isTrackSelected(2));
+    QVERIFY(!window.isTrackSelected(0));
+    QVERIFY(window.m_trackRows[1].panel->isSelected());
+    QVERIFY(window.m_trackRows[2].panel->isSelected());
+
+    window.performUndo();
+    QCOMPARE(window.m_project.tracks()[0].name(), QString("A"));
+    QCOMPARE(window.m_project.tracks()[1].name(), QString("B"));
+    QCOMPARE(window.m_project.tracks()[2].name(), QString("C"));
 }
 
 
