@@ -688,9 +688,13 @@ void MainWindow::applyAllTrackHeights(int index, QPoint globalPos) {
 }
 
 void MainWindow::resolveTrackResizeMode(int index, bool all) {
+    // Shift always resizes every track, selection or not. Without Shift a
+    // multi-selection makes the drag operate on the selected rows only.
+    if (all) {
+        m_resizeMode = TrackResizeMode::All;
+        return;
+    }
     m_resizeMode = TrackResizeMode::Single;
-    if (!all) return;
-    m_resizeMode = TrackResizeMode::All;
     if (selectedTrackCount() > 1 && isTrackSelected(index))
         m_resizeMode = TrackResizeMode::Selected;
 }

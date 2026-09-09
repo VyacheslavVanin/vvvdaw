@@ -85,6 +85,7 @@ private slots:
     void trackSelectionColorBatch();
     void trackSelectionResize();
     void trackSelectionResizeWithGaps();
+    void trackSelectionResizeShiftOverrides();
     void trackSelectionReorderGroup();
     void moveSelectedTracksOrderMath();
     void panelCollapsesControlRows();
@@ -511,13 +512,14 @@ void MainWindowTest::trackSelectionResize() {
     QApplication::sendEvent(row2, &pressCtrl2);
     QCOMPARE(window.selectedTrackCount(), 2);
 
-    // Shift+press on row 0's resize handle: only the selection resizes.
-    // The handle occupies the bottom 6 px of the row.
+    // A plain press on row 0's resize handle: the active group selection
+    // makes the drag resize only the selected rows. The handle occupies the
+    // bottom 6 px of the row.
     const int pressY = row0->height() - 2;
-    QMouseEvent pressShift(QEvent::MouseButtonPress, QPointF(10, pressY),
-                           row0->mapToGlobal(QPoint(10, pressY)),
-                           Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
-    QApplication::sendEvent(row0, &pressShift);
+    QMouseEvent pressHandle(QEvent::MouseButtonPress, QPointF(10, pressY),
+                            row0->mapToGlobal(QPoint(10, pressY)),
+                            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(row0, &pressHandle);
 
     // Drag the cursor so the grabbed bottom edge lands at container y=240
     // (press height 160 → scale 1.5). The grab offset (2 px above the edge)
@@ -571,7 +573,7 @@ void MainWindowTest::trackSelectionResizeWithGaps() {
     // the selected rows (440 → 550) = 710.
     const int pressY = row2->height() - 2;
     const QPoint pressGlobal = row2->mapToGlobal(QPoint(10, pressY));
-    emit row2->resizeStarted(2, 240, pressGlobal, true);
+    emit row2->resizeStarted(2, 240, pressGlobal, false);
 
     const int geoBottom = row2->geometry().y() + row2->geometry().height();
     const QPoint dragGlobal = window.m_trackContainer->mapToGlobal(
@@ -585,6 +587,54 @@ void MainWindowTest::trackSelectionResizeWithGaps() {
     QCOMPARE(window.m_trackRows[2].row->rowHeight(), 300);
 
     emit row2->resizeFinished(2, 240, 300, true);
+    window.performUndo();
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_project.tracks()[0].height(), 160);
+    QCOMPARE(window.m_project.tracks()[1].height(), 200);
+    QCOMPARE(window.m_project.tracks()[2].height(), 240);
+}
+
+
+void MainWindowTest::trackSelectionResizeShiftOverrides() {
+    // With Shift held the drag resizes every track even when a group
+    // selection is active and the grabbed row belongs to it.
+    Project project;
+    project.addTrack("A");
+    project.addTrack("B");
+    project.addTrack("C");
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.applyTrackHeight(0, 160);
+    window.applyTrackHeight(1, 200);
+    window.applyTrackHeight(2, 240);
+    window.setSelectedTracks({0, 2});
+
+    window.show();
+    window.resize(1000, 1000);
+    QCoreApplication::processEvents();
+
+    TrackRowWidget* row0 = window.m_trackRows[0].row;
+    QVERIFY(row0);
+
+    const int pressY = row0->height() - 2;
+    QMouseEvent pressShift(QEvent::MouseButtonPress, QPointF(10, pressY),
+                           row0->mapToGlobal(QPoint(10, pressY)),
+                           Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+    QApplication::sendEvent(row0, &pressShift);
+
+    // Drag the grabbed bottom edge from 160 to 240: scale 1.5 for all tracks.
+    const int geoBottom = row0->geometry().y() + row0->geometry().height();
+    const QPoint dragGlobal = window.m_trackContainer->mapToGlobal(
+        QPoint(10, 240 - (geoBottom - pressY)));
+    emit row0->resizeDragged(0, 240, dragGlobal, true);
+
+    QCOMPARE(window.m_project.tracks()[0].height(), 240);
+    QCOMPARE(window.m_project.tracks()[1].height(), 300);
+    QCOMPARE(window.m_project.tracks()[2].height(), 360);
+
+    emit row0->resizeFinished(0, 160, 240, true);
     window.performUndo();
     QCoreApplication::processEvents();
     QCOMPARE(window.m_project.tracks()[0].height(), 160);

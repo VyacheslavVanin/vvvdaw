@@ -165,8 +165,9 @@ void TrackRowWidget::mousePressEvent(QMouseEvent* event) {
         m_resizeDragging = true;
         m_resizeStartGlobalY = event->globalPosition().toPoint().y();
         m_resizeStartHeight = height();
-        // The resize mode is captured at press: Shift held while grabbing the
-        // handle resizes every track, otherwise only this row.
+        // The resize mode is captured at press: Shift resizes every track;
+        // without Shift MainWindow decides between this row and the current
+        // multi-track selection.
         m_resizeAll = (event->modifiers() & Qt::ShiftModifier) != 0;
         emit resizeStarted(m_trackIndex, m_resizeStartHeight,
                            event->globalPosition().toPoint(), m_resizeAll);
