@@ -298,6 +298,16 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
             pushCommand(std::make_unique<SnapshotCommand>(m_project));
         });
 
+        connect(row.view, &TrackViewWidget::emptySpaceClicked, this,
+                [this, idx = trackIndex] {
+            // Clicking the empty timeline of any row clears the event
+            // selection of every other row too.
+            for (size_t i = 0; i < m_trackRows.size(); ++i) {
+                if (static_cast<int>(i) != idx && m_trackRows[i].view)
+                    m_trackRows[i].view->clearSelection();
+            }
+        });
+
         connect(row.view, &TrackViewWidget::cutEventRequested, this,
                 [this, idx = trackIndex](int64_t eventId, int64_t cutSample, bool snapToGrid) {
             if (idx < 0 || idx >= static_cast<int>(m_project.tracks().size())) return;

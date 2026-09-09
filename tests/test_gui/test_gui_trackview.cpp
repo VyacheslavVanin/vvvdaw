@@ -72,6 +72,7 @@ private slots:
     void shiftDragCreatesIndependentMidiCopy();
     void shiftDragOnAudioDoesNotDuplicate();
     void multiSelectAudioEventsCtrlAndShift();
+    void emptySpaceClickClearsSelectionOnAllTracks();
     void deleteAllSelectedEvents();
     void crossfadeContextMenuAppliesAndUndoes();
     void middleDragPansTrackView();
@@ -297,6 +298,51 @@ void TrackViewTest::multiSelectAudioEventsCtrlAndShift() {
     // Clicking empty space clears the selection.
     QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, QPoint(350, 40));
     QCOMPARE(view->selectedEventIds().size(), size_t(0));
+}
+
+
+void TrackViewTest::emptySpaceClickClearsSelectionOnAllTracks() {
+    Project project;
+    project.addTrack("A1");
+    project.addTrack("A2");
+    for (Track& track : project.tracks()) {
+        AudioEvent ev;
+        ev.setStartSample(0);
+        ev.setDurationSample(48000);
+        track.addEvent(ev);
+    }
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.show();
+    QCoreApplication::processEvents();
+
+    TrackViewWidget* view0 = window.m_trackRows[0].view;
+    TrackViewWidget* view1 = window.m_trackRows[1].view;
+    view0->resize(400, 80);
+    view1->resize(400, 80);
+    view0->setZoom(0.001); // each event spans 48 px; x > 100 is empty space
+    view1->setZoom(0.001);
+
+    // Select an event on each track.
+    view0->setSelection(0);
+    view1->setSelection(0);
+    QVERIFY(view0->hasSelection());
+    QVERIFY(view1->hasSelection());
+
+    // Clicking the empty space of another track clears the selection
+    // everywhere (previously only within the same track).
+    QTest::mouseClick(view1, Qt::LeftButton, Qt::NoModifier, QPoint(200, 40));
+    QVERIFY(!view0->hasSelection());
+    QVERIFY(!view1->hasSelection());
+
+    // Re-select, then click the empty space of the same track: still cleared.
+    view0->setSelection(0);
+    view1->setSelection(0);
+    QTest::mouseClick(view0, Qt::LeftButton, Qt::NoModifier, QPoint(200, 40));
+    QVERIFY(!view0->hasSelection());
+    QVERIFY(!view1->hasSelection());
 }
 
 

@@ -94,6 +94,9 @@ signals:
     void addMidiEventRequested(int64_t startSample);
     void cutEventRequested(int64_t eventId, int64_t cutSample, bool snapToGrid);
     void selectionChanged();
+    // A left-click on the empty timeline (outside any event); MainWindow
+    // clears the event selection of the other track rows as well.
+    void emptySpaceClicked();
     // Apply (or with `fadeSamples == 0`, remove) crossfades on the junctions
     // between the given events of this track.
     void crossfadeRequested(const std::vector<int64_t>& eventIds, int64_t fadeSamples);

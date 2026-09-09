@@ -814,6 +814,8 @@ void TrackViewWidget::mousePressEvent(QMouseEvent* event) {
             setCursor(Qt::ClosedHandCursor);
         } else {
             clearSelection();
+            // Also let the other track rows drop their selection.
+            emit emptySpaceClicked();
         }
         update();
     }
