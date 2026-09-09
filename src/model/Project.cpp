@@ -150,7 +150,6 @@ bool Project::save(const QString& filePath) {
 
 Track* Project::addTrack(const QString& name, int channels) {
     Track track(name.isEmpty() ? QString("Track %1").arg(m_tracks.size() + 1) : name, channels);
-    track.setHue(nextFreeTrackHue());
     inheritExistingTrackAppearance(track);
     m_tracks.push_back(std::move(track));
     return &m_tracks.back();
@@ -158,7 +157,6 @@ Track* Project::addTrack(const QString& name, int channels) {
 
 Track* Project::addMidiTrack(const QString& name) {
     Track track(name.isEmpty() ? QString("Track %1").arg(m_tracks.size() + 1) : name, Track::Type::Midi);
-    track.setHue(nextFreeTrackHue());
     inheritExistingTrackAppearance(track);
     m_tracks.push_back(std::move(track));
     return &m_tracks.back();
@@ -173,28 +171,6 @@ void Project::inheritExistingTrackAppearance(Track& track) const {
     const Track& donor = m_tracks.back();
     track.setPluginPanelWidth(donor.pluginPanelWidth());
     track.setHeight(donor.height());
-}
-
-int Project::nextFreeTrackHue() const {
-    QSet<int> used;
-    for (const auto& t : m_tracks)
-        if (t.hue() >= 0)
-            used.insert(t.hue());
-    // The same stepped hue family as the folder/bus tints; 47 and 360 are
-    // coprime, so the cycle covers all hues.
-    for (int k = 0; k < 360; ++k) {
-        const int hue = (k * 47) % 360;
-        if (!used.contains(hue))
-            return hue;
-    }
-    return 0;
-}
-
-void Project::ensureTrackHues() {
-    for (auto& t : m_tracks) {
-        if (t.hue() < 0)
-            t.setHue(nextFreeTrackHue());
-    }
 }
 
 bool Project::removeTrack(int index) {
@@ -363,19 +339,10 @@ QColor Project::trackColor(int trackIndex) const {
     const Track& track = m_tracks[static_cast<size_t>(trackIndex)];
     if (track.colorSet())
         return track.color();
-
-    // Follow the output bus when it (or a folder ancestor) carries an
-    // assigned color; otherwise the track's own stable hue (a property of the
-    // track, so it survives reorderings).
-    int cur = track.outputBusIndex();
-    const int busCount = static_cast<int>(m_buses.size());
-    while (cur >= 0 && cur < busCount) {
-        if (m_buses[static_cast<size_t>(cur)].colorSet())
-            return busColor(track.outputBusIndex());
-        cur = m_buses[static_cast<size_t>(cur)].outputBusIndex();
-    }
-    const int hue = track.hue() >= 0 ? track.hue() : 0;
-    return QColor::fromHsv(hue, vvvdaw::AutoTrackSaturation, vvvdaw::AutoTrackValue);
+    // Without a manual color the track follows its output bus's effective
+    // color (which itself resolves through folders / the automatic tint), so
+    // uncolored tracks look uniform.
+    return busColor(track.outputBusIndex());
 }
 
 QColor Project::busColor(int busIndex) const {
@@ -538,9 +505,6 @@ void Project::fromJson(const QJsonObject& obj) {
         track.fromJson(tVal.toObject(), projDir, m_pluginManager);
         m_tracks.push_back(std::move(track));
     }
-    // Legacy projects: give every track without a persisted hue a stable one
-    // (kept from now on, so reorderings do not reshuffle the colors).
-    ensureTrackHues();
 
     m_buses.clear();
     const QJsonArray busesArr = obj["buses"].toArray();

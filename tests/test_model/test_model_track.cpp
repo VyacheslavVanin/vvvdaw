@@ -24,8 +24,6 @@ private slots:
     void trackPluginPanelWidth();
     void trackColor();
     void trackColorInheritsFromBus();
-    void trackHueSerialization();
-    void trackHueStableAcrossReorder();
     void midiChannel();
 private:
     QTemporaryDir* m_tmpDir = nullptr;
@@ -204,12 +202,11 @@ void TestTrack::trackColorInheritsFromBus() {
     p.addTrack("A"); // track 0 -> bus 0 (Master)
     p.addTrack("B"); // track 1
 
-    // Without a manual color and without a colored output bus the track gets
-    // a bright stable per-track tint (different hue per track index).
-    const QColor autoTint0 = QColor::fromHsv(
-        (0 * 47) % 360, vvvdaw::AutoTrackSaturation, vvvdaw::AutoTrackValue);
-    QCOMPARE(p.trackColor(0), autoTint0);
-    QVERIFY(p.trackColor(1) != autoTint0);
+    // Without a manual color the track follows its output bus's effective
+    // color (master has no assigned color -> the automatic gray), so
+    // uncolored tracks look uniform.
+    QCOMPARE(p.trackColor(0), p.busColor(0));
+    QCOMPARE(p.trackColor(0), p.trackColor(1));
 
     // A colored output bus propagates its color to the tracks.
     p.busAt(0)->setColor(QColor("#ff8800"));
@@ -231,72 +228,6 @@ void TestTrack::trackColorInheritsFromBus() {
     // Out-of-range track index yields the fallback gray.
     QCOMPARE(p.trackColor(999), QColor("#2a2a2a"));
     QCOMPARE(p.trackColor(-1), QColor("#2a2a2a"));
-}
-
-
-void TestTrack::trackHueSerialization() {
-    // The stable auto-color hue is a property of the track and persists.
-    Track t("A", 2);
-    QVERIFY(t.hue() < 0); // unassigned until Project::addTrack / project load
-
-    t.setHue(123);
-    Track rt;
-    rt.fromJson(t.toJson());
-    QCOMPARE(rt.hue(), 123);
-
-    // Legacy JSON without the key stays unassigned.
-    QJsonObject legacy = t.toJson();
-    legacy.remove("hue");
-    Track lt;
-    lt.fromJson(legacy);
-    QCOMPARE(lt.hue(), -1);
-
-    // Project::addTrack hands out distinct hues in the stepped family.
-    Project p;
-    p.addTrack("A");
-    p.addTrack("B");
-    p.addTrack("C");
-    QCOMPARE(p.tracks()[0].hue(), 0);
-    QCOMPARE(p.tracks()[1].hue(), 47);
-    QCOMPARE(p.tracks()[2].hue(), 94);
-
-    // A project load assigns hues to hue-less tracks deterministically and
-    // then round-trips them.
-    QJsonObject pj = p.toJson();
-    QJsonArray tracks = pj["tracks"].toArray();
-    for (int i = 0; i < tracks.size(); ++i) {
-        QJsonObject o = tracks[i].toObject();
-        o.remove("hue");
-        tracks[i] = o;
-    }
-    pj["tracks"] = tracks;
-    Project q;
-    q.fromJson(pj);
-    QCOMPARE(q.tracks()[0].hue(), 0);
-    QCOMPARE(q.tracks()[1].hue(), 47);
-    Project r;
-    r.fromJson(q.toJson());
-    QCOMPARE(r.tracks()[0].hue(), 0);
-    QCOMPARE(r.tracks()[1].hue(), 47);
-}
-
-
-void TestTrack::trackHueStableAcrossReorder() {
-    Project p;
-    p.addTrack("A"); // hue 0
-    p.addTrack("B"); // hue 47
-    p.addTrack("C"); // hue 94
-
-    const QColor cB = p.trackColor(1);
-    QCOMPARE(p.trackColor(0), QColor::fromHsv(0, vvvdaw::AutoTrackSaturation,
-                                              vvvdaw::AutoTrackValue));
-    QVERIFY(cB != p.trackColor(0));
-
-    // Moving B to the top (what ReorderTracksCommand does to the vector) must
-    // not reshuffle the colors: the tint travels with the track.
-    std::swap(p.tracks()[0], p.tracks()[1]);
-    QCOMPARE(p.trackColor(0), cB);
-    QVERIFY(p.trackColor(1) != cB);
 }
 
 

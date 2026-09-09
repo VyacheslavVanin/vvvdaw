@@ -532,9 +532,9 @@ void TrackViewTest::audioEventBorderStaysAtTrueEdgeDuringDeepZoom() {
 
     const int rightX = static_cast<int>((4096 - scroll) * 4); // 360
     // The waveform of the visible tail is present up to the true right edge.
-    // The default (track 0) auto tint is a vivid red, so the waveform content
-    // is drawn dark.
-    QVERIFY(regionHasColor(img, 0, rightX - 1, 3, 78, QColor(26, 26, 26)));
+    // An uncolored track follows its output bus (a dark gray), so the light
+    // default waveform color is used.
+    QVERIFY(regionHasWaveform(img, 0, rightX - 1, 3, 78));
     // The border is drawn at the true right edge (top border row y=2).
     QVERIFY(regionHasWaveform(img, rightX - 1, rightX + 1, 2, 2));
     // Nothing of the event extends past its true right edge.

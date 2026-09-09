@@ -49,9 +49,9 @@ inline constexpr int AutoFolderValue = 160;
 inline constexpr int AutoStripSaturation = 64;
 inline constexpr int AutoStripValue = 92;
 
-// Automatic track color scheme: without a manual color (and without a colored
-// output bus) each track gets a bright, saturated stable hue so rows are easy
-// to tell apart — brighter than the muted bus tints.
+// Track color picker scheme: manual track colors are seeded at these bright,
+// saturated values (brighter than the muted bus tints). Tracks without a
+// manual color follow their output bus's effective color instead.
 inline constexpr int AutoTrackSaturation = 180;
 inline constexpr int AutoTrackValue = 200;
 
