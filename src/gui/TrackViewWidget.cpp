@@ -335,11 +335,9 @@ void TrackViewWidget::drawEventRow(QPainter& painter, int index, int trackHeight
     bool isSelected = eventIsSelected(index);
     if (isDragged && !m_dragSourceVisible) return;
 
-    // Event background: the track's effective color as-is (selection keeps a
-    // lighter tone); a neutral dark when unset. No hover highlight.
-    QColor bgColor = m_rowTint.isValid()
-        ? (isSelected ? m_rowTint.lighter(140) : m_rowTint)
-        : (isSelected ? QColor("#3a3a3a") : QColor("#202020"));
+    // Event background: the track's effective color as-is for every event;
+    // selection is shown by the border only.
+    QColor bgColor = m_rowTint.isValid() ? m_rowTint : QColor("#202020");
     // Content (waveform / MIDI notes) uses one color per track, derived from
     // the base event color: the selection differs via the lighter background,
     // so selected and unselected events must not disagree on content color.
