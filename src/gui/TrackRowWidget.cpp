@@ -8,9 +8,27 @@
 #include <QSplitter>
 #include <QMouseEvent>
 #include <QApplication>
+#include <cmath>
 
 namespace {
 constexpr int kReorderThresholdPx = 8;
+}
+
+std::vector<int> scaleTrackHeights(const std::vector<int>& startHeights,
+                                   int pressBottom, int targetBottom) {
+    if (pressBottom <= 0)
+        return startHeights;
+    std::vector<int> scaled;
+    scaled.reserve(startHeights.size());
+    const int floorHeight = vvvdaw::TrackResizeHandleHeight + 1;
+    for (int h : startHeights) {
+        const long long raw = std::llround(
+            static_cast<double>(h) * targetBottom / pressBottom);
+        scaled.push_back(static_cast<int>(qBound<long long>(
+            static_cast<long long>(floorHeight), raw,
+            static_cast<long long>(vvvdaw::MaxTrackHeight))));
+    }
+    return scaled;
 }
 
 TrackResizeHandle::TrackResizeHandle(QWidget* parent)
@@ -121,8 +139,11 @@ void TrackRowWidget::mousePressEvent(QMouseEvent* event) {
         m_resizeDragging = true;
         m_resizeStartGlobalY = event->globalPosition().toPoint().y();
         m_resizeStartHeight = height();
-        m_resizeAll = false;
-        emit resizeStarted(m_trackIndex, m_resizeStartHeight);
+        // The resize mode is captured at press: Shift held while grabbing the
+        // handle resizes every track, otherwise only this row.
+        m_resizeAll = (QApplication::keyboardModifiers() & Qt::ShiftModifier) != 0;
+        emit resizeStarted(m_trackIndex, m_resizeStartHeight,
+                           event->globalPosition().toPoint());
         return;
     }
     // A press that propagated up from the panel background: begin a reorder
@@ -137,8 +158,8 @@ void TrackRowWidget::mouseMoveEvent(QMouseEvent* event) {
     if (m_resizeDragging) {
         const int delta = event->globalPosition().toPoint().y() - m_resizeStartGlobalY;
         const int newH = clampHeight(m_resizeStartHeight + delta);
-        m_resizeAll = (QApplication::keyboardModifiers() & Qt::ShiftModifier) != 0;
-        emit resizeDragged(m_trackIndex, newH, m_resizeAll);
+        emit resizeDragged(m_trackIndex, newH, event->globalPosition().toPoint(),
+                           m_resizeAll);
         return;
     }
     if (m_reorderCandidate && (event->buttons() & Qt::LeftButton)) {

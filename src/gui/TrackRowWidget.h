@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QColor>
+#include <vector>
 #include "core/Constants.h"
 
 class TrackPanelWidget;
@@ -62,8 +63,8 @@ public:
     void applyHeight(int h);
 
 signals:
-    void resizeStarted(int trackIndex, int startHeight);
-    void resizeDragged(int trackIndex, int newHeight, bool allTracks);
+    void resizeStarted(int trackIndex, int startHeight, QPoint globalPressPos);
+    void resizeDragged(int trackIndex, int newHeight, QPoint globalPos, bool allTracks);
     void resizeFinished(int trackIndex, int oldHeight, int newHeight, bool allTracks);
     void reorderDragStarted(int trackIndex);
     void reorderDragMoved(int trackIndex, QPoint globalPos);
@@ -94,3 +95,12 @@ private:
     bool m_reorderDragging = false;
     QPoint m_reorderStartGlobal;
 };
+
+// Scale every start height proportionally so the bottom edge of the row whose
+// heights sum to `pressBottom` lands at `targetBottom` — the Shift-drag
+// "resize all tracks" geometry that keeps the grabbed handle under the cursor.
+// Returns `startHeights` unchanged when `pressBottom` is not positive; each
+// result is clamped to [TrackResizeHandleHeight + 1, MaxTrackHeight] (per-row
+// minimums are enforced by the callers).
+std::vector<int> scaleTrackHeights(const std::vector<int>& startHeights,
+                                   int pressBottom, int targetBottom);

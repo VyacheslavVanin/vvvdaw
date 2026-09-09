@@ -71,12 +71,14 @@ void SetTrackMidiOutputCommand::undo() { apply(m_oldRouting); }
 
 SetAllTracksHeightCommand::SetAllTracksHeightCommand(Project& project,
                                                      std::vector<int> oldHeights,
-                                                     int newHeight)
-    : m_project(project), m_oldHeights(std::move(oldHeights)), m_newHeight(newHeight) {}
+                                                     std::vector<int> newHeights)
+    : m_project(project), m_oldHeights(std::move(oldHeights))
+    , m_newHeights(std::move(newHeights)) {}
 
 void SetAllTracksHeightCommand::execute() {
-    for (auto& track : m_project.tracks())
-        track.setHeight(m_newHeight);
+    const size_t n = std::min(m_newHeights.size(), m_project.tracks().size());
+    for (size_t i = 0; i < n; ++i)
+        m_project.tracks()[i].setHeight(m_newHeights[i]);
 }
 
 void SetAllTracksHeightCommand::undo() {

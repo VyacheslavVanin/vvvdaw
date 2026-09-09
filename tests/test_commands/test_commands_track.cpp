@@ -30,6 +30,7 @@ private slots:
     void setTrackMidiOutputCommand();
     void setTrackHeightCommand();
     void setAllTracksHeightCommand();
+    void setAllTracksHeightCommandPerTrack();
     void reorderTracksCommand();
     void setTrackColorCommand();
 };
@@ -209,7 +210,8 @@ void TestTrackCommands::setAllTracksHeightCommand() {
 
     UndoStack stack;
     std::vector<int> oldHeights = { 100, 200, 300 };
-    stack.execute(std::make_unique<SetAllTracksHeightCommand>(p, oldHeights, 220));
+    stack.execute(std::make_unique<SetAllTracksHeightCommand>(
+        p, oldHeights, std::vector<int>{ 220, 220, 220 }));
     for (auto& t : p.tracks())
         QCOMPARE(t.height(), 220);
 
@@ -221,6 +223,41 @@ void TestTrackCommands::setAllTracksHeightCommand() {
     stack.redo();
     for (auto& t : p.tracks())
         QCOMPARE(t.height(), 220);
+}
+
+
+void TestTrackCommands::setAllTracksHeightCommandPerTrack() {
+    // The Shift-drag gesture scales each track's height proportionally, so
+    // the command must accept per-track new heights.
+    Project p;
+    p.addTrack("A");
+    p.addMidiTrack("B");
+    p.addTrack("C");
+
+    UndoStack stack;
+    std::vector<int> oldHeights = { 100, 200, 300 };
+    stack.execute(std::make_unique<SetAllTracksHeightCommand>(
+        p, oldHeights, std::vector<int>{ 150, 300, 450 }));
+    QCOMPARE(p.tracks()[0].height(), 150);
+    QCOMPARE(p.tracks()[1].height(), 300);
+    QCOMPARE(p.tracks()[2].height(), 450);
+
+    stack.undo();
+    QCOMPARE(p.tracks()[0].height(), 100);
+    QCOMPARE(p.tracks()[1].height(), 200);
+    QCOMPARE(p.tracks()[2].height(), 300);
+
+    stack.redo();
+    QCOMPARE(p.tracks()[0].height(), 150);
+    QCOMPARE(p.tracks()[1].height(), 300);
+    QCOMPARE(p.tracks()[2].height(), 450);
+
+    // A short new-heights vector only touches the tracks it covers.
+    stack.execute(std::make_unique<SetAllTracksHeightCommand>(
+        p, std::vector<int>{ 150, 300, 450 }, std::vector<int>{ 90 }));
+    QCOMPARE(p.tracks()[0].height(), 90);
+    QCOMPARE(p.tracks()[1].height(), 300);
+    QCOMPARE(p.tracks()[2].height(), 450);
 }
 
 

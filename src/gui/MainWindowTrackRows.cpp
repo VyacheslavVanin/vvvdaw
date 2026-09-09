@@ -53,6 +53,7 @@ using vvvdaw::TransportState;
 #include <QWidget>
 #include <QFrame>
 #include <QJsonArray>
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 
@@ -426,25 +427,23 @@ void MainWindow::buildTrackRow(int trackIndex, bool odd,
 }
 
 void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
-        connect(row, &TrackRowWidget::resizeStarted, this, [this](int, int) {
+        connect(row, &TrackRowWidget::resizeStarted, this,
+                [this, row](int, int, QPoint globalPressPos) {
             m_resizeStartHeights.clear();
             for (const auto& t : m_project.tracks())
                 m_resizeStartHeights.push_back(t.height());
+            m_resizeAllPressMouseY =
+                m_trackContainer->mapFromGlobal(globalPressPos).y();
+            const QRect geo = row->geometry();
+            m_resizeAllPressBottom = geo.y() + geo.height();
         });
 
         connect(row, &TrackRowWidget::resizeDragged, this,
-                [this](int index, int newHeight, bool all) {
-            if (all) {
-                int common = qBound(maxTrackRowMinHeight(), newHeight, vvvdaw::MaxTrackHeight);
-                for (int i = 0; i < static_cast<int>(m_trackRows.size()); ++i) {
-                    if (i < static_cast<int>(m_project.tracks().size()))
-                        m_project.tracks()[i].setHeight(common);
-                    if (m_trackRows[i].row)
-                        m_trackRows[i].row->applyHeight(common);
-                }
-            } else {
+                [this](int index, int newHeight, QPoint globalPos, bool all) {
+            if (all)
+                applyAllTrackHeights(index, globalPos);
+            else
                 applyTrackHeight(index, newHeight);
-            }
         });
 
         connect(row, &TrackRowWidget::resizeFinished, this,
@@ -453,7 +452,12 @@ void MainWindow::wireTrackRowGestures(TrackRowWidget* row) {
                 std::vector<int> oldHeights = m_resizeStartHeights;
                 if (oldHeights.empty())
                     for (const auto& t : m_project.tracks()) oldHeights.push_back(t.height());
-                pushCommand(std::make_unique<SetAllTracksHeightCommand>(m_project, oldHeights, newHeight));
+                std::vector<int> newHeights;
+                newHeights.reserve(m_project.tracks().size());
+                for (const auto& t : m_project.tracks()) newHeights.push_back(t.height());
+                if (oldHeights == newHeights) return;
+                pushCommand(std::make_unique<SetAllTracksHeightCommand>(
+                    m_project, oldHeights, newHeights));
             } else {
                 int oldH = oldHeight;
                 if (index >= 0 && index < static_cast<int>(m_resizeStartHeights.size()))
@@ -557,6 +561,30 @@ void MainWindow::applyTrackHeight(int index, int height) {
     m_project.tracks()[index].setHeight(height);
     if (index < static_cast<int>(m_trackRows.size()) && m_trackRows[index].row)
         m_trackRows[index].row->applyHeight(height);
+}
+
+void MainWindow::applyAllTrackHeights(int index, QPoint globalPos) {
+    if (index < 0 || index >= static_cast<int>(m_resizeStartHeights.size())) return;
+    if (m_resizeAllPressBottom <= 0) return;
+    long long pressBottom = 0;
+    for (int i = 0; i <= index; ++i)
+        pressBottom += m_resizeStartHeights[i];
+    // Scale so the dragged row's bottom edge (grab-offset preserved from
+    // press) lands under the cursor. Rows keep their press-time proportions.
+    const int mouseY = m_trackContainer->mapFromGlobal(globalPos).y();
+    const int targetBottom = mouseY + (m_resizeAllPressBottom - m_resizeAllPressMouseY);
+    const std::vector<int> scaled = scaleTrackHeights(
+        m_resizeStartHeights, static_cast<int>(pressBottom), targetBottom);
+    const int n = static_cast<int>(std::min({scaled.size(), m_trackRows.size(),
+                                             m_project.tracks().size()}));
+    for (int i = 0; i < n; ++i) {
+        int h = scaled[i];
+        if (m_trackRows[i].row)
+            h = qMax(h, m_trackRows[i].row->minimumRowHeight());
+        m_project.tracks()[i].setHeight(h);
+        if (m_trackRows[i].row)
+            m_trackRows[i].row->applyHeight(h);
+    }
 }
 
 

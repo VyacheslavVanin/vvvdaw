@@ -96,18 +96,20 @@ private:
     bool m_newSet;
 };
 
-// Apply one height to every track (the Shift-drag "resize all" gesture).
-// Undo restores each track's previous height.
+// Apply new heights to every track (the Shift-drag "resize all" gesture,
+// which scales the previous heights proportionally). Undo restores each
+// track's previous height.
 class SetAllTracksHeightCommand : public UndoCommand {
 public:
-    SetAllTracksHeightCommand(Project& project, std::vector<int> oldHeights, int newHeight);
+    SetAllTracksHeightCommand(Project& project, std::vector<int> oldHeights,
+                              std::vector<int> newHeights);
     void execute() override;
     void undo() override;
     int id() const override { return 130; }
 private:
     Project& m_project;
     std::vector<int> m_oldHeights;
-    int m_newHeight;
+    std::vector<int> m_newHeights;
 };
 
 // Move the tracks vector to a new ordering. `newOrder` is a permutation of

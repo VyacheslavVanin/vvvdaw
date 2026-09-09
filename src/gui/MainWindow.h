@@ -141,6 +141,7 @@ private:
     void hideTrackInsertionLine();
     int maxTrackRowMinHeight() const;
     void applyTrackHeight(int index, int height);
+    void applyAllTrackHeights(int index, QPoint globalPos);
 
     bool eventFilter(QObject* obj, QEvent* event) override;
 
@@ -181,6 +182,11 @@ private:
     // Track row resize / reorder state.
     QFrame* m_trackInsertionLine = nullptr;
     std::vector<int> m_resizeStartHeights;
+    // Shift-drag "resize all" anchor: container-space mouse Y and the dragged
+    // row's bottom edge at press. The offset between them is preserved during
+    // the drag so the grabbed handle stays under the cursor.
+    int m_resizeAllPressMouseY = 0;
+    int m_resizeAllPressBottom = 0;
     int m_trackReorderSource = -1;
 
     std::vector<PluginWindow*> m_pluginWindows;

@@ -79,6 +79,7 @@ private slots:
     void trackRowsApplyStoredHeight();
     void resizeTrackUpdatesHeightAndRow();
     void resizeAllTracksViaRowSignals();
+    void scaleTrackHeightsMath();
     void panelCollapsesControlRows();
     void minimumRowHeightFitsNameRow();
     void trackPluginPanelWidthAppliesToRow();
@@ -279,23 +280,68 @@ void MainWindowTest::resizeAllTracksViaRowSignals() {
     MainWindow window(project, engine, settings);
     QCOMPARE(window.m_trackRows.size(), size_t(3));
 
+    // Non-uniform start heights: Shift-drag scales them proportionally.
+    window.applyTrackHeight(0, 160);
+    window.applyTrackHeight(1, 200);
+    window.applyTrackHeight(2, 240);
+
+    window.show();
+    window.resize(1000, 900);
+    QCoreApplication::processEvents();
+
     TrackRowWidget* row = window.m_trackRows[0].row;
     QVERIFY(row);
 
-    // Shift-drag resize: every track takes the same height.
-    emit row->resizeStarted(0, vvvdaw::DefaultTrackHeight);
-    emit row->resizeDragged(0, 240, true);
-    emit row->resizeFinished(0, vvvdaw::DefaultTrackHeight, 240, true);
+    // Press on the bottom edge of row 0 (container y=160) and drag it to
+    // y=240: the grabbed handle follows the cursor and the scale factor is
+    // 240/160 = 1.5 → heights (240, 300, 360).
+    const QPoint pressGlobal = window.m_trackContainer->mapToGlobal(QPoint(10, 160));
+    emit row->resizeStarted(0, 160, pressGlobal);
+    const QPoint dragGlobal = window.m_trackContainer->mapToGlobal(QPoint(10, 240));
+    emit row->resizeDragged(0, 240, dragGlobal, true);
 
-    for (const auto& t : window.m_project.tracks())
-        QCOMPARE(t.height(), 240);
-    for (auto& r : window.m_trackRows)
-        QCOMPARE(r.row->rowHeight(), 240);
+    QCOMPARE(window.m_project.tracks()[0].height(), 240);
+    QCOMPARE(window.m_project.tracks()[1].height(), 300);
+    QCOMPARE(window.m_project.tracks()[2].height(), 360);
+    QCOMPARE(window.m_trackRows[0].row->rowHeight(), 240);
+    QCOMPARE(window.m_trackRows[1].row->rowHeight(), 300);
+    QCOMPARE(window.m_trackRows[2].row->rowHeight(), 360);
 
+    emit row->resizeFinished(0, 160, 240, true);
     window.performUndo();
     QCoreApplication::processEvents();
-    for (const auto& t : window.m_project.tracks())
-        QCOMPARE(t.height(), vvvdaw::DefaultTrackHeight);
+    QCOMPARE(window.m_project.tracks()[0].height(), 160);
+    QCOMPARE(window.m_project.tracks()[1].height(), 200);
+    QCOMPARE(window.m_project.tracks()[2].height(), 240);
+}
+
+
+void MainWindowTest::scaleTrackHeightsMath() {
+    // Scale 1.5 keeps the proportions.
+    {
+        std::vector<int> out = scaleTrackHeights({160, 200, 240}, 600, 900);
+        QCOMPARE(out.size(), size_t(3));
+        QCOMPARE(out[0], 240);
+        QCOMPARE(out[1], 300);
+        QCOMPARE(out[2], 360);
+    }
+    // Rounding to nearest (no clamp involved).
+    {
+        std::vector<int> out = scaleTrackHeights({100, 51}, 151, 300);
+        QCOMPARE(out.size(), size_t(2));
+        QCOMPARE(out[0], 199);
+        QCOMPARE(out[1], 101);
+    }
+    // Upper clamp at MaxTrackHeight.
+    QCOMPARE(scaleTrackHeights({100}, 100, 100000)[0], vvvdaw::MaxTrackHeight);
+    // Lower clamp at the handle floor when the target is above the top edge.
+    QCOMPARE(scaleTrackHeights({100}, 100, -50)[0], vvvdaw::TrackResizeHandleHeight + 1);
+    // Non-positive pressBottom guard returns the start heights unchanged.
+    std::vector<int> start = {100, 200};
+    std::vector<int> out = scaleTrackHeights(start, 0, 300);
+    QCOMPARE(out.size(), size_t(2));
+    QCOMPARE(out[0], 100);
+    QCOMPARE(out[1], 200);
 }
 
 
