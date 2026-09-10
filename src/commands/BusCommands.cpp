@@ -2,6 +2,7 @@
 #include "model/Project.h"
 #include "model/AudioBus.h"
 #include <QJsonObject>
+#include <algorithm>
 #include <utility>
 
 // --- AddBusCommand ---
@@ -183,4 +184,67 @@ void CreateBusFolderCommand::undo() {
             bus->setOutputBusIndex(parent);
     m_project.removeBus(m_folderIndex);
     m_folderIndex = -1;
+}
+
+// --- SetSidechainSourceCommand ---
+
+SetSidechainSourceCommand::SetSidechainSourceCommand(
+    Project& project, int targetBus, QString pluginId,
+    int newSourceBus, float newLevel, bool newPreFader)
+    : m_project(project), m_targetBus(targetBus), m_pluginId(std::move(pluginId)),
+      m_newSourceBus(newSourceBus), m_newLevel(newLevel), m_newPreFader(newPreFader) {
+    SidechainSendLocation loc =
+        findSidechainSend(m_project.buses(), m_targetBus, m_pluginId);
+    if (loc.sourceBus >= 0) {
+        m_oldSourceBus = loc.sourceBus;
+        m_oldSendIndex = loc.sendIndex;
+        if (const AudioBus* bus = m_project.busAt(loc.sourceBus)) {
+            if (loc.sendIndex >= 0 &&
+                loc.sendIndex < static_cast<int>(bus->sends().size()))
+                m_oldSend = bus->sends()[static_cast<size_t>(loc.sendIndex)];
+        }
+    }
+}
+
+void SetSidechainSourceCommand::removeCurrent() {
+    for (auto& bus : m_project.buses()) {
+        auto& sends = bus.sends();
+        sends.erase(std::remove_if(sends.begin(), sends.end(),
+                                   [this](const AudioBus::Send& send) {
+                                       return send.isSidechain() &&
+                                              send.busIndex == m_targetBus &&
+                                              send.pluginId == m_pluginId;
+                                   }),
+                    sends.end());
+    }
+}
+
+void SetSidechainSourceCommand::execute() {
+    removeCurrent();
+    if (m_newSourceBus < 0)
+        return;
+    AudioBus* source = m_project.busAt(m_newSourceBus);
+    if (!source)
+        return;
+    AudioBus::Send send;
+    send.kind = AudioBus::Send::Kind::Sidechain;
+    send.busIndex = m_targetBus;
+    send.pluginId = m_pluginId;
+    send.level = m_newLevel;
+    send.preFader = m_newPreFader;
+    source->sends().push_back(send);
+}
+
+void SetSidechainSourceCommand::undo() {
+    removeCurrent();
+    if (m_oldSourceBus < 0)
+        return;
+    AudioBus* source = m_project.busAt(m_oldSourceBus);
+    if (!source)
+        return;
+    auto& sends = source->sends();
+    int pos = std::min(m_oldSendIndex, static_cast<int>(sends.size()));
+    if (pos < 0)
+        pos = static_cast<int>(sends.size());
+    sends.insert(sends.begin() + pos, m_oldSend);
 }

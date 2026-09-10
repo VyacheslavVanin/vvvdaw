@@ -49,6 +49,7 @@
 #include "gui/MeasureRuler.h"
 #include "gui/BusPanelWidget.h"
 #include "gui/BusSendsWidget.h"
+#include "gui/SidechainDialog.h"
 #include "gui/BusLevelMeter.h"
 #include "gui/BusColorBar.h"
 #include "gui/BusColorPaletteDialog.h"
@@ -88,6 +89,9 @@ private slots:
     void busColorPaletteDefaultsAndAppliesCurrentColor();
     void busPanelSendAddAndRemove();
     void busPanelSendContextMenuRemovesSend();
+    void sidechainDialogListsBusesAndDisablesCycles();
+    void busSidechainSendRendersAndRemoves();
+    void busPluginContextMenuHasSidechain();
     void busVolumeSliderFollowsMeterDbScale();
     void busLevelMeterIsNarrow();
     void panSliderHighlightsDeviationFromCenter();
@@ -1125,6 +1129,147 @@ void BusPanelTest::sliderSizesAreIncreasedForUsability() {
     QCOMPARE(instSliders.size(), 2); // pan + volume
     for (QSlider* s : instSliders)
         QVERIFY2(s->height() >= kMinSliderExtent, "instrument slider too small");
+}
+
+
+void BusPanelTest::sidechainDialogListsBusesAndDisablesCycles() {
+    Project project;
+    AudioBus b1;
+    b1.setName("B1");
+    project.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("B2");
+    project.addBus(std::move(b2)); // index 3
+    // B2 routes into B1, so a sidechain source B1 -> owner B2 would cycle.
+    project.buses()[3].setOutputBusIndex(2);
+
+    StubSidechainPlugin plugin;
+    SidechainDialog dialog(project, 3, &plugin, nullptr);
+    auto* combo = dialog.findChild<QComboBox*>("sidechainBusCombo");
+    QVERIFY(combo);
+
+    // "None" is the first (clearing) entry; the owner bus is excluded.
+    QCOMPARE(combo->itemData(0).toInt(), -1);
+    QCOMPARE(combo->findData(3), -1);
+
+    // B1 is listed but disabled because selecting it would create a cycle.
+    int b1Idx = combo->findData(2);
+    QVERIFY(b1Idx >= 0);
+    QVERIFY(!(combo->model()->flags(combo->model()->index(b1Idx, 0)) & Qt::ItemIsEnabled));
+    QCOMPARE(dialog.sourceBus(), -1); // defaults to None
+}
+
+
+void BusPanelTest::busSidechainSendRendersAndRemoves() {
+    Project project;
+    AudioBus src;
+    src.setName("Source");
+    project.addBus(std::move(src)); // index 2
+    AudioBus tgt;
+    tgt.setName("Target");
+    project.addBus(std::move(tgt)); // index 3
+    auto plugin = std::make_unique<StubSidechainPlugin>();
+    QString pluginId = plugin->pluginId();
+    project.buses()[3].pluginChain().addPlugin(std::move(plugin));
+
+    AudioBus::Send sc;
+    sc.kind = AudioBus::Send::Kind::Sidechain;
+    sc.busIndex = 3;
+    sc.pluginId = pluginId;
+    sc.level = 0.5f;
+    project.buses()[2].sends().push_back(sc);
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    QCOMPARE(toggles.size(), 4);
+    toggles[2]->click(); // open the Source bus panel
+    QCoreApplication::processEvents();
+
+    auto sendLists = window.m_busPanel->findChildren<BusSendsWidget*>("busSendList");
+    QCOMPARE(sendLists.size(), 4);
+    BusSendsWidget* sendList = sendLists[2];
+    const auto combos = sendList->findChildren<QComboBox*>("sendTargetCombo");
+    QCOMPARE(combos.size(), 1);
+    QVERIFY(!combos[0]->isEnabled()); // sidechain targets are read-only here
+    QVERIFY(combos[0]->currentText().contains("SC:"));
+    QVERIFY(combos[0]->currentText().contains("Target"));
+    QVERIFY(combos[0]->currentText().contains("Stub SC"));
+    QCOMPARE(sendList->findChildren<QSlider*>("sendLevelSlider").size(), 1);
+    QCOMPARE(sendList->findChildren<QPushButton*>("sendPreToggle").size(), 1);
+
+    // The context menu on the sidechain row still removes it.
+    QWidget* row = sendList->findChild<QWidget*>("sendRow");
+    QVERIFY(row);
+    QTimer::singleShot(0, [] {
+        QMenu* menu = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (auto* m = qobject_cast<QMenu*>(w)) {
+                for (QAction* a : m->actions())
+                    if (a->text().contains("Remove Send")) { menu = m; break; }
+            }
+            if (menu) break;
+        }
+        if (!menu) return;
+        for (QAction* a : menu->actions()) {
+            if (a->text().contains("Remove Send")) { a->trigger(); break; }
+        }
+        menu->close();
+    });
+    QContextMenuEvent ev(QContextMenuEvent::Mouse, row->rect().center(),
+                         row->mapToGlobal(row->rect().center()));
+    QApplication::sendEvent(row, &ev);
+    QCoreApplication::processEvents();
+    QCOMPARE(project.buses()[2].sends().size(), size_t(0));
+}
+
+
+void BusPanelTest::busPluginContextMenuHasSidechain() {
+    Project project;
+    AudioBus fx;
+    fx.setName("FX");
+    project.addBus(std::move(fx)); // index 2
+    project.buses()[2].pluginChain().addPlugin(std::make_unique<StubSidechainPlugin>());
+
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+    window.m_busPanel->rebuild();
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto toggles = window.m_busPanel->findChildren<QPushButton*>("panelToggle");
+    QCOMPARE(toggles.size(), 3);
+    toggles[2]->click();
+    QCoreApplication::processEvents();
+
+    auto lists = window.m_busPanel->findChildren<PluginListWidget*>("busPluginList");
+    QCOMPARE(lists.size(), 3);
+    QWidget* row = nullptr;
+    for (QPushButton* b : lists[2]->findChildren<QPushButton*>())
+        if (b->text() == "ON") { row = b->parentWidget(); break; }
+    QVERIFY(row);
+
+    bool sawSidechain = false;
+    QTimer::singleShot(0, [&] {
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (auto* m = qobject_cast<QMenu*>(w)) {
+                for (QAction* a : m->actions())
+                    if (a->text().contains("Sidechain source"))
+                        sawSidechain = true;
+                m->close();
+            }
+        }
+    });    QContextMenuEvent ev(QContextMenuEvent::Mouse, row->rect().center(),
+                         row->mapToGlobal(row->rect().center()));
+    QApplication::sendEvent(row, &ev);
+    QCoreApplication::processEvents();
+    QVERIFY(sawSidechain);
 }
 
 

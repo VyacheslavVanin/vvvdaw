@@ -170,6 +170,11 @@ public:
     int audioOutputChannels() const override;
     std::vector<QString> audioOutputNames() const override;
 
+    int sidechainChannelCount() const override { return m_sidechainChannelCount; }
+    float* sidechainBuffer(int channel) override;
+    void clearSidechainBuffers() override;
+    QString sidechainInputName() const override { return "Sidechain"; }
+
     QString name() const override;
     QString vendor() const override;
     QString pluginId() const override;
@@ -232,4 +237,13 @@ private:
     std::vector<Steinberg::int32> m_outputBusChannels;
     std::vector<QString> m_outputBusNames;
     std::vector<float> m_monoScratch;
+
+    // Sidechain (kAux) input buses: which input buses are sidechain, the first
+    // sidechain channel for each (or -1), the total sidechain channel count and
+    // the scratch buffers the host accumulates the key signal into.
+    std::vector<bool> m_inputBusIsSidechain;
+    std::vector<int> m_inputBusSidechainOffset;
+    int m_sidechainChannelCount = 0;
+    std::vector<std::vector<float>> m_sidechainBuffers;
+    std::vector<float*> m_sidechainChannelPtrs;
 };

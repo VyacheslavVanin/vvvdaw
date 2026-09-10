@@ -44,7 +44,16 @@ void remapBusIndexAfterRemoval(int& index, int removed) {
 }
 
 void remapBusSendsAfterRemoval(AudioBus& bus, int removed) {
-    for (auto& send : bus.sends())
+    auto& sends = bus.sends();
+    // A sidechain send whose target bus is gone can no longer resolve its
+    // plugin, so drop it instead of remapping it onto the master bus.
+    sends.erase(std::remove_if(sends.begin(), sends.end(),
+                               [removed](const AudioBus::Send& send) {
+                                   return send.isSidechain() &&
+                                          send.busIndex == removed;
+                               }),
+                sends.end());
+    for (auto& send : sends)
         remapBusIndexAfterRemoval(send.busIndex, removed);
 }
 

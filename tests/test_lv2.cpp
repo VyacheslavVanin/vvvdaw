@@ -59,6 +59,7 @@ private slots:
     void multiChannelOutputDiscovery();
     void multiChannelProcess();
     void outputControlPortMetersFlow();
+    void sidechainPortDetection();
     void genericExternalUIDetection();
     void embeddedUIStillDetected();
 };
@@ -463,6 +464,41 @@ void TestLV2::outputControlPortMetersFlow() {
     QVERIFY2(gr > 0.1f, qPrintable(QString("expected Gain Reduction meter to move, got %1").arg(gr)));
 
     QVERIFY(inst.deactivate());
+}
+
+void TestLV2::sidechainPortDetection() {
+    // ZamComp marks its sidechain input with the standard lv2:isSideChain
+    // property (a single mono sidechain port).
+    {
+        LV2Instance inst;
+        if (!inst.load(kZamCompUri))
+            QSKIP("ZamComp LV2 plugin not installed");
+        QVERIFY(inst.activate(kSampleRate, kBlockSize));
+        QCOMPARE(inst.sidechainChannelCount(), 1);
+        QVERIFY(inst.sidechainBuffer(0) != nullptr);
+        QVERIFY(inst.sidechainBuffer(1) == nullptr);
+        inst.clearSidechainBuffers();
+    }
+    // Calf Sidechain Compressor has no lv2:isSideChain marker: its ports are
+    // only named "Sidechain"/"Sidechain 2", so detection must fall back to the
+    // name/symbol heuristic and produce a stereo sidechain.
+    {
+        LV2Instance inst;
+        if (!inst.load("http://calf.sourceforge.net/plugins/SidechainCompressor"))
+            QSKIP("Calf Sidechain Compressor LV2 plugin not installed");
+        QVERIFY(inst.activate(kSampleRate, kBlockSize));
+        QCOMPARE(inst.sidechainChannelCount(), 2);
+        QVERIFY(inst.sidechainBuffer(0) != nullptr);
+        QVERIFY(inst.sidechainBuffer(1) != nullptr);
+    }
+    // A plain stereo compressor has no sidechain inputs.
+    {
+        LV2Instance inst;
+        if (!inst.load("http://calf.sourceforge.net/plugins/Compressor"))
+            QSKIP("Calf Compressor LV2 plugin not installed");
+        QCOMPARE(inst.sidechainChannelCount(), 0);
+        QVERIFY(inst.sidechainBuffer(0) == nullptr);
+    }
 }
 
 void TestLV2::genericExternalUIDetection() {

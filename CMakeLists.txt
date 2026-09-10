@@ -134,6 +134,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/PanSlider.cpp
     src/gui/BusPanelWidget.cpp
     src/gui/BusSendsWidget.cpp
+    src/gui/SidechainDialog.cpp
     src/gui/BusLevelMeter.cpp
     src/gui/BusColorBar.cpp
     src/gui/BusColorPaletteDialog.cpp

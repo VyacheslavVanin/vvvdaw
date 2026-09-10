@@ -229,11 +229,128 @@ void AudioEngine::ensureMultiScratch(int channels) {
 }
 
 
-void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
-                                           unsigned long frameCount, int outCh) {
-    int busCount = static_cast<int>(proj->buses().size());
-    bool hasBusSolo = anyBusSolo(proj);
+namespace {
 
+// Mute state of a bus index, false for out-of-range (e.g. the output device).
+bool busMutedAt(const Project* proj, int index, int busCount) {
+    if (index < 0 || index >= busCount)
+        return false;
+    return proj->buses()[static_cast<size_t>(index)].isMuted();
+}
+
+// Feed one sidechain send into the target plugin's key-input scratch.
+void mixOneSidechainSend(Project* proj, const AudioBus& bus,
+                         const AudioBus::Send& send, int busCount,
+                         bool hasBusSolo, const std::vector<bool>& soloFeed,
+                         float* buf, unsigned long frameCount) {
+    int tIdx = send.busIndex;
+    if (tIdx < 0 || tIdx >= busCount) return;
+    if (hasBusSolo && !soloFeed[static_cast<size_t>(tIdx)]) return;
+    float gain = busSendTapGain(send.preFader, bus.isMuted(), bus.volume(), send.level);
+    if (gain == 0.0f) return;
+    PluginInstance* plugin =
+        proj->buses()[static_cast<size_t>(tIdx)].pluginChain().pluginById(send.pluginId);
+    if (!plugin || plugin->sidechainChannelCount() <= 0)
+        return;
+    mixSidechainTap(plugin->sidechainChannelCount(), buf, frameCount, gain,
+                    [plugin](int ch) { return plugin->sidechainBuffer(ch); });
+}
+
+} // namespace
+
+
+void AudioEngine::clearBusSidechainBuffers(Project* proj) {
+    for (const auto& bus : proj->buses()) {
+        const PluginChain& chain = bus.pluginChain();
+        for (int p = 0; p < chain.count(); ++p) {
+            if (PluginInstance* inst = chain.plugin(p)) {
+                if (inst->sidechainChannelCount() > 0)
+                    inst->clearSidechainBuffers();
+            }
+        }
+    }
+}
+void AudioEngine::processBusPluginChain(Project* proj, int busIndex,
+                                        unsigned long frameCount) {
+    const auto& bus = proj->buses()[static_cast<size_t>(busIndex)];
+    if (bus.pluginChain().count() == 0)
+        return;
+    float* buf = m_busBuffers[static_cast<size_t>(busIndex)].data();
+    for (unsigned long f = 0; f < frameCount; ++f) {
+        m_busDeinterleaveL[f] = buf[f * 2];
+        m_busDeinterleaveR[f] = buf[f * 2 + 1];
+    }
+    float* inBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
+    float* outBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
+    bus.pluginChain().process(inBufs, outBufs, frameCount, 2);
+    for (unsigned long f = 0; f < frameCount; ++f) {
+        buf[f * 2]     = m_busDeinterleaveL[f];
+        buf[f * 2 + 1] = m_busDeinterleaveR[f];
+    }
+}
+
+
+void AudioEngine::applyBusSends(Project* proj, int busIndex, int busCount,
+                                bool hasBusSolo, const std::vector<bool>& soloFeed,
+                                float* buf, unsigned long frameCount) {
+    const auto& bus = proj->buses()[static_cast<size_t>(busIndex)];
+    if (bus.sends().empty())
+        return;
+    mixBusSendTaps(proj, bus, busCount, hasBusSolo, soloFeed, buf, frameCount);
+    feedSidechainSends(proj, bus, busCount, hasBusSolo, soloFeed, buf, frameCount);
+}
+
+
+void AudioEngine::mixBusSendTaps(Project* proj, const AudioBus& bus, int busCount,
+                                 bool hasBusSolo, const std::vector<bool>& soloFeed,
+                                 float* buf, unsigned long frameCount) {
+    std::vector<int> sTargets;
+    std::vector<float> sLevels;
+    std::vector<bool> sPre;
+    std::vector<bool> sTargetMuted;
+    sTargets.reserve(bus.sends().size());
+    sLevels.reserve(bus.sends().size());
+    sPre.reserve(bus.sends().size());
+    sTargetMuted.reserve(bus.sends().size());
+    for (const auto& send : bus.sends()) {
+        if (send.isSidechain()) continue; // handled by feedSidechainSends
+        sTargets.push_back(send.busIndex);
+        sLevels.push_back(send.level);
+        sPre.push_back(send.preFader);
+        sTargetMuted.push_back(busMutedAt(proj, send.busIndex, busCount));
+    }
+    for (const auto& tap : computeBusSendTaps(sTargets, sLevels, sPre,
+                                              sTargetMuted, bus.volume(), bus.isMuted())) {
+        int tIdx = tap.first;
+        if (tIdx < 0 || tIdx >= busCount) continue;
+        if (hasBusSolo && !soloFeed[static_cast<size_t>(tIdx)]) continue;
+        float* dstBuf = m_busBuffers[static_cast<size_t>(tIdx)].data();
+        for (unsigned long f = 0; f < frameCount; ++f) {
+            dstBuf[f * 2]     += buf[f * 2]     * tap.second;
+            dstBuf[f * 2 + 1] += buf[f * 2 + 1] * tap.second;
+        }
+    }
+}
+
+
+void AudioEngine::feedSidechainSends(Project* proj, const AudioBus& bus, int busCount,
+                                     bool hasBusSolo, const std::vector<bool>& soloFeed,
+                                     float* buf, unsigned long frameCount) {
+    // Sidechain sends feed the key signal into the target plugin's scratch
+    // buffers (resolved by id so plugin reordering is safe).
+    for (const auto& send : bus.sends()) {
+        if (send.isSidechain())
+            mixOneSidechainSend(proj, bus, send, busCount, hasBusSolo, soloFeed,
+                                buf, frameCount);
+    }
+}
+
+
+void AudioEngine::computeBusSoloSets(Project* proj, int busCount, bool hasBusSolo,
+                                     std::vector<bool>& soloPass,
+                                     std::vector<bool>& soloFeed) {
+    if (!hasBusSolo)
+        return;
     // Under solo only the soloed buses and their main-output route to the
     // output are audible (soloPass). Everything that feeds a soloed bus stays
     // "alive" (soloFeed) so the soloed bus keeps its input chain: such buses
@@ -251,111 +368,91 @@ void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
             sendTargets[static_cast<size_t>(i)].push_back(send.busIndex);
         soloFlags[static_cast<size_t>(i)] = b.isSolo();
     }
+    soloPass = computeBusSoloPassSet(outputTo, soloFlags, busCount);
+    soloFeed = computeBusSoloFeedSet(outputTo, sendTargets, soloFlags, busCount);
+}
+
+
+void AudioEngine::routeBusMainOutput(Project* proj, const AudioBus& bus, int busIndex,
+                                     int busCount, bool hasBusSolo,
+                                     const std::vector<bool>& soloPass,
+                                     const std::vector<bool>& soloFeed,
+                                     float* output, unsigned long frameCount, int outCh) {
+    bool busMuted = bus.isMuted();
+    float bVol = bus.volume();
+    float* buf = m_busBuffers[static_cast<size_t>(busIndex)].data();
+
+    // Main output route: audible for soloed buses and their route to the
+    // output; kept as a feed only while both this bus and its parent are in
+    // the solo feed set (so the soloed bus's input chain stays intact but no
+    // raw signal reaches the output from a non-soloed path).
+    bool busPasses = !busMuted && (!hasBusSolo || soloPass[static_cast<size_t>(busIndex)]);
+    bool busInFeed = !hasBusSolo || soloFeed[static_cast<size_t>(busIndex)];
+    int parentIdx = bus.outputBusIndex();
+    bool routeToOutput = (parentIdx < 0 || parentIdx >= busCount);
+
+    bool routeActive = false;
+    if (routeToOutput) {
+        routeActive = busPasses;
+    } else {
+        bool parentInFeed = !hasBusSolo || soloFeed[static_cast<size_t>(parentIdx)];
+        routeActive = busPasses || (!busMuted && busInFeed && parentInFeed);
+    }
+
+    float peak = routeActive ? busBufferPeak(buf, frameCount) * bVol : 0.0f;
+    setBusMeter(busIndex, peak, peak >= 1.0f);
+    if (!routeActive)
+        return;
+
+    if (routeToOutput) {
+        if (outCh >= 2) {
+            for (unsigned long f = 0; f < frameCount; ++f) {
+                float lo, ro;
+                panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan(), lo, ro);
+                output[f * 2]     += lo * bVol;
+                output[f * 2 + 1] += ro * bVol;
+            }
+        } else {
+            for (unsigned long f = 0; f < frameCount; ++f)
+                output[f] += (buf[f * 2] + buf[f * 2 + 1]) * kMonoDownmix * bVol;
+        }
+        return;
+    }
+
+    float* dstBuf = m_busBuffers[static_cast<size_t>(parentIdx)].data();
+    for (unsigned long f = 0; f < frameCount; ++f) {
+        float lo, ro;
+        panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan(), lo, ro);
+        dstBuf[f * 2]     += lo * bVol;
+        dstBuf[f * 2 + 1] += ro * bVol;
+    }
+}
+
+
+void AudioEngine::processBusChainsAndRoute(Project* proj, float* output,
+                                           unsigned long frameCount, int outCh) {
+    int busCount = static_cast<int>(proj->buses().size());
+    bool hasBusSolo = anyBusSolo(proj);
     std::vector<bool> soloPass;
     std::vector<bool> soloFeed;
-    if (hasBusSolo) {
-        soloPass = computeBusSoloPassSet(outputTo, soloFlags, busCount);
-        soloFeed = computeBusSoloFeedSet(outputTo, sendTargets, soloFlags, busCount);
-    }
+    computeBusSoloSets(proj, busCount, hasBusSolo, soloPass, soloFeed);
+
+    // Sidechain scratch accumulates the key signal for this block only. Clear
+    // it before any source bus taps into it (sources are processed first in the
+    // topological order because a sidechain send adds a bus edge).
+    clearBusSidechainBuffers(proj);
 
     for (int idx : m_busProcessOrder) {
         const auto& bus = proj->buses()[static_cast<size_t>(idx)];
-
-        if (bus.pluginChain().count() > 0) {
-            float* buf = m_busBuffers[static_cast<size_t>(idx)].data();
-            for (unsigned long f = 0; f < frameCount; ++f) {
-                m_busDeinterleaveL[f] = buf[f * 2];
-                m_busDeinterleaveR[f] = buf[f * 2 + 1];
-            }
-            float* inBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
-            float* outBufs[2] = { m_busDeinterleaveL.data(), m_busDeinterleaveR.data() };
-            bus.pluginChain().process(inBufs, outBufs, frameCount, 2);
-            for (unsigned long f = 0; f < frameCount; ++f) {
-                buf[f * 2]     = m_busDeinterleaveL[f];
-                buf[f * 2 + 1] = m_busDeinterleaveR[f];
-            }
-        }
-
-        bool busMuted = bus.isMuted();
-        float bVol = bus.volume();
-        float* buf = m_busBuffers[static_cast<size_t>(idx)].data();
-
+        processBusPluginChain(proj, idx, frameCount);
         // Sends: pre-fader sends tap before the bus's fader and ignore mute;
         // post-fader sends follow the fader (a muted bus drops them). Under solo
         // a send only feeds targets that stay in the feed set, so a soloed send
         // destination keeps receiving while the sender's own output path is cut.
-        if (!bus.sends().empty()) {
-            std::vector<int> sTargets;
-            std::vector<float> sLevels;
-            std::vector<bool> sPre;
-            std::vector<bool> sTargetMuted;
-            sTargets.reserve(bus.sends().size());
-            sLevels.reserve(bus.sends().size());
-            sPre.reserve(bus.sends().size());
-            sTargetMuted.reserve(bus.sends().size());
-            for (const auto& send : bus.sends()) {
-                sTargets.push_back(send.busIndex);
-                sLevels.push_back(send.level);
-                sPre.push_back(send.preFader);
-                sTargetMuted.push_back(send.busIndex >= 0 && send.busIndex < busCount
-                                           && proj->buses()[static_cast<size_t>(send.busIndex)].isMuted());
-            }
-            for (const auto& tap : computeBusSendTaps(sTargets, sLevels, sPre,
-                                                      sTargetMuted, bVol, busMuted)) {
-                int tIdx = tap.first;
-                if (tIdx < 0 || tIdx >= busCount) continue;
-                if (hasBusSolo && !soloFeed[static_cast<size_t>(tIdx)]) continue;
-                float* dstBuf = m_busBuffers[static_cast<size_t>(tIdx)].data();
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    dstBuf[f * 2]     += buf[f * 2]     * tap.second;
-                    dstBuf[f * 2 + 1] += buf[f * 2 + 1] * tap.second;
-                }
-            }
-        }
-
-        // Main output route: audible for soloed buses and their route to the
-        // output; kept as a feed only while both this bus and its parent are in
-        // the solo feed set (so the soloed bus's input chain stays intact but no
-        // raw signal reaches the output from a non-soloed path).
-        bool busPasses = !busMuted && (!hasBusSolo || soloPass[static_cast<size_t>(idx)]);
-        bool busInFeed = !hasBusSolo || soloFeed[static_cast<size_t>(idx)];
-        int parentIdx = bus.outputBusIndex();
-        bool routeToOutput = (parentIdx < 0 || parentIdx >= busCount);
-
-        bool routeActive = false;
-        if (routeToOutput) {
-            routeActive = busPasses;
-        } else {
-            bool parentInFeed = !hasBusSolo || soloFeed[static_cast<size_t>(parentIdx)];
-            routeActive = busPasses || (!busMuted && busInFeed && parentInFeed);
-        }
-
-        float peak = routeActive ? busBufferPeak(buf, frameCount) * bVol : 0.0f;
-        setBusMeter(idx, peak, peak >= 1.0f);
-        if (!routeActive) continue;
-
-        if (routeToOutput) {
-            if (outCh >= 2) {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    float lo, ro;
-                    panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan(), lo, ro);
-                    output[f * 2]     += lo * bVol;
-                    output[f * 2 + 1] += ro * bVol;
-                }
-            } else {
-                for (unsigned long f = 0; f < frameCount; ++f) {
-                    output[f] += (buf[f * 2] + buf[f * 2 + 1]) * kMonoDownmix * bVol;
-                }
-            }
-        } else {
-            float* dstBuf = m_busBuffers[static_cast<size_t>(parentIdx)].data();
-            for (unsigned long f = 0; f < frameCount; ++f) {
-                float lo, ro;
-                panStereo(buf[f * 2], buf[f * 2 + 1], bus.pan(), lo, ro);
-                dstBuf[f * 2]     += lo * bVol;
-                dstBuf[f * 2 + 1] += ro * bVol;
-            }
-        }
+        applyBusSends(proj, idx, busCount, hasBusSolo, soloFeed,
+                      m_busBuffers[static_cast<size_t>(idx)].data(), frameCount);
+        routeBusMainOutput(proj, bus, idx, busCount, hasBusSolo, soloPass,
+                           soloFeed, output, frameCount, outCh);
     }
 }
 

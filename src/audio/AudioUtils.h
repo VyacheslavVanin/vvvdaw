@@ -337,3 +337,49 @@ inline std::vector<std::pair<int, float>> computeBusSendTaps(
     }
     return taps;
 }
+
+// Gain of one send tap from the source bus state. Pre-fader taps ignore the
+// source fader and mute (they tap before the fader); post-fader taps follow the
+// fader and are dropped (gain 0) while the source bus is muted.
+inline float busSendTapGain(bool preFader, bool sourceMuted,
+                            float volume, float level) {
+    if (preFader)
+        return level;
+    if (sourceMuted)
+        return 0.0f;
+    return volume * level;
+}
+
+// Accumulate a stereo (interleaved L/R) bus signal into a plugin's sidechain
+// channel buffers. A single-channel plugin gets the mono downmix; otherwise the
+// left/right channels map to sidechain channels 0/1 and any extra channel is
+// fed the right channel. `getBuffer(ch)` returns the target buffer of sidechain
+// channel `ch` (nullptr for an unavailable channel, skipped).
+template <typename GetBuffer>
+inline void mixSidechainTap(int pluginChannels, const float* srcInterleaved,
+                            unsigned long frames, float gain,
+                            GetBuffer getBuffer) {
+    if (pluginChannels <= 0 || !srcInterleaved)
+        return;
+    float* c0 = getBuffer(0);
+    if (!c0)
+        return;
+    if (pluginChannels == 1) {
+        for (unsigned long f = 0; f < frames; ++f)
+            c0[f] += (srcInterleaved[f * 2] + srcInterleaved[f * 2 + 1]) * 0.5f * gain;
+        return;
+    }
+    float* c1 = getBuffer(1);
+    for (unsigned long f = 0; f < frames; ++f) {
+        c0[f] += srcInterleaved[f * 2] * gain;
+        if (c1)
+            c1[f] += srcInterleaved[f * 2 + 1] * gain;
+    }
+    for (int ch = 2; ch < pluginChannels; ++ch) {
+        float* cb = getBuffer(ch);
+        if (!cb)
+            continue;
+        for (unsigned long f = 0; f < frames; ++f)
+            cb[f] += srcInterleaved[f * 2 + 1] * gain;
+    }
+}

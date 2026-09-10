@@ -70,6 +70,29 @@ AudioBus* BusSendsWidget::currentBus() const {
     return m_project->busAt(m_busIndex);
 }
 
+QString BusSendsWidget::sidechainPluginName(const AudioBus::Send& send) const {
+    if (m_project) {
+        const auto& buses = m_project->buses();
+        if (send.busIndex >= 0 && send.busIndex < static_cast<int>(buses.size())) {
+            if (auto* plugin =
+                    buses[static_cast<size_t>(send.busIndex)].pluginChain().pluginById(
+                        send.pluginId))
+                return plugin->name();
+        }
+    }
+    return send.pluginId;
+}
+
+QString BusSendsWidget::sidechainLabel(const AudioBus::Send& send) const {
+    QString busName = QString("?");
+    if (m_project) {
+        const auto& buses = m_project->buses();
+        if (send.busIndex >= 0 && send.busIndex < static_cast<int>(buses.size()))
+            busName = buses[static_cast<size_t>(send.busIndex)].name();
+    }
+    return QString("SC: %1 / %2").arg(busName, sidechainPluginName(send));
+}
+
 void BusSendsWidget::rebuild() {
     for (auto& row : m_rows) {
         m_containerLayout->removeWidget(row.widget);
@@ -96,9 +119,14 @@ void BusSendsWidget::rebuild() {
 
 void BusSendsWidget::refreshTargetCombos() {
     if (!m_project) return;
+    auto* bus = currentBus();
     const auto& buses = m_project->buses();
-    for (auto& row : m_rows) {
+    for (size_t r = 0; r < m_rows.size(); ++r) {
+        auto& row = m_rows[r];
         if (!row.combo) continue;
+        // Sidechain rows show a fixed plugin label, not an editable bus combo.
+        if (bus && r < bus->sends().size() && bus->sends()[r].isSidechain())
+            continue;
         int current = row.combo->currentData().toInt();
         row.combo->blockSignals(true);
         row.combo->clear();
@@ -139,16 +167,25 @@ void BusSendsWidget::buildRow(AudioBus::Send& send, int index) {
         "QComboBox::drop-down { border: none; width: 12px; }"
         "QComboBox QAbstractItemView { background: #333; color: #ccc; selection-background-color: #094771; }"
     );
-    for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
-        if (j == m_busIndex) continue;
-        bool cycle = wouldCreateBusCycle(buses, m_busIndex, j);
-        row.combo->addItem(cycle ? buses[j].name() + " (x)" : buses[j].name(), j);
-        int lastIdx = row.combo->count() - 1;
-        if (cycle)
-            row.combo->setItemData(lastIdx, QVariant(), Qt::UserRole - 1);
+    if (send.isSidechain()) {
+        // Sidechain targets a plugin, not a bus: show a read-only label so the
+        // level/pre/remove controls still work but the target cannot be edited
+        // here (it is changed from the plugin's context menu).
+        row.combo->addItem(sidechainLabel(send), send.busIndex);
+        row.combo->setEnabled(false);
+        row.combo->setToolTip("Sidechain of " + sidechainPluginName(send));
+    } else {
+        for (int j = 0; j < static_cast<int>(buses.size()); ++j) {
+            if (j == m_busIndex) continue;
+            bool cycle = wouldCreateBusCycle(buses, m_busIndex, j);
+            row.combo->addItem(cycle ? buses[j].name() + " (x)" : buses[j].name(), j);
+            int lastIdx = row.combo->count() - 1;
+            if (cycle)
+                row.combo->setItemData(lastIdx, QVariant(), Qt::UserRole - 1);
+        }
+        int curIdx = row.combo->findData(send.busIndex);
+        row.combo->setCurrentIndex(curIdx >= 0 ? curIdx : 0);
     }
-    int curIdx = row.combo->findData(send.busIndex);
-    row.combo->setCurrentIndex(curIdx >= 0 ? curIdx : 0);
     layout->addWidget(row.combo, 1);
 
     row.level = new QSlider(Qt::Horizontal, row.widget);
@@ -179,29 +216,31 @@ void BusSendsWidget::buildRow(AudioBus::Send& send, int index) {
     m_containerLayout->addWidget(row.widget);
     m_rows.push_back(row);
 
-    connect(row.combo, QOverload<int>::of(&QComboBox::activated), this,
-            [this, index, row](int comboIdx) {
-        int target = row.combo->itemData(comboIdx).toInt();
-        if (target >= 0 && wouldCreateBusCycle(m_project->buses(), m_busIndex, target)) {
-            const auto& sends = currentBus()->sends();
-            int oldTarget = (index >= 0 && index < static_cast<int>(sends.size()))
-                                ? sends[static_cast<size_t>(index)].busIndex : -1;
-            for (int c = 0; c < row.combo->count(); ++c) {
-                if (row.combo->itemData(c).toInt() == oldTarget) {
-                    row.combo->setCurrentIndex(c);
-                    break;
+    if (!send.isSidechain()) {
+        connect(row.combo, QOverload<int>::of(&QComboBox::activated), this,
+                [this, index, row](int comboIdx) {
+            int target = row.combo->itemData(comboIdx).toInt();
+            if (target >= 0 && wouldCreateBusCycle(m_project->buses(), m_busIndex, target)) {
+                const auto& sends = currentBus()->sends();
+                int oldTarget = (index >= 0 && index < static_cast<int>(sends.size()))
+                                    ? sends[static_cast<size_t>(index)].busIndex : -1;
+                for (int c = 0; c < row.combo->count(); ++c) {
+                    if (row.combo->itemData(c).toInt() == oldTarget) {
+                        row.combo->setCurrentIndex(c);
+                        break;
+                    }
                 }
+                return;
             }
-            return;
-        }
-        auto* bus = currentBus();
-        if (!bus || index < 0 || index >= static_cast<int>(bus->sends().size())) return;
-        int oldTarget = bus->sends()[static_cast<size_t>(index)].busIndex;
-        if (oldTarget == target) return;
-        emit sendTargetWillChange(m_busIndex, index, oldTarget, target);
-        bus->sends()[static_cast<size_t>(index)].setBus(target);
-        refreshTargetCombos();
-    });
+            auto* bus = currentBus();
+            if (!bus || index < 0 || index >= static_cast<int>(bus->sends().size())) return;
+            int oldTarget = bus->sends()[static_cast<size_t>(index)].busIndex;
+            if (oldTarget == target) return;
+            emit sendTargetWillChange(m_busIndex, index, oldTarget, target);
+            bus->sends()[static_cast<size_t>(index)].setBus(target);
+            refreshTargetCombos();
+        });
+    }
 
     connect(row.level, &QSlider::valueChanged, this, [this, index](int val) {
         auto* bus = currentBus();

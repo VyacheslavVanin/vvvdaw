@@ -345,6 +345,7 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
     row.pluginList->setBus(const_cast<AudioBus*>(&bus));
     row.pluginList->setPluginManager(m_pluginManager);
     row.pluginList->setAudioParams(m_sampleRate, m_bufferSize);
+    row.pluginList->setProject(&m_project, busIndex);
     row.pluginList->rebuild();
     fxLayout->addWidget(row.pluginList, 1);
 
@@ -421,6 +422,14 @@ void BusPanelWidget::buildBusStrip(int busIndex) {
             [this, busIndex](int from, int to) { emit busPluginWillBeMoved(busIndex, from, to); });
     connect(row.pluginList, &PluginListWidget::pluginWillBeToggled, this,
             [this, busIndex]() { emit busPluginWillBeToggled(busIndex); });
+    connect(row.pluginList, &PluginListWidget::sidechainEditRequested, this,
+            [this, busIndex](PluginInstance* plugin) {
+        emit busSidechainEditRequested(busIndex, plugin);
+    });
+    connect(row.pluginList, &PluginListWidget::sidechainClearRequested, this,
+            [this, busIndex](PluginInstance* plugin) {
+        emit busSidechainClearRequested(busIndex, plugin);
+    });
 
     connect(row.sendsList, &BusSendsWidget::sendAddRequested, this,
             [this, busIndex](int) {

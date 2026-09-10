@@ -41,6 +41,13 @@ public:
     int audioOutputChannels() const override;
     std::vector<QString> audioOutputNames() const override;
 
+    int sidechainChannelCount() const override {
+        return static_cast<int>(m_sidechainBuffers.size());
+    }
+    float* sidechainBuffer(int channel) override;
+    void clearSidechainBuffers() override;
+    QString sidechainInputName() const override { return "Sidechain"; }
+
     QString name() const override;
     QString vendor() const override;
     QString pluginId() const override;
@@ -174,6 +181,12 @@ private:
     std::vector<float*> m_audioOutPorts;
     std::vector<std::vector<float>> m_audioInBuffers;
     std::vector<std::vector<float>> m_audioOutBuffers;
+    // Parallel to m_audioInPorts: true when the audio input port is a sidechain
+    // (key) input. m_sidechainBuffers holds one scratch buffer per sidechain
+    // channel; the host accumulates the key signal there and routeAudioPorts()
+    // connects them to the matching ports.
+    std::vector<bool> m_audioInIsSidechain;
+    std::vector<std::vector<float>> m_sidechainBuffers;
     std::vector<float> m_ctrlValues;
     std::vector<float*> m_ctrlPorts;
     std::vector<uint32_t> m_ctrlPortIndices;

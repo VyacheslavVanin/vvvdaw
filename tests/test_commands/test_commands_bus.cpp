@@ -27,6 +27,7 @@ private slots:
     void setBusColorCommand();
     void busFolderCommands();
     void addChannelBusesCommand();
+    void setSidechainSourceCommand();
 };
 
 void TestBusCommands::addBusCommand() {
@@ -330,6 +331,60 @@ void TestBusCommands::addChannelBusesCommand() {
     QCOMPARE(p.buses()[busCountBefore + 1].name(), QString("Snare"));
     QCOMPARE(p.instruments()[0].channelRoutes().size(), size_t(2));
     QCOMPARE(p.instruments()[0].channelRoutes()[1].busIndex, busCountBefore + 1);
+}
+
+
+void TestBusCommands::setSidechainSourceCommand() {
+    Project p;
+    AudioBus b1;
+    b1.setName("B1");
+    p.addBus(std::move(b1)); // index 2
+    AudioBus b2;
+    b2.setName("B2");
+    p.addBus(std::move(b2)); // index 3
+
+    UndoStack stack;
+    // Assign plugin "pid" in bus 3 a sidechain from bus 2.
+    stack.execute(std::make_unique<SetSidechainSourceCommand>(
+        p, 3, QString("pid"), 2, 0.4f, true));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+    QVERIFY(p.buses()[2].sends()[0].isSidechain());
+    QCOMPARE(p.buses()[2].sends()[0].busIndex, 3);
+    QCOMPARE(p.buses()[2].sends()[0].sidechainPluginId(), QString("pid"));
+    QCOMPARE(p.buses()[2].sends()[0].level, 0.4f);
+    QCOMPARE(p.buses()[2].sends()[0].preFader, true);
+
+    stack.undo();
+    QCOMPARE(p.buses()[2].sends().size(), size_t(0));
+    stack.redo();
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+
+    // Re-assign to the master bus: the old send moves, not duplicates.
+    stack.execute(std::make_unique<SetSidechainSourceCommand>(
+        p, 3, QString("pid"), 0, 0.8f, false));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(0));
+    QCOMPARE(p.buses()[0].sends().size(), size_t(1));
+    QCOMPARE(p.buses()[0].sends()[0].level, 0.8f);
+    QCOMPARE(p.buses()[0].sends()[0].busIndex, 3);
+
+    // Undo the reassignment restores the previous source bus and values.
+    stack.undo();
+    QCOMPARE(p.buses()[0].sends().size(), size_t(0));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+    QCOMPARE(p.buses()[2].sends()[0].level, 0.4f);
+
+    // Clearing (source bus < 0) removes it; undo restores it.
+    stack.execute(std::make_unique<SetSidechainSourceCommand>(
+        p, 3, QString("pid"), -1, 1.0f, false));
+    QCOMPARE(p.buses()[2].sends().size(), size_t(0));
+    stack.undo();
+    QCOMPARE(p.buses()[2].sends().size(), size_t(1));
+
+    // Out-of-range target/source buses must not crash.
+    stack.execute(std::make_unique<SetSidechainSourceCommand>(
+        p, 99, QString("x"), 2, 1.0f, false));
+    stack.execute(std::make_unique<SetSidechainSourceCommand>(
+        p, 3, QString("pid"), 99, 1.0f, false));
 }
 
 

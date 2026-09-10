@@ -322,13 +322,21 @@ bool VST3Instance::load(const QString& path) {
             m_component->activateBus(kEvent, kOutput, i, true);
 
         m_inputBusChannels.clear();
+        m_inputBusIsSidechain.clear();
+        m_inputBusSidechainOffset.clear();
+        int sidechainOffset = 0;
         for (int32 i = 0; i < nIn; ++i) {
             BusInfo bi{};
-            if (m_component->getBusInfo(kAudio, kInput, i, bi) == kResultTrue)
-                m_inputBusChannels.push_back(bi.channelCount);
-            else
-                m_inputBusChannels.push_back(2);
+            bool ok = m_component->getBusInfo(kAudio, kInput, i, bi) == kResultTrue;
+            int channels = ok ? bi.channelCount : 2;
+            bool sidechain = ok && bi.busType == kAux;
+            m_inputBusChannels.push_back(channels);
+            m_inputBusIsSidechain.push_back(sidechain);
+            m_inputBusSidechainOffset.push_back(sidechain ? sidechainOffset : -1);
+            if (sidechain)
+                sidechainOffset += channels;
         }
+        m_sidechainChannelCount = sidechainOffset;
         m_outputBusChannels.clear();
         m_outputBusNames.clear();
         for (int32 i = 0; i < nOut; ++i) {
@@ -354,6 +362,12 @@ bool VST3Instance::activate(double sampleRate, int maxBlockSize) {
     m_sampleRate = sampleRate;
     m_maxBlockSize = maxBlockSize;
     m_monoScratch.resize(static_cast<size_t>(maxBlockSize));
+    m_sidechainBuffers.assign(static_cast<size_t>(m_sidechainChannelCount),
+                              std::vector<float>(static_cast<size_t>(maxBlockSize), 0.0f));
+    m_sidechainChannelPtrs.clear();
+    m_sidechainChannelPtrs.reserve(m_sidechainBuffers.size());
+    for (auto& buf : m_sidechainBuffers)
+        m_sidechainChannelPtrs.push_back(buf.data());
 
     ProcessSetup setup;
     setup.processMode = kRealtime;
@@ -393,8 +407,23 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     for (int32 i = 0; i < numInBuses; ++i) {
         int32 busChannels = (i < static_cast<int32>(m_inputBusChannels.size()))
                                 ? m_inputBusChannels[i] : numChannels;
-        inBuses[i].numChannels = std::min(busChannels, numChannels);
         inBuses[i].silenceFlags = 0;
+        bool isSidechain = i < static_cast<int32>(m_inputBusIsSidechain.size()) &&
+                           m_inputBusIsSidechain[i];
+        if (isSidechain) {
+            // Feed the sidechain (kAux) bus from the host scratch buffers the
+            // engine accumulated the key signal into.
+            int offset = i < static_cast<int32>(m_inputBusSidechainOffset.size())
+                             ? m_inputBusSidechainOffset[i] : -1;
+            int available = (offset >= 0)
+                                ? m_sidechainChannelCount - offset : 0;
+            inBuses[i].numChannels = std::min<int32>(busChannels, std::max(0, available));
+            inBuses[i].channelBuffers32 = (offset >= 0 && available > 0)
+                                              ? m_sidechainChannelPtrs.data() + offset
+                                              : nullptr;
+            continue;
+        }
+        inBuses[i].numChannels = std::min(busChannels, numChannels);
         if (busChannels == 1 && numChannels >= 2 && inputBuffers) {
             if (m_monoScratch.size() < static_cast<size_t>(numSamples))
                 m_monoScratch.resize(static_cast<size_t>(numSamples));
@@ -503,6 +532,17 @@ std::vector<QString> VST3Instance::audioOutputNames() const {
 int VST3Instance::latencySamples() const {
     if (m_audioProcessor) return m_audioProcessor->getLatencySamples();
     return 0;
+}
+
+float* VST3Instance::sidechainBuffer(int channel) {
+    if (channel < 0 || channel >= static_cast<int>(m_sidechainBuffers.size()))
+        return nullptr;
+    return m_sidechainBuffers[static_cast<size_t>(channel)].data();
+}
+
+void VST3Instance::clearSidechainBuffers() {
+    for (auto& buf : m_sidechainBuffers)
+        std::fill(buf.begin(), buf.end(), 0.0f);
 }
 
 std::vector<PluginPortInfo> VST3Instance::ports() const {

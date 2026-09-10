@@ -83,6 +83,10 @@ signals:
     void busSendTargetWillChange(int busIndex, int sendIndex, int oldBus, int newBus);
     void busSendLevelWillChange(int busIndex, int sendIndex, float oldLevel, float newLevel);
     void busSendPreWillChange(int busIndex, int sendIndex, bool oldPre, bool newPre);
+    // A sidechain source assignment was requested/cleared for `plugin` in the
+    // plugin chain of `busIndex` (busIndex is the plugin's owner bus).
+    void busSidechainEditRequested(int busIndex, PluginInstance* plugin);
+    void busSidechainClearRequested(int busIndex, PluginInstance* plugin);
     // A drag / "put to folder" moved the given buses: the panel reordered and/or
     // re-routed them. Old/new display order and old/new parent (outputBusIndex)
     // per affected bus let the undo command restore the state.

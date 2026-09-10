@@ -3,6 +3,7 @@
 #include "PluginAudioUtils.h"
 #include "SigGuard.h"
 #include <cstring>
+#include <algorithm>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QByteArray>
@@ -228,6 +229,10 @@ void LV2Instance::setupPorts() {
     LilvNode* inputPort = lilv_new_uri(m_world, LV2_CORE__InputPort);
     LilvNode* outputPort = lilv_new_uri(m_world, LV2_CORE__OutputPort);
     LilvNode* minSizeNode = lilv_new_uri(m_world, LV2_RESIZE_PORT__minimumSize);
+    // Standard LV2 marker for a sidechain (key) input port. Not every plugin
+    // uses it (e.g. Calf only names its ports "Sidechain"), so setupPorts also
+    // falls back to a name/symbol heuristic.
+    LilvNode* sidechainNode = lilv_new_uri(m_world, "http://lv2plug.in/ns/lv2core#isSideChain");
 
     for (uint32_t i = 0; i < nPorts; ++i) {
         const LilvPort* port = lilv_plugin_get_port_by_index(m_plugin, i);
@@ -261,6 +266,19 @@ void LV2Instance::setupPorts() {
         if (isAudio && isInput) {
             pi.type = PluginPortInfo::Type::Audio;
             pi.direction = PluginPortInfo::Direction::Input;
+            bool isSidechain = lilv_port_has_property(m_plugin, port, sidechainNode);
+            if (!isSidechain) {
+                const LilvNode* symNode = lilv_port_get_symbol(m_plugin, port);
+                QString symbol = symNode ? QString::fromUtf8(lilv_node_as_string(symNode))
+                                         : QString();
+                QString lowerName = pi.name.toLower();
+                QString lowerSym = symbol.toLower();
+                isSidechain = lowerName.contains("sidechain") ||
+                              lowerName.contains("side chain") ||
+                              lowerSym.contains("sidechain") ||
+                              lowerSym.startsWith("sc_") || lowerSym == "sc";
+            }
+            m_audioInIsSidechain.push_back(isSidechain);
             m_audioInPorts.push_back(nullptr);
             m_audioInPortIndices.push_back(i);
         } else if (isAudio && isOutput) {
@@ -364,11 +382,17 @@ void LV2Instance::setupPorts() {
     lilv_node_free(inputPort);
     lilv_node_free(outputPort);
     lilv_node_free(minSizeNode);
+    lilv_node_free(sidechainNode);
 }
 
 void LV2Instance::setupAudioBuffers() {
     m_audioInBuffers.resize(m_audioInPorts.size(), std::vector<float>(m_maxBlockSize, 0.0f));
     m_audioOutBuffers.resize(m_audioOutPorts.size(), std::vector<float>(m_maxBlockSize, 0.0f));
+
+    int sidechainCount = static_cast<int>(
+        std::count(m_audioInIsSidechain.begin(), m_audioInIsSidechain.end(), true));
+    m_sidechainBuffers.assign(static_cast<size_t>(sidechainCount),
+                              std::vector<float>(m_maxBlockSize, 0.0f));
 
     for (size_t j = 0; j < m_audioInPorts.size(); ++j) {
         m_audioInPorts[j] = m_audioInBuffers[j].data();
@@ -481,6 +505,8 @@ bool LV2Instance::activate(double sampleRate, int maxBlockSize) {
         buf.resize(maxBlockSize, 0.0f);
     for (auto& buf : m_audioOutBuffers)
         buf.resize(maxBlockSize, 0.0f);
+    for (auto& buf : m_sidechainBuffers)
+        buf.resize(maxBlockSize, 0.0f);
 
     for (size_t i = 0; i < m_audioInPorts.size(); ++i)
         lilv_instance_connect_port(m_instance, m_audioInPortIndices[i], m_audioInBuffers[i].data());
@@ -539,20 +565,39 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
 void LV2Instance::routeAudioPorts(int samples, int numChannels,
                                   float** inputBuffers, float** outputBuffers) {
+    int mainCount = 0;
+    for (bool sc : m_audioInIsSidechain)
+        if (!sc) ++mainCount;
+
+    int mainCh = 0;
+    int scCh = 0;
     for (size_t i = 0; i < m_audioInPorts.size(); ++i) {
-        int ch = static_cast<int>(i);
-        if (m_audioInPorts.size() == 1 && numChannels >= 2 && inputBuffers &&
-            !m_audioInBuffers.empty()) {
-            foldStereoToMono(m_audioInBuffers[0].data(), inputBuffers, samples);
-            m_audioInPorts[0] = m_audioInBuffers[0].data();
-            lilv_instance_connect_port(m_instance, m_audioInPortIndices[0], m_audioInPorts[0]);
+        bool isSidechain = i < m_audioInIsSidechain.size() && m_audioInIsSidechain[i];
+        if (isSidechain) {
+            // The host already accumulated the key signal into this scratch
+            // buffer (AudioEngine), so just connect it to the port.
+            float* buf = (scCh < static_cast<int>(m_sidechainBuffers.size()))
+                             ? m_sidechainBuffers[static_cast<size_t>(scCh)].data()
+                             : m_audioInBuffers[i].data();
+            m_audioInPorts[i] = buf;
+            lilv_instance_connect_port(m_instance, m_audioInPortIndices[i], buf);
+            ++scCh;
             continue;
         }
-        bool mapped = (ch < numChannels && inputBuffers);
-        m_audioInPorts[i] = mapped ? inputBuffers[ch] : m_audioInBuffers[i].data();
-        if (!mapped)
-            std::memset(m_audioInPorts[i], 0, samples * sizeof(float));
+
+        // Mono main input with a stereo host buffer: fold L/R together.
+        if (mainCount == 1 && numChannels >= 2 && inputBuffers &&
+            !m_audioInBuffers.empty()) {
+            foldStereoToMono(m_audioInBuffers[i].data(), inputBuffers, samples);
+            m_audioInPorts[i] = m_audioInBuffers[i].data();
+        } else {
+            bool mapped = (mainCh < numChannels && inputBuffers);
+            m_audioInPorts[i] = mapped ? inputBuffers[mainCh] : m_audioInBuffers[i].data();
+            if (!mapped)
+                std::memset(m_audioInPorts[i], 0, samples * sizeof(float));
+        }
         lilv_instance_connect_port(m_instance, m_audioInPortIndices[i], m_audioInPorts[i]);
+        ++mainCh;
     }
 
     for (size_t i = 0; i < m_audioOutPorts.size(); ++i) {
@@ -701,6 +746,17 @@ std::vector<QString> LV2Instance::audioOutputNames() const {
         }
     }
     return names;
+}
+
+float* LV2Instance::sidechainBuffer(int channel) {
+    if (channel < 0 || channel >= static_cast<int>(m_sidechainBuffers.size()))
+        return nullptr;
+    return m_sidechainBuffers[static_cast<size_t>(channel)].data();
+}
+
+void LV2Instance::clearSidechainBuffers() {
+    for (auto& buf : m_sidechainBuffers)
+        std::fill(buf.begin(), buf.end(), 0.0f);
 }
 
 void LV2Instance::requestPatchGet(int atomBufIndex) {

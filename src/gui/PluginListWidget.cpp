@@ -5,6 +5,7 @@
 #include "model/Track.h"
 #include "model/AudioBus.h"
 #include "model/Instrument.h"
+#include "model/Project.h"
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
@@ -121,6 +122,23 @@ void PluginListWidget::setInstrument(Instrument* instrument) {
     m_bus = nullptr;
 }
 
+void PluginListWidget::setProject(Project* project, int ownerBusIndex) {
+    m_project = project;
+    m_ownerBusIndex = ownerBusIndex;
+}
+
+bool PluginListWidget::sidechainSupported(PluginInstance* plugin) const {
+    return m_project && m_ownerBusIndex >= 0 && plugin &&
+           plugin->sidechainChannelCount() > 0;
+}
+
+bool PluginListWidget::sidechainAssigned(PluginInstance* plugin) const {
+    if (!sidechainSupported(plugin))
+        return false;
+    return findSidechainSend(m_project->buses(), m_ownerBusIndex,
+                             plugin->pluginId()).sourceBus >= 0;
+}
+
 PluginChain* PluginListWidget::targetChain() const {
     if (m_track) return const_cast<PluginChain*>(&m_track->pluginChain());
     if (m_bus) return &m_bus->pluginChain();
@@ -173,8 +191,11 @@ void PluginListWidget::buildRow(PluginInstance* plugin, int index) {
     });
     layout->addWidget(enableBtn);
 
-    auto* nameLabel = new QLabel(plugin->name(), row);
-    nameLabel->setStyleSheet("color: #ddd; font-size: 10px;");
+    bool scAssigned = sidechainAssigned(plugin);
+    auto* nameLabel = new QLabel(
+        scAssigned ? plugin->name() + "  [SC]" : plugin->name(), row);
+    nameLabel->setStyleSheet(scAssigned ? "color: #88ccdd; font-size: 10px; font-weight: bold;"
+                                        : "color: #ddd; font-size: 10px;");
     layout->addWidget(nameLabel, 1);
 
     row->setStyleSheet("background: #333; border-radius: 3px; padding: 1px;");
@@ -290,6 +311,21 @@ bool PluginListWidget::eventFilter(QObject* obj, QEvent* event) {
             connect(removeAction, &QAction::triggered, this, [this, idx] {
                 onRemoveClicked(idx);
             });
+
+            PluginInstance* plugin = chain->plugin(idx);
+            if (sidechainSupported(plugin)) {
+                menu.addSeparator();
+                QAction* scAction = menu.addAction("Sidechain source\u2026");
+                connect(scAction, &QAction::triggered, this, [this, plugin] {
+                    emit sidechainEditRequested(plugin);
+                });
+                if (sidechainAssigned(plugin)) {
+                    QAction* clearAction = menu.addAction("Clear sidechain");
+                    connect(clearAction, &QAction::triggered, this, [this, plugin] {
+                        emit sidechainClearRequested(plugin);
+                    });
+                }
+            }
         }
         menu.exec(ce->globalPos());
         return true;

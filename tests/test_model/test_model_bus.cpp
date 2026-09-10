@@ -25,6 +25,8 @@ private slots:
     void audioBusFolderCollapsedSerialization();
     void audioBusSerialization();
     void audioBusSendsSerialization();
+    void audioBusSidechainSendSerialization();
+    void sidechainSendCycleAndRemoval();
     void busColorAutoAndPropagation();
     void busColorSerialization();
     void folderDescendants();
@@ -260,6 +262,80 @@ void TestBus::audioBusSendsSerialization() {
     legacy["name"] = "Legacy";
     legacy["outputBusIndex"] = 0;
     QCOMPARE(AudioBus::fromJson(legacy).sends().size(), size_t(0));
+}
+
+
+void TestBus::audioBusSidechainSendSerialization() {
+    AudioBus bus;
+    bus.setName("Carrier");
+    std::vector<AudioBus::Send> sends;
+    AudioBus::Send sc;
+    sc.kind = AudioBus::Send::Kind::Sidechain;
+    sc.busIndex = 3;
+    sc.pluginId = "urn:test:plugin";
+    sc.level = 0.25f;
+    sc.preFader = true;
+    sends.push_back(sc);
+    bus.setSends(std::move(sends));
+
+    AudioBus restored = AudioBus::fromJson(bus.toJson());
+    QCOMPARE(restored.sends().size(), size_t(1));
+    QVERIFY(restored.sends()[0].isSidechain());
+    QCOMPARE(restored.sends()[0].busIndex, 3);
+    QCOMPARE(restored.sends()[0].sidechainPluginId(), QString("urn:test:plugin"));
+    QCOMPARE(restored.sends()[0].level, 0.25f);
+    QCOMPARE(restored.sends()[0].preFader, true);
+
+    // Legacy JSON without "kind" loads as a regular bus send.
+    QJsonObject legacy;
+    legacy["name"] = "Legacy";
+    QJsonArray arr;
+    QJsonObject s;
+    s["bus"] = 2;
+    s["level"] = 0.5;
+    s["pre"] = true;
+    arr.append(s);
+    legacy["sends"] = arr;
+    AudioBus loaded = AudioBus::fromJson(legacy);
+    QCOMPARE(loaded.sends().size(), size_t(1));
+    QVERIFY(!loaded.sends()[0].isSidechain());
+    QCOMPARE(loaded.sends()[0].busIndex, 2);
+}
+
+
+void TestBus::sidechainSendCycleAndRemoval() {
+    Project p;
+    AudioBus a;
+    a.setName("A");
+    p.addBus(std::move(a)); // index 2
+    AudioBus b;
+    b.setName("B");
+    p.addBus(std::move(b)); // index 3
+
+    // Sidechain send on A(2) feeding a plugin in B(3): edge A -> B.
+    AudioBus::Send sc;
+    sc.kind = AudioBus::Send::Kind::Sidechain;
+    sc.busIndex = 3;
+    sc.pluginId = "p";
+    sc.level = 1.0f;
+    p.busAt(2)->sends().push_back(sc);
+
+    // B routes to master, so the edge A -> B does not close a cycle.
+    QVERIFY(!wouldCreateBusCycle(p.buses(), 2, 3));
+    // Routing B into A closes the sidechain cycle (A -> B and B -> A).
+    p.busAt(3)->setOutputBusIndex(2);
+    QVERIFY(wouldCreateBusCycle(p.buses(), 2, 3));
+
+    // Helpers resolve the assignment by (target bus, plugin id).
+    SidechainSendLocation loc = findSidechainSend(p.buses(), 3, "p");
+    QCOMPARE(loc.sourceBus, 2);
+    QCOMPARE(loc.sendIndex, 0);
+    QCOMPARE(findSidechainSend(p.buses(), 3, "missing").sourceBus, -1);
+
+    // Removing the target bus drops the sidechain send (no master remap).
+    QVERIFY(p.removeBus(3));
+    QCOMPARE(p.buses().size(), size_t(3));
+    QVERIFY(p.busAt(2)->sends().empty());
 }
 
 

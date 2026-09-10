@@ -16,20 +16,52 @@ class AudioBus;
 bool wouldCreateBusCycle(const std::vector<AudioBus>& buses,
                          int fromIndex, int toIndex);
 
+// Where a sidechain send lives: the source bus carrying it and its position in
+// that bus's send list. A missing assignment yields sourceBus == -1.
+struct SidechainSendLocation {
+    int sourceBus = -1;
+    int sendIndex = -1;
+};
+
+// Finds the sidechain send feeding plugin `pluginId` in `targetBus`'s plugin
+// chain. Returns a location with sourceBus == -1 when none exists.
+SidechainSendLocation findSidechainSend(const std::vector<AudioBus>& buses,
+                                        int targetBus, const QString& pluginId);
+
+// Removes every sidechain send feeding plugin `pluginId` in `targetBus`'s
+// chain (used when that plugin is removed).
+void removeSidechainSendsForPlugin(std::vector<AudioBus>& buses,
+                                   int targetBus, const QString& pluginId);
+
 class AudioBus {
 public:
     AudioBus() = default;
 
-    // One additional split of this bus's signal into another bus. Pre-fader
-    // sends are tapped after the plugin chain but before the bus's volume
-    // fader; post-fader sends after it. Both are scaled by `level`.
+    // One additional split of this bus's signal. `Kind::Bus` routes the tap
+    // into another bus's mix buffer. `Kind::Sidechain` feeds the tap to the
+    // sidechain (key) input of a plugin living in `busIndex`'s plugin chain,
+    // identified by `pluginId`. Pre-fader sends are tapped after the plugin
+    // chain but before the bus's volume fader; post-fader sends after it. Both
+    // are scaled by `level`.
     struct Send {
+        enum class Kind { Bus, Sidechain };
+
+        Kind kind = Kind::Bus;
         int busIndex = 0;
+        // Plugin target for Kind::Sidechain (resolved by PluginChain::pluginById
+        // in the destination bus's chain).
+        QString pluginId;
         float level = 1.0f;
         bool preFader = false;
 
         int bus() const { return busIndex; }
         void setBus(int idx) { busIndex = idx; }
+        bool isSidechain() const { return kind == Kind::Sidechain; }
+        void setSidechain(bool value) {
+            kind = value ? Kind::Sidechain : Kind::Bus;
+        }
+        const QString& sidechainPluginId() const { return pluginId; }
+        void setSidechainPluginId(const QString& id) { pluginId = id; }
         float levelValue() const { return level; }
         void setLevel(float value) { level = value; }
         bool isPreFader() const { return preFader; }

@@ -56,6 +56,10 @@ private:
 
     AudioBus* currentBus() const;
     void buildRow(AudioBus::Send& send, int index);
+    // Human-readable target of a sidechain send: "SC: <bus> / <plugin>".
+    QString sidechainLabel(const AudioBus::Send& send) const;
+    // Resolved plugin name for a sidechain send (falls back to the plugin id).
+    QString sidechainPluginName(const AudioBus::Send& send) const;
     int rowAtPos(const QPoint& pos) const;
 
     Project* m_project = nullptr;

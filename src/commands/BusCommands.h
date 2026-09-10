@@ -175,6 +175,30 @@ using SetBusSendLevelCommand = SetBusSendCommand<
 using SetBusSendPreCommand = SetBusSendCommand<
     bool, 94, false, &AudioBus::Send::setPreFader>;
 
+// Assign, replace or clear the sidechain send feeding plugin `pluginId` in
+// `targetBus`'s plugin chain. The send physically lives on the chosen source
+// bus (so it shows in that bus's send list). newSourceBus < 0 clears the
+// assignment; otherwise any previous assignment is moved to the new source.
+class SetSidechainSourceCommand : public UndoCommand {
+public:
+    SetSidechainSourceCommand(Project& project, int targetBus, QString pluginId,
+                              int newSourceBus, float newLevel, bool newPreFader);
+    void execute() override;
+    void undo() override;
+    int id() const override { return 100; }
+private:
+    void removeCurrent();
+    Project& m_project;
+    int m_targetBus;
+    QString m_pluginId;
+    int m_newSourceBus;
+    float m_newLevel;
+    bool m_newPreFader;
+    int m_oldSourceBus = -1;
+    int m_oldSendIndex = -1;
+    AudioBus::Send m_oldSend;
+};
+
 // --- Bus folders / ordering ---
 
 class ReorderBusesCommand : public UndoCommand {

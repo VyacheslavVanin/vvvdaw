@@ -7,6 +7,7 @@
 #include "TrackPanelWidget.h"
 #include "TrackViewWidget.h"
 #include "BusPanelWidget.h"
+#include "SidechainDialog.h"
 #include "InstrumentPanelWidget.h"
 #include "PianoRollWindow.h"
 #include "PluginListWidget.h"
@@ -235,6 +236,27 @@ void MainWindow::setupBusPanel(QVBoxLayout* layout) {
     });
     connect(m_busPanel, &BusPanelWidget::busPluginWillBeToggled, this, [this](int) {
         pushCommand(std::make_unique<SnapshotCommand>(m_project));
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busSidechainEditRequested, this,
+            [this](int busIndex, PluginInstance* plugin) {
+        if (!plugin) return;
+        SidechainDialog dialog(m_project, busIndex, plugin, this);
+        if (dialog.exec() != QDialog::Accepted) return;
+        executeCommand(std::make_unique<SetSidechainSourceCommand>(
+            m_project, busIndex, plugin->pluginId(),
+            dialog.sourceBus(), dialog.level(), dialog.preFader()));
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
+    });
+
+    connect(m_busPanel, &BusPanelWidget::busSidechainClearRequested, this,
+            [this](int busIndex, PluginInstance* plugin) {
+        if (!plugin) return;
+        executeCommand(std::make_unique<SetSidechainSourceCommand>(
+            m_project, busIndex, plugin->pluginId(), -1, 1.0f, false));
+        if (m_busPanel->isVisible())
+            m_busPanel->rebuild();
     });
 
     m_busPanelGrip->installEventFilter(this);

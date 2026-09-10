@@ -17,6 +17,7 @@ class PluginManager;
 class Track;
 struct AudioBus;
 class Instrument;
+class Project;
 
 class PluginListWidget : public QWidget {
     Q_OBJECT
@@ -29,6 +30,10 @@ public:
     void setPluginManager(PluginManager* pm) { m_pluginManager = pm; }
     void setAudioParams(double sampleRate, int bufferSize) { m_sampleRate = sampleRate; m_bufferSize = bufferSize; }
     void setInstrumentsOnly(bool only) { m_instrumentsOnly = only; }
+    // Enables the sidechain assignment UI for bus plugin lists: the list needs
+    // the project (to resolve sidechain sends across buses) and the bus index
+    // owning this chain.
+    void setProject(Project* project, int ownerBusIndex);
     // Optional caption shown in the header row next to the "+" button (e.g.
     // "effects:"). Empty text hides the label.
     void setHeaderLabel(const QString& text);
@@ -42,6 +47,8 @@ signals:
     void pluginWillBeToggled();
     void pluginAddRequested(const QString& type, const QString& path);
     void scanRequested();
+    void sidechainEditRequested(PluginInstance* plugin);
+    void sidechainClearRequested(PluginInstance* plugin);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -57,6 +64,11 @@ private slots:
 private:
     void buildRow(PluginInstance* plugin, int index);
     PluginChain* targetChain() const;
+    // True when the plugin lists a sidechain input and this list is a bus list
+    // with a project attached (i.e. sidechain assignment is possible).
+    bool sidechainSupported(PluginInstance* plugin) const;
+    // True when a sidechain send for this plugin already exists on some bus.
+    bool sidechainAssigned(PluginInstance* plugin) const;
     int rowAtPos(const QPoint& pos) const;
     // Drag & drop insertion point (boundary index 0..count, in container
     // coordinates) and the Y position of the indicator line for that boundary.
@@ -68,6 +80,8 @@ private:
     AudioBus* m_bus = nullptr;
     Instrument* m_instrument = nullptr;
     bool m_instrumentsOnly = false;
+    Project* m_project = nullptr;
+    int m_ownerBusIndex = -1;
     PluginManager* m_pluginManager = nullptr;
     double m_sampleRate = 48000;
     int m_bufferSize = 512;

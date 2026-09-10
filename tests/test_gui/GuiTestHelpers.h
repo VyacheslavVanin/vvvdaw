@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <memory>
 #include <vector>
+#include <algorithm>
 #include <portaudio.h>
 
 #include "model/TemplateStore.h"
@@ -114,6 +115,55 @@ public:
     bool getEditorSize(int&, int&) const override { return false; }
     QJsonObject stateToJson() const override { return {}; }
     void stateFromJson(const QJsonObject&) override {}
+};
+
+// Effect plugin stub exposing a sidechain input, used to exercise the sidechain
+// assignment UI and routing without loading a real plugin.
+class StubSidechainPlugin : public PluginInstance {
+public:
+    int scChannels = 2;
+    QString id = "stub-sidechain";
+    QString displayName = "Stub SC";
+
+    int sidechainChannelCount() const override { return scChannels; }
+    float* sidechainBuffer(int channel) override {
+        if (channel < 0 || channel >= scChannels)
+            return nullptr;
+        if (static_cast<int>(m_buffers.size()) < scChannels)
+            m_buffers.resize(static_cast<size_t>(scChannels),
+                             std::vector<float>(512, 0.0f));
+        return m_buffers[static_cast<size_t>(channel)].data();
+    }
+    void clearSidechainBuffers() override {
+        for (auto& b : m_buffers)
+            std::fill(b.begin(), b.end(), 0.0f);
+    }
+
+    bool load(const QString&) override { return true; }
+    bool activate(double, int) override { return true; }
+    bool deactivate() override { return true; }
+    bool process(float**, float**, int, int, const MidiBuffer*) override { return true; }
+    QString name() const override { return displayName; }
+    QString vendor() const override { return "Test"; }
+    QString pluginId() const override { return id; }
+    QString filePath() const override { return "stub-sidechain"; }
+    bool isActive() const override { return true; }
+    void setEnabled(bool) override {}
+    bool isEnabled() const override { return true; }
+    int latencySamples() const override { return 0; }
+    std::vector<PluginPortInfo> ports() const override { return {}; }
+    void setParameter(int, float) override {}
+    float getParameter(int) const override { return 0.0f; }
+    bool hasEditor() const override { return false; }
+    void* createEditor(void*) override { return nullptr; }
+    void destroyEditor() override {}
+    void resizeEditor(int, int) override {}
+    bool getEditorSize(int&, int&) const override { return false; }
+    QJsonObject stateToJson() const override { return {}; }
+    void stateFromJson(const QJsonObject&) override {}
+
+private:
+    std::vector<std::vector<float>> m_buffers;
 };
 
 // RAII test environment: initializes PortAudio (for device enumeration inside

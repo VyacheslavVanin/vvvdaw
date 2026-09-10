@@ -38,6 +38,21 @@ public:
 
     virtual bool isInstrument() const { return false; }
 
+    // Sidechain (key) inputs. A plugin may expose one or more audio input
+    // channels dedicated to a sidechain signal (LV2 lv2:isSideChain / named
+    // "Sidechain" ports, VST3 kAux input buses). The host writes the key signal
+    // into sidechainBuffer(ch) before process() and the backend feeds it to the
+    // corresponding port/bus. A count of 0 means the plugin has no sidechain.
+    virtual int sidechainChannelCount() const { return 0; }
+    // Scratch buffer (>= maxBlockSize floats) the host accumulates the key
+    // signal into; nullptr when `channel` is out of range.
+    virtual float* sidechainBuffer(int channel) { Q_UNUSED(channel); return nullptr; }
+    // Zero every sidechain buffer; called once per audio block before any
+    // source bus taps into it.
+    virtual void clearSidechainBuffers() {}
+    // Human-readable name of the sidechain input (used by the assignment UI).
+    virtual QString sidechainInputName() const { return "Sidechain"; }
+
     // Number of discrete audio output channels the plugin exposes (e.g. 16 for
     // DrumGizmo). Used to drive multi-channel instrument routing.
     virtual int audioOutputChannels() const { return 1; }

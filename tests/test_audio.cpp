@@ -38,6 +38,9 @@ private slots:
     void computeBusSoloFeedSetReverbScenario();
     void computeBusSoloFeedSetChain();
     void computeBusSendTapsPrePostMute();
+    void busSendTapGainPrePostMute();
+    void mixSidechainTapMonoStereo();
+    void computeBusProcessOrderSidechainEdge();
     void computeBusProcessOrderChain();
     void computeBusProcessOrderRerouteAfterBusAdd();
     void computeBusProcessOrderFanOut();
@@ -367,6 +370,64 @@ void TestAudio::computeBusSendTapsPrePostMute() {
     QCOMPARE(tapsUnity.size(), size_t(2));
     QVERIFY(std::abs(tapsUnity[1].second - 0.5f) < 1e-5f);
 }
+
+void TestAudio::busSendTapGainPrePostMute() {
+    // Pre-fader taps ignore the source fader and its mute.
+    QCOMPARE(busSendTapGain(true, false, 0.5f, 0.25f), 0.25f);
+    QCOMPARE(busSendTapGain(true, true, 0.5f, 0.25f), 0.25f);
+    // Post-fader taps follow the source volume...
+    QCOMPARE(busSendTapGain(false, false, 0.5f, 0.25f), 0.125f);
+    // ...and are dropped while the source is muted.
+    QCOMPARE(busSendTapGain(false, true, 0.5f, 0.25f), 0.0f);
+}
+
+
+void TestAudio::mixSidechainTapMonoStereo() {
+    // Stereo source: L=1, R=0.5.
+    std::vector<float> src = { 1.0f, 0.5f, 1.0f, 0.5f };
+    const unsigned long frames = 2;
+
+    // Mono plugin receives the (L+R)/2 downmix scaled by gain.
+    std::vector<float> mono(2, 0.0f);
+    std::vector<float*> monoBufs = { mono.data() };
+    mixSidechainTap(1, src.data(), frames, 1.0f,
+                    [&](int ch) { return ch == 0 ? monoBufs[0] : nullptr; });
+    QCOMPARE(mono[0], 0.75f);
+    QCOMPARE(mono[1], 0.75f);
+
+    // Stereo plugin: L/R map to channels 0/1.
+    std::vector<float> l(2, 0.0f), r(2, 0.0f);
+    std::vector<float*> stereo = { l.data(), r.data() };
+    mixSidechainTap(2, src.data(), frames, 0.5f,
+                    [&](int ch) { return ch < 2 ? stereo[static_cast<size_t>(ch)] : nullptr; });
+    QCOMPARE(l[0], 0.5f);
+    QCOMPARE(r[0], 0.25f);
+
+    // The tap accumulates into an existing buffer (multiple sends sum).
+    mixSidechainTap(1, src.data(), frames, 1.0f,
+                    [&](int ch) { return ch == 0 ? monoBufs[0] : nullptr; });
+    QCOMPARE(mono[0], 1.5f);
+
+    // A zero-channel plugin is a no-op.
+    mixSidechainTap(0, src.data(), frames, 1.0f, [](int) { return (float*)nullptr; });
+}
+
+
+// A sidechain send adds a bus routing edge (source bus -> plugin owner bus),
+// so the topological order must place the source before the plugin's bus.
+void TestAudio::computeBusProcessOrderSidechainEdge() {
+    // Master(0, -> device), Source(1, -> master), Comp(2, -> master).
+    // Comp's plugin sidechain is fed from Source: the routing targets now list
+    // the sidechain edge Source(1) -> Comp(2) in addition to the main routes.
+    std::vector<std::vector<int>> targets = { { -1 }, { 0, 2 }, { 0 } };
+    auto order = computeBusProcessOrder(targets, 3);
+    QCOMPARE(order.size(), size_t(3));
+    auto itSource = std::find(order.begin(), order.end(), 1);
+    auto itComp = std::find(order.begin(), order.end(), 2);
+    QVERIFY(itSource != order.end() && itComp != order.end());
+    QVERIFY(itSource < itComp); // source processed before the compressor's bus
+}
+
 
 // Every bus must be processed before every bus it feeds, so the source signal
 // is already in the target's buffer when the target runs. Buses routed to the

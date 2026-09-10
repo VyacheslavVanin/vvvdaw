@@ -22,6 +22,7 @@
 class Project;
 class Track;
 class PluginChain;
+class AudioBus;
 class AudioEvent;
 class AudioClip;
 
@@ -207,6 +208,34 @@ private:
     // Run bus plugin chains and route each bus into its parent or the output.
     void processBusChainsAndRoute(Project* proj, float* output,
                                   unsigned long frameCount, int outCh);
+    // Zero every bus plugin's sidechain scratch before the per-block send pass.
+    void clearBusSidechainBuffers(Project* proj);
+    // Run one bus's plugin chain in place on its interleaved stereo buffer.
+    void processBusPluginChain(Project* proj, int busIndex, unsigned long frameCount);
+    // Apply one bus's outgoing bus sends (mix into other bus buffers) and
+    // sidechain sends (feed the target plugin's key-input scratch).
+    void applyBusSends(Project* proj, int busIndex, int busCount,
+                       bool hasBusSolo, const std::vector<bool>& soloFeed,
+                       float* buf, unsigned long frameCount);
+    // Mix one bus's non-sidechain sends into their destination bus buffers.
+    void mixBusSendTaps(Project* proj, const AudioBus& bus, int busCount,
+                        bool hasBusSolo, const std::vector<bool>& soloFeed,
+                        float* buf, unsigned long frameCount);
+    // Feed one bus's sidechain sends into the target plugins' key scratch.
+    void feedSidechainSends(Project* proj, const AudioBus& bus, int busCount,
+                            bool hasBusSolo, const std::vector<bool>& soloFeed,
+                            float* buf, unsigned long frameCount);
+    // Compute the solo pass/feed sets for the current bus graph.
+    void computeBusSoloSets(Project* proj, int busCount, bool hasBusSolo,
+                            std::vector<bool>& soloPass,
+                            std::vector<bool>& soloFeed);
+    // Route one bus's (post-sends, post-fader) signal to its parent bus or the
+    // output device and update its meter.
+    void routeBusMainOutput(Project* proj, const AudioBus& bus, int busIndex,
+                            int busCount, bool hasBusSolo,
+                            const std::vector<bool>& soloPass,
+                            const std::vector<bool>& soloFeed,
+                            float* output, unsigned long frameCount, int outCh);
 
     void ensureInstrumentMidiBuffers(int instCount);
     // Resize the multi-channel instrument scratch pool so at least `channels`
