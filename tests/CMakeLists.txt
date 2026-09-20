@@ -50,6 +50,12 @@ vvvdaw_add_test(test_lv2 test_lv2.cpp)
 target_link_libraries(vvvdaw_test_lv2 PRIVATE vvvdaw_model vvvdaw_core)
 set_tests_properties(test_lv2 PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# --- VST3 backend ---
+
+vvvdaw_add_test(test_vst3 test_vst3.cpp)
+target_link_libraries(vvvdaw_test_vst3 PRIVATE vvvdaw_model vvvdaw_core)
+set_tests_properties(test_vst3 PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # --- GUI (split per area) ---
 
 foreach(gui_test IN ITEMS mainwindow trackview waveform buspanel plugins pianoroll ruler)

@@ -1,5 +1,6 @@
 #include "PluginManager.h"
 #include "VST3Scan.h"
+#include "Vst3ModuleInfo.h"
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <lilv/lilv.h>
 #include <lv2/core/lv2.h>
@@ -12,6 +13,45 @@
 #include <QJsonObject>
 
 using namespace Steinberg;
+
+namespace {
+
+// Reads a VST3 bundle's moduleinfo.json (present in bundles built by JUCE/CMake
+// and most modern SDKs). Metadata-only: it lets the scanner enumerate plugins
+// without dlopen-ing or instantiating them, which is fatal for plugins whose
+// factory runs a JUCE ScopedRunLoop per createInstance (see VST3Scan.h).
+bool readVst3ModuleInfo(const std::filesystem::path& bundle, Vst3ModuleInfo::Meta& meta) {
+    const std::filesystem::path candidates[] = {
+        bundle / "Contents" / "Resources" / "moduleinfo.json",
+        bundle / "Contents" / "moduleinfo.json",
+    };
+    for (const auto& info : candidates) {
+        QFile file(QString::fromStdString(info.string()));
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        if (Vst3ModuleInfo::parse(file.readAll(), kVstAudioEffectClass, meta))
+            return true;
+    }
+    return false;
+}
+
+// Fallback metadata probe for bundles without moduleinfo.json. Loads the module
+// only to confirm it exposes a factory, then asks VST3Scan for instrument-ness
+// from class metadata — the plugin itself is never instantiated.
+bool probeVst3Bundle(const std::filesystem::path& soPath, Vst3ModuleInfo::Meta& meta) {
+    void* handle = dlopen(soPath.string().c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!handle) return false;
+
+    using GetFactoryFunc = Steinberg::IPluginFactory* (*)();
+    auto getFactory = reinterpret_cast<GetFactoryFunc>(dlsym(handle, "GetPluginFactory"));
+    Steinberg::IPluginFactory* factory = getFactory ? getFactory() : nullptr;
+    dlclose(handle);
+    if (!factory) return false;
+
+    meta.isInstrument = VST3Scan::bundleHasEventInput(soPath.string());
+    return true;
+}
+
+} // anonymous namespace
 
 PluginManager::PluginManager() {
     m_lilvWorld = lilv_world_new();
@@ -62,27 +102,24 @@ void PluginManager::scanDirectories(const std::vector<QString>& directories) {
             }
             if (soPath.empty()) continue;
 
-            void* handle = dlopen(soPath.string().c_str(), RTLD_NOW | RTLD_LOCAL);
-            if (!handle) continue;
-
-            using GetFactoryFunc = Steinberg::IPluginFactory* (*)();
-            auto getFactory = reinterpret_cast<GetFactoryFunc>(
-                dlsym(handle, "GetPluginFactory"));
-            Steinberg::IPluginFactory* factory = getFactory ? getFactory() : nullptr;
-            dlclose(handle);
-            if (!factory) continue;
-
-            bool isInstrument = VST3Scan::bundleHasEventInput(soPath.string());
+            // Prefer the bundle's moduleinfo.json: it carries name, vendor and
+            // subcategories without loading the plugin. Only fall back to
+            // dlopen when the bundle has no manifest (metadata-only, no
+            // instantiation; see VST3Scan).
+            Vst3ModuleInfo::Meta meta;
+            if (!readVst3ModuleInfo(bundle, meta) && !probeVst3Bundle(soPath, meta))
+                continue;
 
             std::string stem = bundle.stem().string();
             PluginInfo pi;
-            pi.name = QString::fromStdString(stem);
-            pi.vendor = QString();
+            pi.name = meta.name.isEmpty() ? QString::fromStdString(stem) : meta.name;
+            pi.vendor = meta.vendor;
             pi.path = bundlePath;
             pi.pluginId = QString::fromStdString(stem);
-            pi.category = isInstrument ? "Instrument" : QString::fromUtf8(kVstAudioEffectClass);
+            pi.category = meta.isInstrument ? "Instrument"
+                                            : QString::fromUtf8(kVstAudioEffectClass);
             pi.type = "vst3";
-            pi.isInstrument = isInstrument;
+            pi.isInstrument = meta.isInstrument;
             m_plugins.push_back(pi);
         }
     }
