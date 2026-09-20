@@ -86,6 +86,7 @@ add_library(vvvdaw_commands STATIC
     src/commands/BusCommands.cpp
     src/commands/ProjectCommands.cpp
     src/commands/EventCommands.cpp
+    src/commands/ImportCommands.cpp
     src/commands/MidiCommands.cpp
     src/commands/InstrumentCommands.cpp
     src/commands/PluginCommands.cpp

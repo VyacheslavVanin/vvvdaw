@@ -21,6 +21,12 @@ public:
     bool saveToFile(const QString& filePath) const;
     bool saveToFile(const QString& filePath, int sampleRate) const;
 
+    // Resample to `targetSampleRate` (linear interpolation) and write a float
+    // WAV. The source is read in blocks, so streaming clips do not have to be
+    // fully resident. Returns false on invalid input or a write failure; a
+    // same-rate request still writes a plain copy.
+    bool saveResampledToFile(const QString& filePath, int targetSampleRate) const;
+
     // Read `frameCount` interleaved frames starting at `startFrame` into `out`
     // (resized to frameCount*channels). Works for streaming and in-memory
     // clips; used to render zoomed-in views at sample resolution.

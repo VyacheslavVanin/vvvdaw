@@ -18,6 +18,7 @@
 #include "commands/BusCommands.h"
 #include "commands/ProjectCommands.h"
 #include "commands/EventCommands.h"
+#include "commands/ImportCommands.h"
 #include "commands/MidiCommands.h"
 #include "commands/InstrumentCommands.h"
 #include "commands/PluginCommands.h"
@@ -54,6 +55,7 @@ using vvvdaw::TransportState;
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QJsonArray>
+#include <algorithm>
 #include <cmath>
 
 void MainWindow::setupMenus() {
@@ -61,6 +63,8 @@ void MainWindow::setupMenus() {
 
     auto* newAction = fileMenu->addAction("&New Project", QKeySequence::New);
     auto* openAction = fileMenu->addAction("&Open Project...", QKeySequence::Open);
+    auto* importMenu = fileMenu->addMenu("&Import");
+    auto* importAudioAction = importMenu->addAction("&Audio Files...");
     auto* saveAction = fileMenu->addAction("&Save Project", QKeySequence::Save);
     auto* saveAsAction = fileMenu->addAction("Save &As...", QKeySequence("Ctrl+Shift+S"));
     auto* saveTemplateAction = fileMenu->addAction("Save as &Template...");
@@ -122,6 +126,8 @@ void MainWindow::setupMenus() {
         m_settings.addRecentProject(path);
         setWindowTitle("vvvdaw - " + QFileInfo(path).absolutePath());
     });
+
+    connect(importAudioAction, &QAction::triggered, this, &MainWindow::importAudioFiles);
 
     connect(saveAction, &QAction::triggered, this, [this, saveAsAction] {
         if (m_project.filePath().isEmpty()) {
@@ -298,4 +304,38 @@ void MainWindow::setupMenus() {
             }
         }
     });
+}
+
+void MainWindow::importAudioFiles() {
+    const QString filter =
+        "Audio Files (*.mp3 *.wav *.flac *.ogg *.oga *.aiff *.aif *.au *.w64 *.caf *.opus);;"
+        "MP3 Files (*.mp3);;All Files (*)";
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, "Import Audio Files", QString(), filter);
+    if (paths.isEmpty())
+        return;
+
+    std::vector<ImportedAudio> items;
+    QStringList failed;
+    for (const QString& path : paths) {
+        QString error;
+        auto clip = prepareImportedClip(m_project, path, &error);
+        if (!clip) {
+            qWarning() << "Failed to import" << path << ":" << error;
+            failed << QFileInfo(path).fileName();
+            continue;
+        }
+        ImportedAudio item;
+        item.name = QFileInfo(path).completeBaseName();
+        item.channels = std::clamp(clip->channels(), 1, 2);
+        item.clip = std::move(clip);
+        items.push_back(std::move(item));
+    }
+
+    if (!items.empty())
+        executeCommand(std::make_unique<ImportTracksCommand>(m_project, std::move(items)));
+
+    if (!failed.isEmpty())
+        QMessageBox::warning(this, "Import Audio Files",
+            "These files could not be imported:\n" + failed.join("\n"));
 }

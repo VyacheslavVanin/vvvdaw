@@ -27,7 +27,7 @@ endforeach()
 
 # --- Commands (split per area) ---
 
-foreach(cmd_test IN ITEMS track bus instrument project event midi undo)
+foreach(cmd_test IN ITEMS track bus instrument project event import midi undo)
     vvvdaw_add_test(test_commands_${cmd_test} test_commands/test_commands_${cmd_test}.cpp)
     target_link_libraries(vvvdaw_test_commands_${cmd_test} PRIVATE
         vvvdaw_commands vvvdaw_model vvvdaw_core)

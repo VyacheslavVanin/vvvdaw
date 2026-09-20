@@ -111,6 +111,7 @@ private slots:
     void startDialogDeleteBuiltinTemplateRefused();
     void startDialogDeleteRecentRemovesFromList();
     void mainWindowFileMenuHasSaveAsTemplate();
+    void mainWindowFileMenuHasImportSubmenu();
     void replaceProjectSwapsAndRebuilds();
     void midiTrackShowsArmButton();
     void settingsDialogHasMidiInputControls();
@@ -1322,6 +1323,35 @@ void MainWindowTest::mainWindowFileMenuHasSaveAsTemplate() {
         }
     }
     QVERIFY(found);
+}
+
+
+void MainWindowTest::mainWindowFileMenuHasImportSubmenu() {
+    Project project;
+    Settings settings;
+    AudioEngine engine;
+    MainWindow window(project, engine, settings);
+
+    auto* fileMenu = window.menuBar()->actions().value(0)->menu();
+    QVERIFY(fileMenu);
+
+    QMenu* importMenu = nullptr;
+    for (auto* action : fileMenu->actions()) {
+        if (action->text().contains("Import") && action->menu()) {
+            importMenu = action->menu();
+            break;
+        }
+    }
+    QVERIFY(importMenu);
+
+    bool hasAudioAction = false;
+    for (auto* action : importMenu->actions()) {
+        if (action->text().contains("Audio")) {
+            hasAudioAction = true;
+            break;
+        }
+    }
+    QVERIFY(hasAudioAction);
 }
 
 

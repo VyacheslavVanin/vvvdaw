@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QJsonArray>
 #include <QTemporaryDir>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include "model/Project.h"
@@ -22,6 +23,8 @@ private slots:
     void audioClipReadFrames();
     void streamingClipReadFramesFromFile();
     void audioClipFileRoundTrip();
+    void audioClipSaveResampledUpsample();
+    void audioClipSaveResampledStreamingSource();
     void midiClipCloneIndependent();
     void midiClipNotes();
     void midiClipSerialization();
@@ -139,6 +142,90 @@ void TestClips::audioClipFileRoundTrip() {
     QCOMPARE(loaded.frameCount(), size_t(2048));
     QCOMPARE(loaded.sampleRate(), 44100);
     QCOMPARE(loaded.channels(), 1);
+}
+
+
+void TestClips::audioClipSaveResampledUpsample() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = dir.path() + "/up.wav";
+
+    // 1000 constant stereo frames at 44100 resampled to 48000.
+    const size_t frames = 1000;
+    std::vector<float> samples(frames * 2);
+    for (size_t i = 0; i < frames; ++i) {
+        samples[i * 2] = 0.25f;
+        samples[i * 2 + 1] = -0.5f;
+    }
+    AudioClip clip(std::move(samples), 44100, 2);
+    QVERIFY(clip.saveResampledToFile(out, 48000));
+
+    AudioClip resampled(out);
+    QVERIFY(resampled.isValid());
+    QCOMPARE(resampled.sampleRate(), 48000);
+    QCOMPARE(resampled.channels(), 2);
+    const size_t expected =
+        static_cast<size_t>(std::llround(1000.0 * 48000.0 / 44100.0));
+    QCOMPARE(resampled.frameCount(), expected);
+    // A constant signal survives linear interpolation exactly.
+    for (size_t i = 0; i < resampled.frameCount(); ++i) {
+        QVERIFY(std::abs(resampled.data()[i * 2] - 0.25f) < 1e-4f);
+        QVERIFY(std::abs(resampled.data()[i * 2 + 1] - (-0.5f)) < 1e-4f);
+    }
+
+    // A same-rate request is a plain copy that keeps the frame count.
+    const QString copyPath = dir.path() + "/copy.wav";
+    QVERIFY(clip.saveResampledToFile(copyPath, 44100));
+    AudioClip copy(copyPath);
+    QCOMPARE(copy.frameCount(), frames);
+    QCOMPARE(copy.sampleRate(), 44100);
+
+    // Invalid inputs are refused.
+    AudioClip empty;
+    QVERIFY(!empty.saveResampledToFile(dir.path() + "/empty.wav", 48000));
+    QVERIFY(!clip.saveResampledToFile(dir.path() + "/zero.wav", 0));
+}
+
+
+void TestClips::audioClipSaveResampledStreamingSource() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString srcPath = dir.path() + "/src.wav";
+    const QString out = dir.path() + "/down.wav";
+
+    // A long mono ramp at 48000, large enough that the reader's window grows
+    // across several chunks (the bug that made the two-frame pointers dangle).
+    const size_t frames = 200000;
+    std::vector<float> samples(frames);
+    for (size_t i = 0; i < frames; ++i)
+        samples[i] = static_cast<float>(i) / static_cast<float>(frames);
+    {
+        AudioClip writer(std::move(samples), 48000, 1);
+        QVERIFY(writer.saveToFile(srcPath));
+    }
+
+    // Force the source to stream, so the resampler must read it in blocks.
+    const size_t savedThreshold = AudioClip::streamingThresholdFrames();
+    AudioClip::setStreamingThresholdFrames(frames / 2);
+    AudioClip streaming(srcPath);
+    AudioClip::setStreamingThresholdFrames(savedThreshold);
+    QVERIFY(streaming.isStreaming());
+
+    QVERIFY(streaming.saveResampledToFile(out, 24000));
+
+    AudioClip resampled(out);
+    QVERIFY(resampled.isValid());
+    QCOMPARE(resampled.sampleRate(), 24000);
+    QCOMPARE(resampled.channels(), 1);
+    QCOMPARE(resampled.frameCount(), frames / 2);
+    QVERIFY(resampled.data()[0] < 1e-4f);
+    QVERIFY(resampled.data()[resampled.frameCount() - 1] > 0.99f);
+    // Samples in the middle must follow the ramp (a dangling source pointer
+    // would have produced garbage here).
+    for (size_t o : { size_t(25000), size_t(50000), size_t(75000) }) {
+        const float expected = static_cast<float>(2 * o) / static_cast<float>(frames);
+        QVERIFY(std::abs(resampled.data()[o] - expected) < 1e-4f);
+    }
 }
 
 

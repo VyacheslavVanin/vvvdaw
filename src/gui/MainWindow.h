@@ -54,6 +54,8 @@ private:
 
     void setupUi();
     void setupMenus();
+    // File → Import: pick one or more audio files, each becoming a track.
+    void importAudioFiles();
     void setupTransportConnections();
     void setupTimer();
     void loadStyleSheet();

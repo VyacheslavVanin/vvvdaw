@@ -1,5 +1,7 @@
 #include "AudioClip.h"
 #include <sndfile.h>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <QDebug>
 
@@ -142,6 +144,144 @@ AudioClip::Peak peakOfChannel(const float* data, size_t frames, int channels) {
     return {min, max};
 }
 
+// Forward-only source sampler: either a pointer into an in-memory buffer or a
+// single-open sequential reader over a file. Streaming sources (long WAVs,
+// MP3s, ...) are decoded in one pass instead of seeking per block, which keeps
+// lossy formats free of seek-boundary glitches.
+class SequentialSourceReader {
+public:
+    ~SequentialSourceReader() { close(); }
+
+    bool open(const QString& path, int ch) {
+        SF_INFO info;
+        std::memset(&info, 0, sizeof(info));
+        m_file = sf_open(path.toUtf8().constData(), SFM_READ, &info);
+        if (!m_file) return false;
+        m_ch = ch;
+        return true;
+    }
+
+    void useMemory(const float* data, int ch) {
+        m_mem = data;
+        m_ch = ch;
+    }
+
+    void close() {
+        if (m_file) {
+            sf_close(m_file);
+            m_file = nullptr;
+        }
+    }
+
+    // Make sure frame `frame` is loaded. Call before frameAt(); it may grow or
+    // compact the window, so any previously returned pointer becomes invalid.
+    void prefetch(int64_t frame) {
+        if (m_mem)
+            return;
+        while (!m_eof && m_start + static_cast<int64_t>(validFrames()) <= frame) {
+            if (m_off >= kChunkFrames)
+                compact();
+            readChunk();
+        }
+    }
+
+    // Release frames before `frame` so the window stays bounded on long files.
+    // Frames already loaded but not yet returned are dropped; the file cursor
+    // (which only moves forward) is unaffected.
+    void discardBefore(int64_t frame) {
+        if (m_mem || frame <= m_start)
+            return;
+        const int64_t end = m_start + static_cast<int64_t>(validFrames());
+        if (frame >= end) {
+            m_start = end;
+            m_off = m_win.size() / static_cast<size_t>(m_ch);
+        } else {
+            m_off += static_cast<size_t>(frame - m_start);
+            m_start = frame;
+        }
+        if (m_off >= kChunkFrames)
+            compact();
+    }
+
+    // Interleaved frame `frame`, or nullptr past the end. Does not modify the
+    // window, so pointers stay valid as long as no prefetch()/discard follows.
+    const float* frameAt(int64_t frame) const {
+        if (m_mem)
+            return m_mem + frame * static_cast<int64_t>(m_ch);
+        if (frame < m_start)
+            return nullptr;
+        const size_t idx = m_off + static_cast<size_t>(frame - m_start);
+        if (idx >= m_win.size() / static_cast<size_t>(m_ch))
+            return nullptr;
+        return m_win.data() + idx * static_cast<size_t>(m_ch);
+    }
+
+private:
+    size_t validFrames() const {
+        return m_win.size() / static_cast<size_t>(m_ch) - m_off;
+    }
+
+    // Drop the consumed prefix of the window (m_start already points at
+    // m_win[m_off], so it is unchanged).
+    void compact() {
+        m_win.erase(m_win.begin(),
+                    m_win.begin() + static_cast<long>(m_off * static_cast<size_t>(m_ch)));
+        m_off = 0;
+    }
+
+    void readChunk() {
+        const size_t base = m_win.size();
+        m_win.resize(base + kChunkFrames * static_cast<size_t>(m_ch));
+        const sf_count_t got = sf_readf_float(m_file, m_win.data() + base,
+                                              kChunkFrames);
+        if (got > 0)
+            m_win.resize(base + static_cast<size_t>(got) * static_cast<size_t>(m_ch));
+        else {
+            m_win.resize(base);
+            m_eof = true;
+        }
+    }
+
+    static constexpr size_t kChunkFrames = 1 << 16;
+
+    SNDFILE* m_file = nullptr;
+    const float* m_mem = nullptr;
+    int m_ch = 1;
+    std::vector<float> m_win;
+    size_t m_off = 0;      // first valid frame within m_win
+    int64_t m_start = 0;   // global source frame of m_win[m_off]
+    bool m_eof = false;
+};
+
+// Linear-interpolate one output block from `src` and write it. Returns false on
+// a read or write failure.
+bool resampleWriteBlock(SequentialSourceReader& src, int64_t frameCount, int ch,
+                        SNDFILE* file, int64_t outStart, int64_t outCount,
+                        double ratio, std::vector<float>& out) {
+    out.resize(static_cast<size_t>(outCount) * static_cast<size_t>(ch));
+    for (int64_t i = 0; i < outCount; ++i) {
+        double srcPos = static_cast<double>(outStart + i) / ratio;
+        int64_t i0 = static_cast<int64_t>(srcPos);
+        double frac = srcPos - static_cast<double>(i0);
+        if (i0 >= frameCount) { i0 = frameCount - 1; frac = 0.0; }
+        const int64_t i1 = std::min(i0 + 1, frameCount - 1);
+        // Drop consumed frames first, then load up to i1 and take both pointers
+        // (frameAt never mutates the window, so they stay valid).
+        src.discardBefore(i0);
+        src.prefetch(i1);
+        const float* a = src.frameAt(i0);
+        const float* b = src.frameAt(i1);
+        if (!a) return false;
+        if (!b) b = a;
+        for (int c = 0; c < ch; ++c) {
+            out[static_cast<size_t>(i * ch + c)] =
+                static_cast<float>(a[c] + (b[c] - a[c]) * frac);
+        }
+    }
+    return sf_writef_float(file, out.data(),
+                           static_cast<sf_count_t>(outCount)) == outCount;
+}
+
 // Build the coarse peak level by folding groups of fine peaks.
 std::vector<AudioClip::Peak> coarseFromFine(const std::vector<AudioClip::Peak>& fine) {
     std::vector<AudioClip::Peak> coarse;
@@ -166,7 +306,63 @@ std::vector<AudioClip::Peak> coarseFromFine(const std::vector<AudioClip::Peak>& 
     return coarse;
 }
 
+// Valid inputs for an offline resample request.
+bool canResampleFrames(size_t frameCount, int channels, int sampleRate,
+                       int targetSampleRate) {
+    return frameCount > 0 && channels > 0 && sampleRate > 0 && targetSampleRate > 0;
+}
+
 } // namespace
+
+bool AudioClip::saveResampledToFile(const QString& filePath, int targetSampleRate) const {
+    if (!canResampleFrames(m_frameCount, m_channels, m_sampleRate, targetSampleRate))
+        return false;
+
+    SF_INFO info;
+    std::memset(&info, 0, sizeof(info));
+    info.samplerate = targetSampleRate;
+    info.channels = m_channels;
+    info.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
+
+    SNDFILE* file = sf_open(filePath.toUtf8().constData(), SFM_WRITE, &info);
+    if (!file) {
+        qWarning() << "Failed to write resampled audio file:" << filePath
+                   << sf_strerror(nullptr);
+        return false;
+    }
+
+    // Open the source once: streaming clips are decoded forward in a single
+    // pass, in-memory clips expose their sample buffer directly.
+    SequentialSourceReader src;
+    if (isStreaming()) {
+        if (!src.open(m_filePath, m_channels)) {
+            qWarning() << "Failed to open audio file for resampling:" << m_filePath
+                       << sf_strerror(nullptr);
+            sf_close(file);
+            return false;
+        }
+    } else {
+        src.useMemory(m_samples.data(), m_channels);
+    }
+
+    const double ratio = static_cast<double>(targetSampleRate) / m_sampleRate;
+    const int64_t outFrames = static_cast<int64_t>(
+        std::llround(static_cast<double>(m_frameCount) * ratio));
+    const int ch = m_channels;
+    const int64_t frameCount = static_cast<int64_t>(m_frameCount);
+    constexpr int64_t kBlockFrames = 4096;
+
+    std::vector<float> outBuf;
+    bool ok = true;
+    for (int64_t outStart = 0; outStart < outFrames && ok; outStart += kBlockFrames) {
+        const int64_t outCount = std::min(kBlockFrames, outFrames - outStart);
+        ok = resampleWriteBlock(src, frameCount, ch, file, outStart, outCount,
+                                ratio, outBuf);
+    }
+
+    sf_close(file);
+    return ok;
+}
 
 void AudioClip::computePeaks() {
     m_peaks.clear();
