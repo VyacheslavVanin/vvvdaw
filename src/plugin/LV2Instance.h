@@ -5,6 +5,7 @@
 #include <lv2/atom/atom.h>
 #include <lv2/atom/forge.h>
 #include <lv2/atom/util.h>
+#include <lv2/buf-size/buf-size.h>
 #include <lv2/patch/patch.h>
 #include <lv2/urid/urid.h>
 #include <lv2/options/options.h>
@@ -126,8 +127,10 @@ private:
     void setupAtomBuffers();
     void detectUI();
 
-    // process() steps
-    void routeAudioPorts(int samples, int numChannels,
+    // process() steps. routeAudioPorts() returns true when the plugin has more
+    // output channels than the host and the caller must fold the scratch output
+    // back down after run().
+    bool routeAudioPorts(int samples, int numChannels,
                          float** inputBuffers, float** outputBuffers);
     void resetAtomBuffers();
     void forgeInputAtoms(const MidiBuffer* midi);
@@ -181,6 +184,9 @@ private:
     std::vector<float*> m_audioOutPorts;
     std::vector<std::vector<float>> m_audioInBuffers;
     std::vector<std::vector<float>> m_audioOutBuffers;
+    // Scratch output pointers for folding a wider plugin output down to the
+    // host's channel count (see routeAudioPorts()).
+    std::vector<float*> m_audioOutReducePtrs;
     // Parallel to m_audioInPorts: true when the audio input port is a sidechain
     // (key) input. m_sidechainBuffers holds one scratch buffer per sidechain
     // channel; the host accumulates the key signal there and routeAudioPorts()
@@ -228,7 +234,13 @@ private:
     const LV2_Feature m_optionsFeature = { LV2_OPTIONS__options, m_options };
     const LV2_Feature m_workerScheduleFeature = { LV2_WORKER__schedule, &m_workerSchedule };
     const LV2_Feature m_logFeature = { LV2_LOG__log, &m_logger };
-    const LV2_Feature* m_features[5] = { &m_uridMapFeature, &m_optionsFeature, &m_workerScheduleFeature, &m_logFeature, nullptr };
+    // Marker feature (no data): the host guarantees block sizes never exceed the
+    // advertised bufs:maxBlockLength. Plugins may list it as a required feature
+    // (e.g. TONE3000) and refuse to instantiate without it.
+    const LV2_Feature m_boundedBlockLengthFeature = { LV2_BUF_SIZE__boundedBlockLength, nullptr };
+    const LV2_Feature* m_features[6] = { &m_uridMapFeature, &m_optionsFeature,
+                                         &m_workerScheduleFeature, &m_logFeature,
+                                         &m_boundedBlockLengthFeature, nullptr };
 
     std::vector<std::pair<std::string, LV2_URID>> m_uridCache;
     mutable std::mutex m_uridMutex;

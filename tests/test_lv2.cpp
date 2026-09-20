@@ -56,6 +56,7 @@ private slots:
     void stateToJsonWithoutStateExtension();
     void stateSerializationSurvivesBuggyPlugin();
     void genericScanSmoke();
+    void boundedBlockLengthPluginsInstantiate();
     void multiChannelOutputDiscovery();
     void multiChannelProcess();
     void outputControlPortMetersFlow();
@@ -337,6 +338,57 @@ void TestLV2::genericScanSmoke() {
     lilv_world_free(world);
     QVERIFY2(total > 0, "no LV2 plugins discovered in Lilv world");
     QVERIFY2(processed > 0, "no loadable LV2 effect plugin found");
+}
+
+void TestLV2::boundedBlockLengthPluginsInstantiate() {
+    // Plugins that list bufs:boundedBlockLength as a required feature only
+    // instantiate when the host advertises that marker feature. Generic across
+    // every installed plugin (not tied to one), so a missing host feature shows
+    // up as a load failure here.
+    LilvWorld* world = lilv_world_new();
+    if (!world)
+        QSKIP("cannot create Lilv world");
+    lilv_world_load_all(world);
+
+    LilvNode* requiredPred =
+        lilv_new_uri(world, "http://lv2plug.in/ns/lv2core#requiredFeature");
+    LilvNode* bounded =
+        lilv_new_uri(world, "http://lv2plug.in/ns/ext/buf-size#boundedBlockLength");
+
+    const LilvPlugins* plugins = lilv_world_get_all_plugins(world);
+    int checked = 0;
+    LILV_FOREACH(plugins, it, plugins) {
+        const LilvPlugin* p = lilv_plugins_get(plugins, it);
+
+        LilvNodes* required = lilv_plugin_get_value(p, requiredPred);
+        bool needsBounded = false;
+        if (required) {
+            LILV_FOREACH(nodes, n, required) {
+                if (lilv_node_equals(lilv_nodes_get(required, n), bounded)) {
+                    needsBounded = true;
+                    break;
+                }
+            }
+            lilv_nodes_free(required);
+        }
+        if (!needsBounded) continue;
+
+        const char* uri = lilv_node_as_string(lilv_plugin_get_uri(p));
+        LV2Instance inst;
+        inst.setWorld(world);
+        const bool loaded = inst.load(QString::fromUtf8(uri));
+        QVERIFY2(loaded,
+                 qPrintable(QString("LV2 plugin requiring bufs:boundedBlockLength "
+                                    "failed to load: %1").arg(uri)));
+        ++checked;
+    }
+
+    lilv_node_free(bounded);
+    lilv_node_free(requiredPred);
+    lilv_world_free(world);
+
+    if (checked == 0)
+        QSKIP("no installed LV2 plugin requires bufs:boundedBlockLength");
 }
 
 void TestLV2::multiChannelOutputDiscovery() {

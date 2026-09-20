@@ -402,6 +402,9 @@ void LV2Instance::setupAudioBuffers() {
         m_audioOutPorts[j] = m_audioOutBuffers[j].data();
         lilv_instance_connect_port(m_instance, m_audioOutPortIndices[j], m_audioOutPorts[j]);
     }
+    m_audioOutReducePtrs.clear();
+    for (auto& buf : m_audioOutBuffers)
+        m_audioOutReducePtrs.push_back(buf.data());
 }
 
 void LV2Instance::setupAtomBuffers() {
@@ -539,7 +542,7 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     int samples = std::min(numSamples, m_maxBlockSize);
 
-    routeAudioPorts(samples, numChannels, inputBuffers, outputBuffers);
+    const bool reduceOut = routeAudioPorts(samples, numChannels, inputBuffers, outputBuffers);
     resetAtomBuffers();
     forgeInputAtoms(midi);
 
@@ -552,10 +555,17 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
 
     lilv_instance_run(m_instance, samples);
 
-    // Mono plugin: duplicate the single output channel so downstream mixing
-    // sees a centered stereo signal instead of a hard-panned-left one.
-    if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2)
+    if (reduceOut) {
+        // Wider plugin output than the host (e.g. a stereo effect on a mono
+        // track): fold the scratch channels down to the host buffers.
+        reduceChannelsToHost(m_audioOutReducePtrs.data(),
+                             static_cast<int>(m_audioOutBuffers.size()),
+                             outputBuffers, numChannels, samples);
+    } else if (m_audioOutPorts.size() == 1 && outputBuffers && numChannels >= 2) {
+        // Mono plugin: duplicate the single output channel so downstream mixing
+        // sees a centered stereo signal instead of a hard-panned-left one.
         duplicateMonoToStereo(m_audioOutPorts[0], outputBuffers, samples);
+    }
 
     processWorkQueue();
     readOutputAtoms();
@@ -563,11 +573,16 @@ bool LV2Instance::process(float** inputBuffers, float** outputBuffers,
     return true;
 }
 
-void LV2Instance::routeAudioPorts(int samples, int numChannels,
+bool LV2Instance::routeAudioPorts(int samples, int numChannels,
                                   float** inputBuffers, float** outputBuffers) {
     int mainCount = 0;
     for (bool sc : m_audioInIsSidechain)
         if (!sc) ++mainCount;
+
+    // Host provides fewer channels than the plugin's main inputs (e.g. a mono
+    // track into a stereo effect): repeat the available channels.
+    const bool expandMono = mainCount > 1 && numChannels == 1 && inputBuffers &&
+                            !m_audioInBuffers.empty();
 
     int mainCh = 0;
     int scCh = 0;
@@ -590,6 +605,10 @@ void LV2Instance::routeAudioPorts(int samples, int numChannels,
             !m_audioInBuffers.empty()) {
             foldStereoToMono(m_audioInBuffers[i].data(), inputBuffers, samples);
             m_audioInPorts[i] = m_audioInBuffers[i].data();
+        } else if (expandMono) {
+            std::memcpy(m_audioInBuffers[i].data(), inputBuffers[0],
+                        static_cast<size_t>(samples) * sizeof(float));
+            m_audioInPorts[i] = m_audioInBuffers[i].data();
         } else {
             bool mapped = (mainCh < numChannels && inputBuffers);
             m_audioInPorts[i] = mapped ? inputBuffers[mainCh] : m_audioInBuffers[i].data();
@@ -600,14 +619,26 @@ void LV2Instance::routeAudioPorts(int samples, int numChannels,
         ++mainCh;
     }
 
+    // More plugin output channels than the host: render into the scratch and
+    // fold down after run().
+    const bool reduceOut = m_audioOutPorts.size() > static_cast<size_t>(numChannels) &&
+                           outputBuffers && numChannels > 0 &&
+                           m_audioOutReducePtrs.size() == m_audioOutBuffers.size();
     for (size_t i = 0; i < m_audioOutPorts.size(); ++i) {
-        int ch = static_cast<int>(i);
-        m_audioOutPorts[i] = (ch < numChannels && outputBuffers) ? outputBuffers[ch] : m_audioOutBuffers[i].data();
+        if (reduceOut) {
+            m_audioOutPorts[i] = m_audioOutBuffers[i].data();
+        } else {
+            int ch = static_cast<int>(i);
+            m_audioOutPorts[i] = (ch < numChannels && outputBuffers)
+                                     ? outputBuffers[ch] : m_audioOutBuffers[i].data();
+        }
         lilv_instance_connect_port(m_instance, m_audioOutPortIndices[i], m_audioOutPorts[i]);
     }
 
     for (size_t i = 0; i < m_ctrlPorts.size(); ++i)
         lilv_instance_connect_port(m_instance, m_ctrlPortIndices[i], m_ctrlPorts[i]);
+
+    return reduceOut;
 }
 
 void LV2Instance::resetAtomBuffers() {
