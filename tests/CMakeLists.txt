@@ -53,7 +53,12 @@ set_tests_properties(test_lv2 PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 # --- VST3 backend ---
 
 vvvdaw_add_test(test_vst3 test_vst3.cpp)
-target_link_libraries(vvvdaw_test_vst3 PRIVATE vvvdaw_model vvvdaw_core)
+target_link_libraries(vvvdaw_test_vst3 PRIVATE vvvdaw_model vvvdaw_core sdk)
+# The VST3 SDK implementation headers (fdebug.h) require one of
+# DEVELOPMENT/RELEASE/_DEBUG/NDEBUG to be defined.
+target_compile_definitions(vvvdaw_test_vst3 PRIVATE
+    $<$<CONFIG:Debug>:DEVELOPMENT>
+    $<$<NOT:$<CONFIG:Debug>>:RELEASE>)
 set_tests_properties(test_vst3 PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # --- GUI (split per area) ---

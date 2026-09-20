@@ -108,6 +108,22 @@ tresult PLUGIN_API PluginFrame::queryInterface(const TUID _iid, void** obj) {
 uint32 PLUGIN_API PluginFrame::addRef() { return 1; }
 uint32 PLUGIN_API PluginFrame::release() { return 0; }
 
+// Enables every audio and event bus on the component. Some plugins expect this
+// before setupProcessing(); JUCE's VST3 wrapper additionally requires it after
+// setupProcessing() so its host-bus map records the buses as active.
+void activateComponentBuses(IComponent* component) {
+    if (!component) return;
+    const MediaType types[] = {kAudio, kEvent};
+    for (MediaType type : types) {
+        int32 nIn = component->getBusCount(type, kInput);
+        for (int32 i = 0; i < nIn; ++i)
+            component->activateBus(type, kInput, i, true);
+        int32 nOut = component->getBusCount(type, kOutput);
+        for (int32 i = 0; i < nOut; ++i)
+            component->activateBus(type, kOutput, i, true);
+    }
+}
+
 } // anonymous namespace
 
 // HostComponentHandler method implementations
@@ -306,20 +322,12 @@ bool VST3Instance::load(const QString& path) {
     }
 
     if (m_component) {
-        int32 nIn = m_component->getBusCount(kAudio, kInput);
-        for (int32 i = 0; i < nIn; ++i)
-            m_component->activateBus(kAudio, kInput, i, true);
-        int32 nOut = m_component->getBusCount(kAudio, kOutput);
-        for (int32 i = 0; i < nOut; ++i)
-            m_component->activateBus(kAudio, kOutput, i, true);
+        activateComponentBuses(m_component.get());
 
+        int32 nIn = m_component->getBusCount(kAudio, kInput);
+        int32 nOut = m_component->getBusCount(kAudio, kOutput);
         int32 nEventIn = m_component->getBusCount(kEvent, kInput);
         m_isInstrument = (nEventIn > 0);
-        for (int32 i = 0; i < nEventIn; ++i)
-            m_component->activateBus(kEvent, kInput, i, true);
-        int32 nEventOut = m_component->getBusCount(kEvent, kOutput);
-        for (int32 i = 0; i < nEventOut; ++i)
-            m_component->activateBus(kEvent, kOutput, i, true);
 
         m_inputBusChannels.clear();
         m_inputBusIsSidechain.clear();
@@ -356,6 +364,104 @@ bool VST3Instance::load(const QString& path) {
     return true;
 }
 
+bool VST3Instance::activateComponent(Steinberg::Vst::IComponent* component,
+                                     Steinberg::Vst::IAudioProcessor* processor,
+                                     Steinberg::Vst::ProcessSetup& setup) {
+    if (!component || !processor) return false;
+
+    if (processor->setupProcessing(setup) != kResultTrue) return false;
+
+    // Re-apply bus activation now that setupProcessing() has built the host-bus
+    // map: an activateBus() call before it is a no-op, which leaves every bus
+    // "host inactive" and makes the plugin process silence (JUCE's
+    // ClientBufferMapper clears host-inactive input buses and skips copying
+    // their output back). See juce_VST3Common.h DynamicChannelMapping.
+    activateComponentBuses(component);
+
+    component->setActive(true);
+    processor->setProcessing(true);
+    return true;
+}
+
+void VST3Instance::refreshScratchPtrs() {
+    m_expandInPtrs.clear();
+    for (auto& b : m_expandInScratch) m_expandInPtrs.push_back(b.data());
+    m_reduceOutPtrs.clear();
+    for (auto& b : m_reduceOutScratch) m_reduceOutPtrs.push_back(b.data());
+}
+
+void VST3Instance::configureInputBuses(AudioBusBuffers* inBuses, int numInBuses,
+                                       float** inputBuffers, int numSamples, int numChannels) {
+    float* monoInChannels[1] = { m_monoScratch.data() };
+    int expandBase = 0;
+    for (int32 i = 0; i < numInBuses; ++i) {
+        int32 busChannels = (i < static_cast<int32>(m_inputBusChannels.size()))
+                                ? m_inputBusChannels[i] : numChannels;
+        inBuses[i].silenceFlags = 0;
+        bool isSidechain = i < static_cast<int32>(m_inputBusIsSidechain.size()) &&
+                           m_inputBusIsSidechain[i];
+        if (isSidechain) {
+            // Feed the sidechain (kAux) bus from the host scratch buffers the
+            // engine accumulated the key signal into.
+            int offset = i < static_cast<int32>(m_inputBusSidechainOffset.size())
+                             ? m_inputBusSidechainOffset[i] : -1;
+            int available = (offset >= 0) ? m_sidechainChannelCount - offset : 0;
+            inBuses[i].numChannels = std::min<int32>(busChannels, std::max(0, available));
+            inBuses[i].channelBuffers32 = (offset >= 0 && available > 0)
+                                              ? m_sidechainChannelPtrs.data() + offset
+                                              : nullptr;
+            continue;
+        }
+        const bool canExpand = busChannels > numChannels && inputBuffers && numChannels > 0 &&
+                               expandBase + busChannels <= static_cast<int32>(m_expandInPtrs.size());
+        if (canExpand) {
+            // Host provides fewer channels than the bus (e.g. a mono track into
+            // a stereo effect): repeat the available channels. JUCE rejects a
+            // narrower layout and would hand the plugin a blank buffer.
+            expandChannelsToBus(inputBuffers, numChannels,
+                                m_expandInPtrs.data() + expandBase, busChannels, numSamples);
+            inBuses[i].numChannels = busChannels;
+            inBuses[i].channelBuffers32 = m_expandInPtrs.data() + expandBase;
+        } else {
+            inBuses[i].numChannels = std::min(busChannels, numChannels);
+            if (busChannels == 1 && numChannels >= 2 && inputBuffers) {
+                if (m_monoScratch.size() < static_cast<size_t>(numSamples))
+                    m_monoScratch.resize(static_cast<size_t>(numSamples));
+                foldStereoToMono(m_monoScratch.data(), inputBuffers, numSamples);
+                inBuses[i].channelBuffers32 = monoInChannels;
+            } else {
+                inBuses[i].channelBuffers32 = inputBuffers;
+            }
+        }
+        expandBase += busChannels;
+    }
+}
+
+bool VST3Instance::configureOutputBuses(AudioBusBuffers* outBuses, int numOutBuses,
+                                        float** outputBuffers, int numChannels,
+                                        int pluginOutChannels) {
+    const bool reduceOut = pluginOutChannels > numChannels && outputBuffers && numChannels > 0 &&
+                           pluginOutChannels <= static_cast<int32>(m_reduceOutPtrs.size());
+    int32 channelOffset = 0;
+    for (int32 i = 0; i < numOutBuses; ++i) {
+        int32 busChannels = (i < static_cast<int32>(m_outputBusChannels.size()))
+                                ? m_outputBusChannels[i] : numChannels;
+        outBuses[i].silenceFlags = 0;
+        if (reduceOut) {
+            // More plugin output channels than the host: render into the
+            // scratch and fold down after process().
+            outBuses[i].numChannels = busChannels;
+            outBuses[i].channelBuffers32 = m_reduceOutPtrs.data() + channelOffset;
+        } else {
+            int32 available = std::max<int32>(0, numChannels - channelOffset);
+            outBuses[i].numChannels = std::min(busChannels, available);
+            outBuses[i].channelBuffers32 = outputBuffers ? outputBuffers + channelOffset : nullptr;
+        }
+        channelOffset += busChannels;
+    }
+    return reduceOut;
+}
+
 bool VST3Instance::activate(double sampleRate, int maxBlockSize) {
     if (!m_component || !m_audioProcessor) return false;
 
@@ -369,16 +475,28 @@ bool VST3Instance::activate(double sampleRate, int maxBlockSize) {
     for (auto& buf : m_sidechainBuffers)
         m_sidechainChannelPtrs.push_back(buf.data());
 
+    int totalIn = 0;
+    for (size_t i = 0; i < m_inputBusChannels.size(); ++i) {
+        const bool side = i < m_inputBusIsSidechain.size() && m_inputBusIsSidechain[i];
+        if (!side) totalIn += m_inputBusChannels[i];
+    }
+    int totalOut = 0;
+    for (auto cc : m_outputBusChannels) totalOut += cc;
+    m_expandInScratch.assign(static_cast<size_t>(std::max(1, totalIn)),
+                             std::vector<float>(static_cast<size_t>(maxBlockSize), 0.0f));
+    m_reduceOutScratch.assign(static_cast<size_t>(std::max(1, totalOut)),
+                              std::vector<float>(static_cast<size_t>(maxBlockSize), 0.0f));
+    refreshScratchPtrs();
+
     ProcessSetup setup;
     setup.processMode = kRealtime;
     setup.symbolicSampleSize = kSample32;
     setup.maxSamplesPerBlock = maxBlockSize;
     setup.sampleRate = sampleRate;
 
-    if (m_audioProcessor->setupProcessing(setup) != kResultTrue) return false;
+    if (!activateComponent(m_component.get(), m_audioProcessor.get(), setup))
+        return false;
 
-    m_component->setActive(true);
-    m_audioProcessor->setProcessing(true);
     m_active = true;
     return true;
 }
@@ -402,49 +520,22 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     if (numInBuses < 1) numInBuses = 1;
     if (numOutBuses < 1) numOutBuses = 1;
 
+    // Keep the adaptation scratch large enough for this block.
+    for (auto& b : m_expandInScratch)
+        if (b.size() < static_cast<size_t>(numSamples)) b.resize(static_cast<size_t>(numSamples));
+    for (auto& b : m_reduceOutScratch)
+        if (b.size() < static_cast<size_t>(numSamples)) b.resize(static_cast<size_t>(numSamples));
+    refreshScratchPtrs();
+
     std::vector<AudioBusBuffers> inBuses(numInBuses);
-    float* monoInChannels[1] = { m_monoScratch.data() };
-    for (int32 i = 0; i < numInBuses; ++i) {
-        int32 busChannels = (i < static_cast<int32>(m_inputBusChannels.size()))
-                                ? m_inputBusChannels[i] : numChannels;
-        inBuses[i].silenceFlags = 0;
-        bool isSidechain = i < static_cast<int32>(m_inputBusIsSidechain.size()) &&
-                           m_inputBusIsSidechain[i];
-        if (isSidechain) {
-            // Feed the sidechain (kAux) bus from the host scratch buffers the
-            // engine accumulated the key signal into.
-            int offset = i < static_cast<int32>(m_inputBusSidechainOffset.size())
-                             ? m_inputBusSidechainOffset[i] : -1;
-            int available = (offset >= 0)
-                                ? m_sidechainChannelCount - offset : 0;
-            inBuses[i].numChannels = std::min<int32>(busChannels, std::max(0, available));
-            inBuses[i].channelBuffers32 = (offset >= 0 && available > 0)
-                                              ? m_sidechainChannelPtrs.data() + offset
-                                              : nullptr;
-            continue;
-        }
-        inBuses[i].numChannels = std::min(busChannels, numChannels);
-        if (busChannels == 1 && numChannels >= 2 && inputBuffers) {
-            if (m_monoScratch.size() < static_cast<size_t>(numSamples))
-                m_monoScratch.resize(static_cast<size_t>(numSamples));
-            foldStereoToMono(m_monoScratch.data(), inputBuffers, numSamples);
-            inBuses[i].channelBuffers32 = monoInChannels;
-        } else {
-            inBuses[i].channelBuffers32 = inputBuffers;
-        }
-    }
+    configureInputBuses(inBuses.data(), numInBuses, inputBuffers, numSamples, numChannels);
+
+    int32 pluginOutChannels = 0;
+    for (auto cc : m_outputBusChannels) pluginOutChannels += cc;
 
     std::vector<AudioBusBuffers> outBuses(numOutBuses);
-    int32 channelOffset = 0;
-    for (int32 i = 0; i < numOutBuses; ++i) {
-        int32 busChannels = (i < static_cast<int32>(m_outputBusChannels.size()))
-                                ? m_outputBusChannels[i] : numChannels;
-        int32 available = std::max<int32>(0, numChannels - channelOffset);
-        outBuses[i].numChannels = std::min(busChannels, available);
-        outBuses[i].silenceFlags = 0;
-        outBuses[i].channelBuffers32 = outputBuffers ? outputBuffers + channelOffset : nullptr;
-        channelOffset += busChannels;
-    }
+    const bool reduceOut = configureOutputBuses(outBuses.data(), numOutBuses, outputBuffers,
+                                                numChannels, pluginOutChannels);
 
     ProcessData data;
     data.processMode = kRealtime;
@@ -468,6 +559,12 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     data.processContext = nullptr;
 
     tresult result = m_audioProcessor->process(data);
+
+    // Fold the plugin's wider output down to the host's channel count (e.g. a
+    // stereo effect on a mono track).
+    if (reduceOut && result == kResultTrue)
+        reduceChannelsToHost(m_reduceOutPtrs.data(), pluginOutChannels,
+                             outputBuffers, numChannels, numSamples);
 
     // Mono plugin: duplicate the single output channel so downstream mixing
     // sees a centered stereo signal instead of a hard-panned-left one.

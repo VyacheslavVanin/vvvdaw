@@ -2,12 +2,17 @@
 #include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
+#include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
+#include "plugin/PluginAudioUtils.h"
+#include "plugin/VST3Instance.h"
 #include "plugin/VST3Scan.h"
 #include "plugin/Vst3ModuleInfo.h"
 #include "plugin/PluginManager.h"
+#include <public.sdk/source/vst/vstaudioeffect.h>
 
 // A factory whose createInstance() must never be called during UID discovery.
 // Before the fix, VST3Scan::findComponentUID() ran a binary memory scan that
@@ -77,6 +82,42 @@ public:
     Steinberg::uint32 PLUGIN_API release() override { return 0; }
 };
 
+// Concrete VST3 component/processor (SDK AudioEffect) that records the order of
+// the activation calls. Used to pin down the JUCE bus-map requirement:
+// setupProcessing() must run before activateBus().
+class RecordingEffect : public Steinberg::Vst::AudioEffect {
+public:
+    std::vector<std::string> calls;
+
+    Steinberg::int32 PLUGIN_API getBusCount(Steinberg::Vst::MediaType type,
+                                            Steinberg::Vst::BusDirection dir) override {
+        if (type != Steinberg::Vst::kAudio) return 0;
+        return dir == Steinberg::Vst::kInput ? 1 : 1;
+    }
+
+    Steinberg::tresult PLUGIN_API setupProcessing(Steinberg::Vst::ProcessSetup&) override {
+        calls.push_back("setupProcessing");
+        return Steinberg::kResultTrue;
+    }
+
+    Steinberg::tresult PLUGIN_API setProcessing(Steinberg::TBool) override {
+        calls.push_back("setProcessing");
+        return Steinberg::kResultTrue;
+    }
+
+    Steinberg::tresult PLUGIN_API setActive(Steinberg::TBool) override {
+        calls.push_back("setActive");
+        return Steinberg::kResultTrue;
+    }
+
+    Steinberg::tresult PLUGIN_API activateBus(Steinberg::Vst::MediaType,
+                                              Steinberg::Vst::BusDirection,
+                                              Steinberg::int32, Steinberg::TBool) override {
+        calls.push_back("activateBus");
+        return Steinberg::kResultTrue;
+    }
+};
+
 class Vst3ScanTest : public QObject {
     Q_OBJECT
 private slots:
@@ -84,6 +125,10 @@ private slots:
     void findComponentUIDMatchesOnlyComponentCategory();
     void instrumentDetectionUsesSubCategories();
     void subCategoriesContainRequiredTokenMatch();
+
+    void activationReappliesBusActivationAfterSetupProcessing();
+    void expandChannelsRepeatsHostChannels();
+    void reduceChannelsFoldsPluginOutput();
 
     void moduleInfoParsesStandardJson();
     void moduleInfoParsesTrailingCommas();
@@ -152,6 +197,73 @@ void Vst3ScanTest::subCategoriesContainRequiredTokenMatch() {
     QVERIFY(!VST3Scan::subCategoriesContain("Fx", "Instrument"));
     // "Instruments" must not match the exact "Instrument" token.
     QVERIFY(!VST3Scan::subCategoriesContain("Fx|Instruments", "Instrument"));
+}
+
+void Vst3ScanTest::activationReappliesBusActivationAfterSetupProcessing() {
+    RecordingEffect effect;
+    Steinberg::Vst::ProcessSetup setup{};
+    setup.processMode = Steinberg::Vst::kRealtime;
+    setup.symbolicSampleSize = Steinberg::Vst::kSample32;
+    setup.maxSamplesPerBlock = 256;
+    setup.sampleRate = 48000.0;
+
+    QVERIFY(VST3Instance::activateComponent(&effect, &effect, setup));
+
+    const auto firstOf = [&](const char* name) {
+        const auto it = std::find(effect.calls.begin(), effect.calls.end(), name);
+        if (it == effect.calls.end()) return -1;
+        return static_cast<int>(std::distance(effect.calls.begin(), it));
+    };
+
+    const int setupIdx = firstOf("setupProcessing");
+    const int busIdx = firstOf("activateBus");
+    const int activeIdx = firstOf("setActive");
+    const int procIdx = firstOf("setProcessing");
+
+    QVERIFY(setupIdx >= 0);
+    // The regression: activateBus() before setupProcessing() is dropped by
+    // JUCE, leaving every bus host-inactive and the plugin silent.
+    QVERIFY2(busIdx > setupIdx, "activateBus must run after setupProcessing");
+    QVERIFY(activeIdx > busIdx);
+    QVERIFY(procIdx > activeIdx);
+}
+
+void Vst3ScanTest::expandChannelsRepeatsHostChannels() {
+    const int N = 8;
+    std::vector<float> mono(N, 0.5f);
+    const float* src[1] = {mono.data()};
+    std::vector<float> l(N, 0.0f), r(N, 0.0f);
+    float* dst[2] = {l.data(), r.data()};
+
+    expandChannelsToBus(src, 1, dst, 2, N);
+
+    for (int i = 0; i < N; ++i) {
+        QCOMPARE(l[i], 0.5f);
+        QCOMPARE(r[i], 0.5f);
+    }
+}
+
+void Vst3ScanTest::reduceChannelsFoldsPluginOutput() {
+    const int N = 4;
+    std::vector<float> l(N, 1.0f), r(N, 3.0f);
+    const float* src[2] = {l.data(), r.data()};
+    std::vector<float> out(N, 0.0f);
+    float* dst[1] = {out.data()};
+
+    // Stereo plugin output folded to a mono host averages both channels.
+    reduceChannelsToHost(src, 2, dst, 1, N);
+    for (int i = 0; i < N; ++i) QCOMPARE(out[i], 2.0f);
+
+    // Four plugin channels onto two host channels: round-robin averages.
+    std::vector<float> c0(N, 1.0f), c1(N, 2.0f), c2(N, 3.0f), c3(N, 4.0f);
+    const float* src4[4] = {c0.data(), c1.data(), c2.data(), c3.data()};
+    std::vector<float> o0(N), o1(N);
+    float* dst2[2] = {o0.data(), o1.data()};
+    reduceChannelsToHost(src4, 4, dst2, 2, N);
+    for (int i = 0; i < N; ++i) {
+        QCOMPARE(o0[i], 2.0f); // (c0 + c2) / 2
+        QCOMPARE(o1[i], 3.0f); // (c1 + c3) / 2
+    }
 }
 
 void Vst3ScanTest::moduleInfoParsesStandardJson() {

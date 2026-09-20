@@ -163,6 +163,14 @@ public:
     bool load(const QString& path) override;
     bool activate(double sampleRate, int maxBlockSize) override;
     bool deactivate() override;
+
+    // Activates a VST3 component/processor. setupProcessing() must run before
+    // activateBus(): JUCE's VST3 wrapper builds its host-bus map inside
+    // setupProcessing(), so an earlier activateBus() is dropped and the plugin
+    // then receives silence (see VST3Instance.cpp).
+    static bool activateComponent(Steinberg::Vst::IComponent* component,
+                                  Steinberg::Vst::IAudioProcessor* processor,
+                                  Steinberg::Vst::ProcessSetup& setup);
     bool process(float** inputBuffers, float** outputBuffers,
                  int numSamples, int numChannels,
                  const MidiBuffer* midi = nullptr) override;
@@ -237,6 +245,23 @@ private:
     std::vector<Steinberg::int32> m_outputBusChannels;
     std::vector<QString> m_outputBusNames;
     std::vector<float> m_monoScratch;
+
+    // Channel-count adaptation between the host and the plugin buses. A mono
+    // host track feeding a stereo plugin must be expanded to the bus width
+    // (JUCE rejects a narrower layout and processes a blank buffer), and a
+    // plugin with more output channels than the host must be folded back down.
+    std::vector<std::vector<float>> m_expandInScratch;
+    std::vector<float*> m_expandInPtrs;
+    std::vector<std::vector<float>> m_reduceOutScratch;
+    std::vector<float*> m_reduceOutPtrs;
+    void refreshScratchPtrs();
+
+    // Fills the VST3 input/output bus descriptors for one process() call,
+    // adapting between the host's channel count and each bus width.
+    void configureInputBuses(Steinberg::Vst::AudioBusBuffers* inBuses, int numInBuses,
+                             float** inputBuffers, int numSamples, int numChannels);
+    bool configureOutputBuses(Steinberg::Vst::AudioBusBuffers* outBuses, int numOutBuses,
+                              float** outputBuffers, int numChannels, int pluginOutChannels);
 
     // Sidechain (kAux) input buses: which input buses are sidechain, the first
     // sidechain channel for each (or -1), the total sidechain channel count and
