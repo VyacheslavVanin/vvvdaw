@@ -154,6 +154,7 @@ add_library(vvvdaw_gui STATIC
     src/gui/SettingsDialog.cpp
     src/gui/StartDialog.cpp
     src/gui/PluginListWidget.cpp
+    src/gui/PluginPickerDialog.cpp
     src/gui/PluginWindow.cpp
     src/gui/PluginParameterWidget.cpp
     src/gui/RotaryKnob.cpp

@@ -2,6 +2,7 @@
 #include "PanSlider.h"
 #include "GuiStyle.h"
 #include "PluginListWidget.h"
+#include "PluginPickerDialog.h"
 #include "ChannelRoutingDialog.h"
 #include "model/Project.h"
 #include "model/Instrument.h"
@@ -15,7 +16,6 @@
 #include <QEvent>
 #include <QMenu>
 #include <QDialog>
-#include <QListWidget>
 #include <QLineEdit>
 #include <QContextMenuEvent>
 
@@ -366,80 +366,13 @@ void InstrumentPanelWidget::openChannelRoutingDialog(int index) {
 bool InstrumentPanelWidget::showInstrumentPicker(QString& outType, QString& outPath) {
     if (!m_pluginManager) return false;
 
-    QDialog dialog(this);
-    dialog.setWindowTitle("Select Instrument");
-    dialog.setMinimumSize(420, 300);
-
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* searchEdit = new QLineEdit(&dialog);
-    searchEdit->setPlaceholderText("Search instruments...");
-    searchEdit->setFocus();
-    layout->addWidget(searchEdit);
-
-    auto* listWidget = new QListWidget(&dialog);
-
-    auto populateList = [this, listWidget](const QString& text) {
-        QVector<QPair<int, const PluginInfo*>> scored;
-        for (const auto& pi : m_pluginManager->plugins()) {
-            if (!pi.isInstrument) continue;
-            const QString display = QString("[%1] %2").arg(pi.type.toUpper(), pi.name);
-            int score = 0;
-            if (!text.isEmpty()) {
-                score = -1;
-                const QString lowered = display.toLower();
-                const QString q = text.toLower();
-                int pos = 0;
-                for (const QChar& c : q) {
-                    pos = lowered.indexOf(c, pos);
-                    if (pos < 0) { score = -1; break; }
-                    score += 20 - pos / 2;
-                    ++pos;
-                }
-            }
-            if (score >= 0)
-                scored.append({score, &pi});
-        }
-        std::stable_sort(scored.begin(), scored.end(),
-                         [](const QPair<int, const PluginInfo*>& a,
-                            const QPair<int, const PluginInfo*>& b) {
-                             return a.first > b.first;
-                         });
-        listWidget->clear();
-        for (const auto& entry : scored) {
-            const PluginInfo* pi = entry.second;
-            auto* item = new QListWidgetItem(QString("[%1] %2").arg(pi->type.toUpper(), pi->name));
-            item->setData(Qt::UserRole, pi->type);
-            item->setData(Qt::UserRole + 1, pi->path);
-            listWidget->addItem(item);
-        }
-        if (listWidget->count() > 0)
-            listWidget->setCurrentItem(listWidget->item(0));
-    };
-    populateList(QString());
-
-    layout->addWidget(listWidget);
-
-    auto* buttons = new QHBoxLayout;
-    auto* okBtn = new QPushButton("Select", &dialog);
-    auto* cancelBtn = new QPushButton("Cancel", &dialog);
-    buttons->addWidget(okBtn);
-    buttons->addWidget(cancelBtn);
-    layout->addLayout(buttons);
-
-    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
-    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
-    connect(listWidget, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
-    connect(searchEdit, &QLineEdit::textChanged, listWidget, populateList);
-    connect(searchEdit, &QLineEdit::returnPressed, &dialog, [listWidget, &dialog] {
-        if (listWidget->count() > 0)
-            dialog.accept();
-    });
-
-    if (dialog.exec() != QDialog::Accepted || !listWidget->currentItem())
-        return false;
-    auto* item = listWidget->currentItem();
-    outType = item->data(Qt::UserRole).toString();
-    outPath = item->data(Qt::UserRole + 1).toString();
+    const QVector<PluginInfo> instruments(m_pluginManager->plugins().cbegin(),
+                                          m_pluginManager->plugins().cend());
+    PluginPickerDialog dialog(instruments, /*filterInstruments=*/true, this);
+    if (dialog.exec() != QDialog::Accepted) return false;
+    outType = dialog.selectedType();
+    outPath = dialog.selectedPath();
+    if (outType.isEmpty() && outPath.isEmpty()) return false;
     return true;
 }
 
