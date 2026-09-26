@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "plugin/PluginAudioUtils.h"
+#include "plugin/SigGuard.h"
 #include "plugin/VST3Instance.h"
 #include "plugin/VST3Scan.h"
 #include "plugin/Vst3ModuleInfo.h"
@@ -129,6 +130,11 @@ private slots:
     void activationReappliesBusActivationAfterSetupProcessing();
     void expandChannelsRepeatsHostChannels();
     void reduceChannelsFoldsPluginOutput();
+
+    void monoFoldChannelPointerOutlivesCall();
+    void expandMonoHostToStereoBusUsesPersistentStorage();
+    void stereoBusMapsHostBuffersDirectly();
+    void monoInputPluginOnStereoBusDoesNotCrash();
 
     void moduleInfoParsesStandardJson();
     void moduleInfoParsesTrailingCommas();
@@ -264,6 +270,136 @@ void Vst3ScanTest::reduceChannelsFoldsPluginOutput() {
         QCOMPARE(o0[i], 2.0f); // (c0 + c2) / 2
         QCOMPARE(o1[i], 3.0f); // (c1 + c3) / 2
     }
+}
+
+namespace {
+
+// Assembles an InputBusLayout whose buffers outlive the buildInputBuses() call,
+// mirroring how VST3Instance::process() owns its scratch and bus metadata.
+struct InputBusLayoutFixture {
+    std::vector<Steinberg::int32> busChannels;
+    std::vector<bool> busIsSidechain;
+    std::vector<int> busSidechainOffset;
+    std::vector<float*> sidechainPtrs;
+    std::vector<float*> monoFoldPtrs;
+    std::vector<float*> expandPtrs;
+    std::vector<float> monoScratch;
+
+    VST3Instance::InputBusLayout layout() {
+        VST3Instance::InputBusLayout l;
+        l.busChannels = &busChannels;
+        l.busIsSidechain = &busIsSidechain;
+        l.busSidechainOffset = &busSidechainOffset;
+        l.sidechainPtrs = &sidechainPtrs;
+        l.sidechainChannelCount = 0;
+        l.monoFoldPtrs = &monoFoldPtrs;
+        l.expandPtrs = &expandPtrs;
+        l.monoScratch = &monoScratch;
+        return l;
+    }
+};
+
+} // namespace
+
+void Vst3ScanTest::monoFoldChannelPointerOutlivesCall() {
+    const int N = 16;
+    std::vector<float> left(N, 1.0f), right(N, -2.0f);
+    float* in[2] = {left.data(), right.data()};
+
+    InputBusLayoutFixture fx;
+    fx.busChannels = {1};
+    fx.busIsSidechain = {false};
+    fx.busSidechainOffset = {-1};
+    fx.monoFoldPtrs.assign(1, nullptr);
+    fx.expandPtrs.assign(1, nullptr);
+    fx.monoScratch.assign(N, 0.0f);
+
+    std::vector<Steinberg::Vst::AudioBusBuffers> inBuses(1);
+    VST3Instance::buildInputBuses(fx.layout(), inBuses.data(), 1, in, N, 2);
+
+    QCOMPARE(inBuses[0].numChannels, 1);
+    QVERIFY(inBuses[0].channelBuffers32 != nullptr);
+    // Regression: the channel-pointer array must live in caller-owned storage,
+    // not in buildInputBuses()'s dead stack frame. ZamEQ2 read inputs[0] from a
+    // dangling local array here and faulted.
+    QCOMPARE(inBuses[0].channelBuffers32, fx.monoFoldPtrs.data());
+    QCOMPARE(inBuses[0].channelBuffers32[0], fx.monoScratch.data());
+    for (int i = 0; i < N; ++i)
+        QCOMPARE(fx.monoScratch[static_cast<size_t>(i)], -0.5f); // (L+R)/2
+}
+
+void Vst3ScanTest::expandMonoHostToStereoBusUsesPersistentStorage() {
+    const int N = 8;
+    std::vector<float> mono(N, 0.25f), e0(N, 0.0f), e1(N, 0.0f);
+    float* in[1] = {mono.data()};
+
+    InputBusLayoutFixture fx;
+    fx.busChannels = {2};
+    fx.busIsSidechain = {false};
+    fx.busSidechainOffset = {-1};
+    fx.expandPtrs = {e0.data(), e1.data()};
+    fx.monoFoldPtrs.assign(1, nullptr);
+    fx.monoScratch.assign(N, 0.0f);
+
+    std::vector<Steinberg::Vst::AudioBusBuffers> inBuses(1);
+    VST3Instance::buildInputBuses(fx.layout(), inBuses.data(), 1, in, N, 1);
+
+    QCOMPARE(inBuses[0].numChannels, 2);
+    QCOMPARE(inBuses[0].channelBuffers32, fx.expandPtrs.data());
+    for (int i = 0; i < N; ++i) {
+        QCOMPARE(e0[static_cast<size_t>(i)], 0.25f);
+        QCOMPARE(e1[static_cast<size_t>(i)], 0.25f);
+    }
+}
+
+void Vst3ScanTest::stereoBusMapsHostBuffersDirectly() {
+    const int N = 4;
+    std::vector<float> l(N, 1.0f), r(N, 2.0f);
+    float* in[2] = {l.data(), r.data()};
+
+    InputBusLayoutFixture fx;
+    fx.busChannels = {2};
+    fx.busIsSidechain = {false};
+    fx.busSidechainOffset = {-1};
+    fx.monoFoldPtrs.assign(1, nullptr);
+    fx.expandPtrs.assign(2, nullptr);
+    fx.monoScratch.assign(N, 0.0f);
+
+    std::vector<Steinberg::Vst::AudioBusBuffers> inBuses(1);
+    VST3Instance::buildInputBuses(fx.layout(), inBuses.data(), 1, in, N, 2);
+
+    QCOMPARE(inBuses[0].numChannels, 2);
+    QCOMPARE(inBuses[0].channelBuffers32, in);
+}
+
+void Vst3ScanTest::monoInputPluginOnStereoBusDoesNotCrash() {
+    // ZamEQ2 is a 1-in/1-out DPF VST3. On a stereo bus the host folds L/R into
+    // the mono input; the fold's channel-pointer array used to point at a dead
+    // stack frame, and the plugin faulted reading inputs[0] (the reported SEGV
+    // at ZamEQ2.so+0xc6f2). runSigGuarded turns any such fault into a test
+    // failure instead of killing the test binary.
+    const QString bundle = "/usr/lib/vst3/ZamEQ2.vst3";
+    if (!QFile::exists(bundle + "/Contents/x86_64-linux/ZamEQ2.so"))
+        QSKIP("ZamEQ2 VST3 plugin not installed");
+
+    VST3Instance inst;
+    QVERIFY(inst.load(bundle));
+
+    const int N = 256;
+    QVERIFY(inst.activate(48000.0, N));
+
+    std::vector<float> l(N, 0.5f), r(N, -0.5f), ol(N, 0.0f), orr(N, 0.0f);
+    float* in[2] = {l.data(), r.data()};
+    float* out[2] = {ol.data(), orr.data()};
+
+    // Two calls: the dangling channel-pointer array was rebuilt (and left
+    // dangling) on every single process() call.
+    bool ok = false;
+    const bool survived = runSigGuarded([&] {
+        ok = inst.process(in, out, N, 2) && inst.process(in, out, N, 2);
+    });
+    QVERIFY2(survived, "VST3 process() crashed with a mono-input plugin on a stereo bus");
+    QVERIFY(ok);
 }
 
 void Vst3ScanTest::moduleInfoParsesStandardJson() {

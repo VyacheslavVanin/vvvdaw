@@ -124,6 +124,77 @@ void activateComponentBuses(IComponent* component) {
     }
 }
 
+// Per-bus view of the layout metadata, with fallbacks for missing entries.
+struct InputBusInfo {
+    int32 channels;
+    bool sidechain;
+    int offset;
+};
+
+InputBusInfo inputBusInfo(const VST3Instance::InputBusLayout& layout, int32 index,
+                          int fallbackChannels) {
+    InputBusInfo info{fallbackChannels, false, -1};
+    if (layout.busChannels && index < static_cast<int32>(layout.busChannels->size()))
+        info.channels = (*layout.busChannels)[index];
+    if (layout.busIsSidechain && index < static_cast<int32>(layout.busIsSidechain->size()))
+        info.sidechain = (*layout.busIsSidechain)[index];
+    if (layout.busSidechainOffset && index < static_cast<int32>(layout.busSidechainOffset->size()))
+        info.offset = (*layout.busSidechainOffset)[index];
+    return info;
+}
+
+// Whether an input bus wider than the host can be fed by repeating the host
+// channels (a narrower layout is rejected by some plugins).
+bool canExpandInputBus(int32 busChannels, float** inputBuffers, int numChannels,
+                       int expandBase, const VST3Instance::InputBusLayout& layout) {
+    if (!inputBuffers || numChannels <= 0 || busChannels <= numChannels || !layout.expandPtrs)
+        return false;
+    return expandBase + busChannels <= static_cast<int32>(layout.expandPtrs->size());
+}
+
+// A sidechain (kAux) input bus is fed from the host scratch the engine filled
+// with the key signal.
+void configureSidechainInputBus(AudioBusBuffers& bus, int32 busChannels, int offset,
+                                int sidechainChannelCount,
+                                std::vector<float*>* sidechainPtrs) {
+    const int available = (offset >= 0) ? sidechainChannelCount - offset : 0;
+    bus.silenceFlags = 0;
+    bus.numChannels = std::min<int32>(busChannels, std::max(0, available));
+    bus.channelBuffers32 = (offset >= 0 && available > 0 && sidechainPtrs)
+                               ? sidechainPtrs->data() + offset
+                               : nullptr;
+}
+
+// Fills a main (non-sidechain) input bus: repeat the host channels if the bus is
+// wider, fold a stereo host into a mono bus, or hand the host buffers through.
+void configureMainInputBus(AudioBusBuffers& bus, int32 busChannels, float** inputBuffers,
+                           int numSamples, int numChannels, int expandBase, int index,
+                           const VST3Instance::InputBusLayout& layout) {
+    bus.silenceFlags = 0;
+    if (canExpandInputBus(busChannels, inputBuffers, numChannels, expandBase, layout)) {
+        expandChannelsToBus(inputBuffers, numChannels,
+                            layout.expandPtrs->data() + expandBase, busChannels, numSamples);
+        bus.numChannels = busChannels;
+        bus.channelBuffers32 = layout.expandPtrs->data() + expandBase;
+        return;
+    }
+    bus.numChannels = std::min(busChannels, numChannels);
+    if (busChannels != 1 || numChannels < 2 || !inputBuffers ||
+        !layout.monoScratch || !layout.monoFoldPtrs) {
+        bus.channelBuffers32 = inputBuffers;
+        return;
+    }
+    // Mono plugin on a stereo host: fold L/R into the mono scratch. The
+    // channel-pointer slot must live in caller-owned storage so it stays valid
+    // for the whole process() call; a stack-local array here used to dangle and
+    // made ZamEQ2 fault reading inputs[0].
+    if (layout.monoScratch->size() < static_cast<size_t>(numSamples))
+        layout.monoScratch->resize(static_cast<size_t>(numSamples));
+    foldStereoToMono(layout.monoScratch->data(), inputBuffers, numSamples);
+    (*layout.monoFoldPtrs)[static_cast<size_t>(index)] = layout.monoScratch->data();
+    bus.channelBuffers32 = layout.monoFoldPtrs->data() + index;
+}
+
 } // anonymous namespace
 
 // HostComponentHandler method implementations
@@ -345,6 +416,9 @@ bool VST3Instance::load(const QString& path) {
                 sidechainOffset += channels;
         }
         m_sidechainChannelCount = sidechainOffset;
+        // One persistent channel-pointer slot per input bus; buildInputBuses()
+        // points folded-mono buses at these so the array outlives process().
+        m_monoFoldInPtrs.assign(static_cast<size_t>(std::max(1, nIn)), nullptr);
         m_outputBusChannels.clear();
         m_outputBusNames.clear();
         for (int32 i = 0; i < nOut; ++i) {
@@ -390,51 +464,43 @@ void VST3Instance::refreshScratchPtrs() {
     for (auto& b : m_reduceOutScratch) m_reduceOutPtrs.push_back(b.data());
 }
 
-void VST3Instance::configureInputBuses(AudioBusBuffers* inBuses, int numInBuses,
-                                       float** inputBuffers, int numSamples, int numChannels) {
-    float* monoInChannels[1] = { m_monoScratch.data() };
+void VST3Instance::buildInputBuses(const InputBusLayout& layout,
+                                   AudioBusBuffers* inBuses, int numInBuses,
+                                   float** inputBuffers, int numSamples, int numChannels) {
+    if (!inBuses) return;
+
+    // Folded-mono buses need a channel-pointer array that survives this call;
+    // fall back to a defensive resize if the caller under-sized the storage.
+    if (layout.monoFoldPtrs &&
+        layout.monoFoldPtrs->size() < static_cast<size_t>(numInBuses))
+        layout.monoFoldPtrs->resize(static_cast<size_t>(numInBuses), nullptr);
+
     int expandBase = 0;
     for (int32 i = 0; i < numInBuses; ++i) {
-        int32 busChannels = (i < static_cast<int32>(m_inputBusChannels.size()))
-                                ? m_inputBusChannels[i] : numChannels;
-        inBuses[i].silenceFlags = 0;
-        bool isSidechain = i < static_cast<int32>(m_inputBusIsSidechain.size()) &&
-                           m_inputBusIsSidechain[i];
-        if (isSidechain) {
-            // Feed the sidechain (kAux) bus from the host scratch buffers the
-            // engine accumulated the key signal into.
-            int offset = i < static_cast<int32>(m_inputBusSidechainOffset.size())
-                             ? m_inputBusSidechainOffset[i] : -1;
-            int available = (offset >= 0) ? m_sidechainChannelCount - offset : 0;
-            inBuses[i].numChannels = std::min<int32>(busChannels, std::max(0, available));
-            inBuses[i].channelBuffers32 = (offset >= 0 && available > 0)
-                                              ? m_sidechainChannelPtrs.data() + offset
-                                              : nullptr;
+        const InputBusInfo info = inputBusInfo(layout, i, numChannels);
+        if (info.sidechain) {
+            configureSidechainInputBus(inBuses[i], info.channels, info.offset,
+                                       layout.sidechainChannelCount, layout.sidechainPtrs);
             continue;
         }
-        const bool canExpand = busChannels > numChannels && inputBuffers && numChannels > 0 &&
-                               expandBase + busChannels <= static_cast<int32>(m_expandInPtrs.size());
-        if (canExpand) {
-            // Host provides fewer channels than the bus (e.g. a mono track into
-            // a stereo effect): repeat the available channels. JUCE rejects a
-            // narrower layout and would hand the plugin a blank buffer.
-            expandChannelsToBus(inputBuffers, numChannels,
-                                m_expandInPtrs.data() + expandBase, busChannels, numSamples);
-            inBuses[i].numChannels = busChannels;
-            inBuses[i].channelBuffers32 = m_expandInPtrs.data() + expandBase;
-        } else {
-            inBuses[i].numChannels = std::min(busChannels, numChannels);
-            if (busChannels == 1 && numChannels >= 2 && inputBuffers) {
-                if (m_monoScratch.size() < static_cast<size_t>(numSamples))
-                    m_monoScratch.resize(static_cast<size_t>(numSamples));
-                foldStereoToMono(m_monoScratch.data(), inputBuffers, numSamples);
-                inBuses[i].channelBuffers32 = monoInChannels;
-            } else {
-                inBuses[i].channelBuffers32 = inputBuffers;
-            }
-        }
-        expandBase += busChannels;
+        configureMainInputBus(inBuses[i], info.channels, inputBuffers, numSamples,
+                              numChannels, expandBase, i, layout);
+        expandBase += info.channels;
     }
+}
+
+void VST3Instance::configureInputBuses(AudioBusBuffers* inBuses, int numInBuses,
+                                       float** inputBuffers, int numSamples, int numChannels) {
+    InputBusLayout layout;
+    layout.busChannels = &m_inputBusChannels;
+    layout.busIsSidechain = &m_inputBusIsSidechain;
+    layout.busSidechainOffset = &m_inputBusSidechainOffset;
+    layout.sidechainPtrs = &m_sidechainChannelPtrs;
+    layout.sidechainChannelCount = m_sidechainChannelCount;
+    layout.monoFoldPtrs = &m_monoFoldInPtrs;
+    layout.expandPtrs = &m_expandInPtrs;
+    layout.monoScratch = &m_monoScratch;
+    buildInputBuses(layout, inBuses, numInBuses, inputBuffers, numSamples, numChannels);
 }
 
 bool VST3Instance::configureOutputBuses(AudioBusBuffers* outBuses, int numOutBuses,
@@ -468,6 +534,11 @@ bool VST3Instance::activate(double sampleRate, int maxBlockSize) {
     m_sampleRate = sampleRate;
     m_maxBlockSize = maxBlockSize;
     m_monoScratch.resize(static_cast<size_t>(maxBlockSize));
+    {
+        // One persistent channel-pointer slot per input bus (see load()).
+        int32 nIn = m_component->getBusCount(kAudio, kInput);
+        m_monoFoldInPtrs.assign(static_cast<size_t>(std::max(1, nIn)), nullptr);
+    }
     m_sidechainBuffers.assign(static_cast<size_t>(m_sidechainChannelCount),
                               std::vector<float>(static_cast<size_t>(maxBlockSize), 0.0f));
     m_sidechainChannelPtrs.clear();
@@ -514,6 +585,11 @@ bool VST3Instance::process(float** inputBuffers, float** outputBuffers,
     if (bypassPassthrough(m_active && m_audioProcessor && m_enabled,
                           inputBuffers, outputBuffers, numSamples, numChannels))
         return true;
+
+    // Never hand a plugin more samples than the setup called for: both our
+    // adaptation scratch and the plugin's own buffers (e.g. DPF's dummy input)
+    // are sized for maxSamplesPerBlock.
+    numSamples = std::min(numSamples, m_maxBlockSize);
 
     int32 numInBuses = m_component ? m_component->getBusCount(kAudio, kInput) : 1;
     int32 numOutBuses = m_component ? m_component->getBusCount(kAudio, kOutput) : 1;

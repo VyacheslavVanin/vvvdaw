@@ -171,6 +171,28 @@ public:
     static bool activateComponent(Steinberg::Vst::IComponent* component,
                                   Steinberg::Vst::IAudioProcessor* processor,
                                   Steinberg::Vst::ProcessSetup& setup);
+
+    // Host/plugin channel-count adaptation for the input buses. Split out as a
+    // static so it can be tested directly: the caller owns every buffer, and
+    // monoFoldPtrs in particular must outlive the plugin's process() call (a
+    // local array here used to dangle once the frame was reused, which made
+    // ZamEQ2 fault reading inputs[0]).
+    struct InputBusLayout {
+        const std::vector<Steinberg::int32>* busChannels = nullptr;
+        const std::vector<bool>* busIsSidechain = nullptr;
+        const std::vector<int>* busSidechainOffset = nullptr;
+        std::vector<float*>* sidechainPtrs = nullptr;
+        int sidechainChannelCount = 0;
+        // Persistent storage for the folded-mono channel-pointer arrays. Must
+        // hold at least numInBuses entries and must outlive process().
+        std::vector<float*>* monoFoldPtrs = nullptr;
+        std::vector<float*>* expandPtrs = nullptr;
+        std::vector<float>* monoScratch = nullptr;
+    };
+    static void buildInputBuses(const InputBusLayout& layout,
+                                Steinberg::Vst::AudioBusBuffers* inBuses, int numInBuses,
+                                float** inputBuffers, int numSamples, int numChannels);
+
     bool process(float** inputBuffers, float** outputBuffers,
                  int numSamples, int numChannels,
                  const MidiBuffer* midi = nullptr) override;
@@ -245,6 +267,9 @@ private:
     std::vector<Steinberg::int32> m_outputBusChannels;
     std::vector<QString> m_outputBusNames;
     std::vector<float> m_monoScratch;
+    // Persistent per-bus storage for the mono-fold channel pointer arrays.
+    // Sized to the input bus count in load(); see buildInputBuses().
+    std::vector<float*> m_monoFoldInPtrs;
 
     // Channel-count adaptation between the host and the plugin buses. A mono
     // host track feeding a stereo plugin must be expanded to the bus width
